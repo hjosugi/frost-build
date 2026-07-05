@@ -1,0 +1,50 @@
+# FrostBuild generated state
+.frost/
+
+# Bazel output trees and workspace symlinks
+bazel-*/
+bazel-bin/
+bazel-out/
+bazel-testlogs/
+bazel_out/
+
+# Zig build outputs
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Python caches and packaging
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
