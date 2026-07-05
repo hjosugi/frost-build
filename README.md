@@ -16,6 +16,7 @@ frost.py                     Python prototype build engine
 sample/                      synthetic workspace with 161 build targets + Bazel files
 scripts/run_poc_benchmark.sh run local POC benchmark
 scripts/compare_bazel.sh     optional Bazel comparison if bazel is installed
+frost-bench                  median benchmark harness for generated Ninja/Make workspaces
 docs/                        build tool knowledge, papers, and 2x strategy
 zig_skeleton/                Zig implementation skeleton and design note
 ```
@@ -105,6 +106,17 @@ bash scripts/compare_bazel.sh
 ```
 
 This requires `bazel` to be installed. If Bazel is missing, the script prints a skip message.
+
+Run the standard build-tool baseline harness:
+
+```bash
+./frost-bench run --suite standard --tools ninja,make --sizes 1000,10000 --iterations 5 --jobs 8
+```
+
+The harness generates temporary Ninja and Make workspaces, measures clean,
+no-op, leaf incremental, and hot-header rebuild scenarios, records CPU
+governor/turbo/load metadata, and emits JSON. Baseline reports live in
+`bench/baselines/`.
 
 ## What this POC implements
 

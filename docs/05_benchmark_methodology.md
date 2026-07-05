@@ -137,6 +137,71 @@ sample/tools/gen.py
 
 The Bazel comparison is optional because this zip must run even on machines without Bazel.
 
+## Standard Ninja / Make baseline harness
+
+Use `frost-bench` when the comparison target is a conventional timestamp based
+builder rather than the FrostBuild simulation:
+
+```bash
+./frost-bench run --suite standard --tools ninja,make --sizes 1000,10000 --iterations 5 --jobs 8
+```
+
+The standard suite generates identical chain-shaped workspaces for each tool and
+size. It records median-of-5 timings for:
+
+```text
+clean
+noop
+incremental_leaf
+hot_header
+cache_hit_rebuild
+```
+
+`cache_hit_rebuild` is marked not applicable for Ninja and Make because this
+harness does not add an external content-addressed action cache to those tools.
+That keeps the report honest while preserving the scenario slot for FrostBuild
+and remote-cache runners.
+
+Reports include host, platform, Python version, CPU count, load average, CPU
+governor, and turbo state. Use `--out bench/baselines/<date>-<host>.json` to
+commit a reproducible baseline artifact.
+
+## Current baseline
+
+The committed `bench/baselines/2026-07-05-E14.json` was captured on
+2026-07-05 with 8 jobs, CPU governor `performance`, and turbo enabled.
+
+Median timings in milliseconds:
+
+```text
+tool   size   clean      noop      incremental_leaf   hot_header
+ninja  1000   1065.252   5.867     7.519              1041.167
+make   1000   1229.647   129.719   126.531            1266.797
+ninja  10000  11655.407  49.755    57.099             11618.390
+make   10000  30857.041  2104.566  2144.258           31991.726
+```
+
+On this synthetic chain, Ninja is much faster than Make for no-op and single
+leaf incremental checks at 10k targets. Full-chain clean and hot-header rebuilds
+remain dominated by action process fan-out; those are the scenarios FrostBuild
+must avoid through pruning, caching, or coarser action batching before claiming
+end-to-end wins.
+
+Ninja no-op decomposition for the generated 10k workspace was captured with
+`ninja -d stats` because `strace` was not available on this machine:
+
+```text
+.ninja parse      1       11.0 ms
+.ninja_log load   1        5.0 ms
+.ninja_deps load  1        0.0 ms
+node stat         20003  176.8 ms
+```
+
+The high-level takeaway is that no-op cost is primarily dependency graph
+loading plus filesystem metadata checks; FrostBuild's no-op path should
+therefore track graph-load time and stat/cache lookup counts separately from
+action execution time.
+
 ## How to make the benchmark real
 
 Replace simulated `.fb` sources with actual adapters:

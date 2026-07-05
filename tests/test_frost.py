@@ -6,9 +6,11 @@ import shutil
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import frost
+import frost_bench
 
 
 class FrostTestCase(unittest.TestCase):
@@ -173,6 +175,38 @@ class JobserverTestCase(unittest.TestCase):
             self.assertTrue(os.get_inheritable(lease.server_write_fd))
         finally:
             lease.close()
+
+
+class FrostBenchTestCase(unittest.TestCase):
+    def test_parse_sizes_rejects_non_positive_values(self) -> None:
+        with self.assertRaises(Exception):
+            frost_bench.parse_sizes("1000,0")
+
+    @unittest.skipUnless(shutil.which("ninja") or shutil.which("make"), "requires ninja or make")
+    def test_standard_suite_reports_median_scenarios(self) -> None:
+        tool = "ninja" if shutil.which("ninja") else "make"
+        with tempfile.TemporaryDirectory() as tmp:
+            report = frost_bench.run_standard(
+                SimpleNamespace(
+                    suite="standard",
+                    tools=tool,
+                    sizes="3",
+                    iterations=1,
+                    jobs=1,
+                    workdir=tmp,
+                    keep_workdir=True,
+                ),
+            )
+
+        self.assertEqual(report["schema"], frost_bench.SCHEMA)
+        self.assertEqual(report["config"]["scenarios"], list(frost_bench.STANDARD_SCENARIOS))
+        self.assertEqual(len(report["results"]), 1)
+        scenarios = report["results"][0]["scenarios"]
+        self.assertGreaterEqual(scenarios["clean"]["median_ms"], 0)
+        self.assertGreaterEqual(scenarios["noop"]["median_ms"], 0)
+        self.assertGreaterEqual(scenarios["incremental_leaf"]["median_ms"], 0)
+        self.assertGreaterEqual(scenarios["hot_header"]["median_ms"], 0)
+        self.assertFalse(scenarios["cache_hit_rebuild"]["applicable"])
 
 
 if __name__ == "__main__":
