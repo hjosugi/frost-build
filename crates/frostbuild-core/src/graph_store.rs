@@ -43,6 +43,12 @@ impl GraphStore {
         let fingerprint = manifest_fingerprint(manifest, profile, platform)?;
         let path = store_path(root, profile, platform);
         if let Ok(graph) = load_graph(&path, Some(&fingerprint), None) {
+            // Keep the warm path viable for workspaces whose builds write
+            // outputs into the source tree: a stale sources stamp would
+            // otherwise force every future invocation through a full parse.
+            if load_graph(&path, None, Some(root)).is_err() {
+                save_graph(root, &path, &fingerprint, &manifest.manifest_paths, &graph)?;
+            }
             return Ok(graph);
         }
         let graph = BuildGraph::from_manifest_configured(manifest, profile, platform)?;
