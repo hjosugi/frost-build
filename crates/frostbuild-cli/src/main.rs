@@ -60,6 +60,10 @@ enum Cmd {
         /// Write a Chrome/Perfetto trace JSON
         #[arg(long)]
         trace: Option<PathBuf>,
+        /// Report scheduling measurements: makespan, worker utilization and
+        /// distance from the estimated critical path
+        #[arg(long)]
+        stats: bool,
         /// Execute through the per-workspace frostd service
         #[arg(long)]
         daemon: bool,
@@ -141,6 +145,19 @@ enum Cmd {
         profile: String,
         #[arg(long, default_value = frostbuild_core::manifest::HOST_PLATFORM)]
         platform: String,
+    },
+    /// Compare scheduling strategies without building anything
+    Simulate {
+        targets: Vec<String>,
+        /// Worker counts to sweep (default: 1,2,4,8,16 capped at this host)
+        #[arg(long, value_delimiter = ',')]
+        jobs: Option<Vec<usize>>,
+        #[arg(long, default_value = "debug")]
+        profile: String,
+        #[arg(long, default_value = frostbuild_core::manifest::HOST_PLATFORM)]
+        platform: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Query the target dependency graph (configuration-free)
     Query {
@@ -242,6 +259,7 @@ fn run(cli: Cli) -> Result<i32> {
             sandbox,
             check_determinism,
             trace,
+            stats,
             daemon,
             scheduler,
             estimator,
@@ -259,6 +277,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: check_determinism.is_some(),
                 trace,
+                stats,
                 test_mode: false,
                 daemon,
                 affected: false,
@@ -296,6 +315,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: false,
                 trace: None,
+                stats: false,
                 test_mode: true,
                 daemon,
                 affected,
@@ -514,6 +534,13 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Cmd::Simulate {
+            targets,
+            jobs,
+            profile,
+            platform,
+            json,
+        } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => {
             // The target-level graph is configuration-free: deps are
             // unconditional, so any profile/platform yields the same shape.
@@ -736,6 +763,7 @@ struct BuildRequest {
     sandbox: bool,
     check_determinism: bool,
     trace: Option<PathBuf>,
+    stats: bool,
     test_mode: bool,
     daemon: bool,
     affected: bool,
@@ -799,6 +827,9 @@ fn run_build_via_daemon(root: &std::path::Path, request: &BuildRequest) -> Resul
     ]);
     args.extend(["--profile".into(), request.profile.clone()]);
     args.extend(["--platform".into(), request.platform.clone()]);
+    if request.stats {
+        args.push("--stats".into());
+    }
     if let Some(trace) = &request.trace {
         args.extend(["--trace".into(), trace.to_string_lossy().into_owned()]);
     }
@@ -893,7 +924,16 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         no_cache: request.no_cache,
         sandbox: request.sandbox,
         check_determinism: request.check_determinism,
-        critical_path: matches!(request.scheduler, SchedulerArg::CriticalPath),
+        scheduler: match request.scheduler {
+            SchedulerArg::CriticalPath => frostbuild_exec::Scheduler::CriticalPath,
+            SchedulerArg::Fifo => frostbuild_exec::Scheduler::Fifo,
+        },
+        estimator: match request.estimator {
+            EstimatorArg::Heuristic => frostbuild_exec::Estimator::Heuristic,
+            EstimatorArg::Journal => frostbuild_exec::Estimator::Journal,
+            EstimatorArg::Static => frostbuild_exec::Estimator::Static,
+            EstimatorArg::Learned => frostbuild_exec::Estimator::Learned,
+        },
         ..BuildOptions::default()
     };
 
@@ -935,6 +975,27 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         graph.actions.len()
     ));
     println!("{summary}");
+    if request.stats {
+        let st = &report.stats;
+        println!(
+            "  strategy    {} / {}  (-j {})",
+            st.scheduler, st.estimator, st.jobs
+        );
+        println!(
+            "  makespan    {} ms   busy {} ms across {} executed actions",
+            st.makespan_ms, st.busy_ms, st.executed
+        );
+        println!(
+            "  utilization {:.1}% of worker capacity",
+            st.utilization_pct()
+        );
+        if let Some(ratio) = st.critical_path_ratio() {
+            println!(
+                "  critical    {} ms estimated  ({:.2}x makespan; 1.00x means the graph, not the ordering, is the limit)",
+                st.critical_path_ms, ratio
+            );
+        }
+    }
     if failed > 0 {
         println!("failure summary (first 10):");
         for result in report
@@ -1040,4 +1101,120 @@ fn resolve_targets(graph: &BuildGraph, requested: Vec<String>) -> Result<Vec<Str
 
 fn default_jobs() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// Compare scheduling strategies by planning them, not by running them.
+///
+/// Every strategy is scored against the durations recorded in the journal, so
+/// the numbers are deterministic and no cache is touched. Simulation models
+/// ordering, not contention: treat it as "which strategy orders this graph
+/// best", and calibrate absolute times against a real `build --stats` run.
+fn run_simulate(
+    root: &std::path::Path,
+    targets: Vec<String>,
+    jobs: Option<Vec<usize>>,
+    profile: &str,
+    platform: &str,
+    json: bool,
+) -> Result<i32> {
+    use frostbuild_bench::{render_table, Sweep, ESTIMATORS, SCHEDULERS};
+    use frostbuild_exec::Schedule;
+
+    let graph = load_graph(root, profile, platform)?;
+    let requested = resolve_targets(&graph, targets)?;
+    let closure = graph.action_closure(&requested)?;
+    if closure.is_empty() {
+        bail!("nothing to simulate: the requested targets have no actions");
+    }
+    let journal = Journal::load(root);
+    let host = default_jobs();
+    let jobs = jobs.unwrap_or_else(|| {
+        [1, 2, 4, 8, 16]
+            .into_iter()
+            .filter(|&j| j <= host.max(1))
+            .collect()
+    });
+    let jobs = if jobs.is_empty() { vec![1] } else { jobs };
+
+    let sweep = Sweep::run(&jobs, &SCHEDULERS, &ESTIMATORS, |scheduler, estimator| {
+        Schedule::plan(&graph, closure.clone(), &journal, scheduler, estimator)
+    });
+
+    let recorded = graph
+        .actions
+        .iter()
+        .filter(|a| {
+            journal
+                .actions
+                .get(&frostbuild_exec::journal_id(&graph, a))
+                .is_some_and(|e| e.duration_ms > 0)
+        })
+        .count();
+
+    if json {
+        let points: Vec<_> = sweep
+            .points
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "scheduler": p.scheduler.as_str(),
+                    "estimator": p.estimator.as_str(),
+                    "jobs": p.simulation.jobs,
+                    "makespan_ms": p.simulation.makespan_ms,
+                    "utilization_pct": p.simulation.utilization_pct(),
+                    "over_critical_path_pct": p.simulation.over_critical_path_pct(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "actions": sweep.actions,
+                "actions_with_recorded_duration": recorded,
+                "critical_path_ms": sweep.critical_path_ms,
+                "work_ms": sweep.work_ms,
+                "points": points,
+            }))?
+        );
+        return Ok(0);
+    }
+
+    println!(
+        "frost: simulating {} actions from the journal (no build, no cache writes)",
+        sweep.actions
+    );
+    if recorded < sweep.actions {
+        println!(
+            "  note: {} of {} actions have no recorded duration; those fall back to estimates",
+            sweep.actions - recorded,
+            sweep.actions
+        );
+    }
+    println!();
+    println!(
+        "  critical path  {} ms   total work  {} ms",
+        sweep.critical_path_ms, sweep.work_ms
+    );
+    println!("  no schedule can finish faster than the critical path.");
+    println!();
+    print!("{}", render_table(&sweep));
+    println!();
+    if let Some(best) = sweep.best() {
+        let over = best
+            .simulation
+            .over_critical_path_pct()
+            .map(|p| format!("{p:.0}% above the critical path"))
+            .unwrap_or_else(|| "critical path unknown".to_string());
+        println!(
+            "  fastest: {} / {} at -j {} -> {} ms ({}, {:.0}% worker utilization)",
+            best.scheduler.as_str(),
+            best.estimator.as_str(),
+            best.simulation.jobs,
+            best.simulation.makespan_ms,
+            over,
+            best.simulation.utilization_pct()
+        );
+    }
+    println!("  compare against a real run: frost build --stats -j <n>");
+    Ok(0)
 }

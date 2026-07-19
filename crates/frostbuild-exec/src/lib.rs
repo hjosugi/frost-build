@@ -61,7 +61,56 @@ pub struct BuildOptions {
     pub sandbox: bool,
     pub check_determinism: bool,
     pub cas_max_bytes: u64,
-    pub critical_path: bool,
+    pub scheduler: Scheduler,
+    pub estimator: Estimator,
+}
+
+/// Ready-queue ordering. Both schedulers run the same actions and produce the
+/// same outputs; they differ only in the order independent work is started,
+/// which shows up as makespan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scheduler {
+    /// Start the action with the longest remaining dependency chain first.
+    CriticalPath,
+    /// Start whichever became ready first.
+    Fifo,
+}
+
+/// How the scheduler guesses an action's duration. Only affects ordering, so a
+/// bad estimate costs makespan, never correctness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Estimator {
+    /// Fixed cost per action kind. No history needed.
+    Heuristic,
+    /// This action's own last recorded duration; heuristic when unseen.
+    Journal,
+    /// Every action costs the same, so priority is pure graph depth.
+    Static,
+    /// This action's own history when present, otherwise the median duration
+    /// of the same kind across this workspace's journal. The difference from
+    /// `Journal` is entirely in the unseen case — new and changed actions get
+    /// a workspace-calibrated estimate instead of a hardcoded constant.
+    Learned,
+}
+
+impl Scheduler {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scheduler::CriticalPath => "critical-path",
+            Scheduler::Fifo => "fifo",
+        }
+    }
+}
+
+impl Estimator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Estimator::Heuristic => "heuristic",
+            Estimator::Journal => "journal",
+            Estimator::Static => "static",
+            Estimator::Learned => "learned",
+        }
+    }
 }
 
 impl Default for BuildOptions {
@@ -75,7 +124,8 @@ impl Default for BuildOptions {
             sandbox: false,
             check_determinism: false,
             cas_max_bytes: 10 * 1024 * 1024 * 1024,
-            critical_path: true,
+            scheduler: Scheduler::CriticalPath,
+            estimator: Estimator::Journal,
         }
     }
 }
@@ -107,6 +157,48 @@ pub struct ActionResult {
 pub struct BuildReport {
     /// One entry per closure action, in deterministic graph order.
     pub results: Vec<ActionResult>,
+    /// Scheduling measurements, so two strategies can be compared from a
+    /// single run rather than by wall-clock feel.
+    pub stats: BuildStats,
+}
+
+/// What the chosen scheduler and estimator actually bought.
+///
+/// `busy_ms / (makespan_ms * jobs)` is the fraction of the available worker
+/// time that was spent executing; the gap is idle workers waiting on the
+/// dependency graph, which is exactly what a scheduler can improve.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildStats {
+    pub scheduler: &'static str,
+    pub estimator: &'static str,
+    pub jobs: usize,
+    /// Wall time of the execution phase.
+    pub makespan_ms: u64,
+    /// Sum of executed action durations.
+    pub busy_ms: u64,
+    /// Estimated longest dependency chain, before execution.
+    pub critical_path_ms: u64,
+    /// Estimated total work, before execution.
+    pub estimated_work_ms: u64,
+    pub executed: usize,
+}
+
+impl BuildStats {
+    /// Executed work over available worker time, in percent.
+    pub fn utilization_pct(&self) -> f64 {
+        let capacity = self.makespan_ms.saturating_mul(self.jobs as u64);
+        if capacity == 0 {
+            return 0.0;
+        }
+        100.0 * self.busy_ms as f64 / capacity as f64
+    }
+
+    /// How close the run came to the estimated critical path. A ratio near 1
+    /// means the schedule is bounded by the graph, not by the ordering, so a
+    /// better scheduler cannot help.
+    pub fn critical_path_ratio(&self) -> Option<f64> {
+        (self.critical_path_ms > 0).then(|| self.makespan_ms as f64 / self.critical_path_ms as f64)
+    }
 }
 
 impl BuildReport {
@@ -157,6 +249,12 @@ pub struct Engine<'a> {
     closure_index: HashMap<ActionId, usize>,
     /// Local indices of in-closure dependents, per local action.
     dependents: Vec<Vec<usize>>,
+    /// Ready-queue key per local action: estimated longest remaining chain
+    /// (zero under the FIFO scheduler).
+    priority: Vec<u64>,
+    /// Estimated makespan lower bound and total work, for the stats report.
+    critical_path_ms: u64,
+    estimated_work_ms: u64,
     toolchain_hash: String,
     opts: BuildOptions,
     cache: Mutex<HashCache>,
@@ -166,13 +264,40 @@ pub struct Engine<'a> {
     cas: LocalCas,
 }
 
-impl<'a> Engine<'a> {
-    pub fn new(
-        root: &'a Path,
-        graph: &'a BuildGraph,
+/// The scheduling decision, separated from execution.
+///
+/// The engine and any measurement of the engine must agree on what the
+/// scheduler would do, so both build their queue from this one type. A
+/// simulator that recomputed priorities on its own would be describing a
+/// different scheduler than the one that runs.
+#[derive(Debug, Clone)]
+pub struct Schedule {
+    /// Actions in deterministic closure order; every index below is local.
+    pub closure: Vec<ActionId>,
+    pub closure_index: HashMap<ActionId, usize>,
+    /// In-closure dependents of each action.
+    pub dependents: Vec<Vec<usize>>,
+    /// Unfinished producers each action waits on.
+    pub waiting: Vec<usize>,
+    /// Estimated duration of each action.
+    pub duration_ms: Vec<u64>,
+    /// Ready-queue key: estimated longest remaining chain, or zero for FIFO.
+    pub priority: Vec<u64>,
+    /// Longest chain by estimated duration: the makespan no scheduler can beat.
+    pub critical_path_ms: u64,
+    /// Local indices along that chain, in execution order.
+    pub critical_path: Vec<usize>,
+    /// Sum of all estimated durations.
+    pub work_ms: u64,
+}
+
+impl Schedule {
+    pub fn plan(
+        graph: &BuildGraph,
         closure: Vec<ActionId>,
-        toolchain_hash: String,
-        opts: BuildOptions,
+        journal: &Journal,
+        scheduler: Scheduler,
+        estimator: Estimator,
     ) -> Self {
         let closure_index: HashMap<ActionId, usize> =
             closure.iter().enumerate().map(|(i, &a)| (a, i)).collect();
@@ -198,24 +323,174 @@ impl<'a> Engine<'a> {
             }
         }
 
-        let journal = Journal::load(root);
+        let estimate = Estimates::new(estimator, graph, journal);
+        // Longest remaining chain, computed once in reverse topological order.
+        // The same vector is reused when dependents become ready, so priority
+        // is consistent for the whole build rather than only the first wave.
         let mut priority = vec![0u64; closure.len()];
+        let mut duration_ms = vec![0u64; closure.len()];
         for local in (0..closure.len()).rev() {
             let action = &graph.actions[closure[local]];
-            let own = journal
-                .actions
-                .get(&journal_id(graph, action))
-                .map_or(default_duration(action.kind), |e| e.duration_ms.max(1));
+            duration_ms[local] = estimate.of(graph, action, journal);
             let tail = dependents[local]
                 .iter()
                 .map(|&dependent| priority[dependent])
                 .max()
                 .unwrap_or(0);
-            priority[local] = own.saturating_add(tail);
+            priority[local] = duration_ms[local].saturating_add(tail);
         }
-        if !opts.critical_path {
+        let critical_path_ms = priority.iter().copied().max().unwrap_or(0);
+        let work_ms = duration_ms.iter().sum();
+
+        // Walk the chain that realizes the longest path, so a report can name
+        // the actions that actually bound the build.
+        let mut critical_path = Vec::new();
+        if let Some(mut cur) = (0..closure.len())
+            .filter(|&i| waiting[i] == 0)
+            .max_by_key(|&i| priority[i])
+        {
+            loop {
+                critical_path.push(cur);
+                match dependents[cur].iter().copied().max_by_key(|&d| priority[d]) {
+                    Some(next) => cur = next,
+                    None => break,
+                }
+            }
+        }
+
+        if scheduler == Scheduler::Fifo {
             priority.fill(0);
         }
+        Self {
+            closure,
+            closure_index,
+            dependents,
+            waiting,
+            duration_ms,
+            priority,
+            critical_path_ms,
+            critical_path,
+            work_ms,
+        }
+    }
+
+    /// Makespan this schedule would reach with `jobs` workers, by list
+    /// scheduling over its own estimated durations. Deterministic: no build
+    /// runs, no cache is touched, and repeated calls give the same answer.
+    pub fn simulate(&self, jobs: usize) -> Simulation {
+        self.simulate_against(jobs, &self.duration_ms)
+    }
+
+    /// Simulate this schedule's *ordering* against reference durations.
+    ///
+    /// Comparing two estimators requires one clock. An estimator decides the
+    /// order actions start in; it does not change how long they take. Scoring
+    /// each estimator against its own guesses would rank the most optimistic
+    /// guesser first — `static` calls every action 1 ms and would "win" every
+    /// sweep. Pass the best available durations (the journal's recorded ones)
+    /// as the reference and the comparison measures ordering quality alone.
+    pub fn simulate_against(&self, jobs: usize, durations: &[u64]) -> Simulation {
+        let jobs = jobs.max(1);
+        let n = self.closure.len();
+        assert_eq!(
+            durations.len(),
+            n,
+            "reference durations must cover the closure"
+        );
+        let mut waiting = self.waiting.clone();
+        let mut ready: BinaryHeap<(u64, Reverse<usize>)> = (0..n)
+            .filter(|&i| waiting[i] == 0)
+            .map(|i| (self.priority[i], Reverse(i)))
+            .collect();
+        // (completion time, local index), earliest first.
+        let mut running: BinaryHeap<(Reverse<u64>, Reverse<usize>)> = BinaryHeap::new();
+        let mut now = 0u64;
+        let mut busy = 0u64;
+        let mut done = 0usize;
+
+        while done < n {
+            while running.len() < jobs {
+                let Some((_, Reverse(local))) = ready.pop() else {
+                    break;
+                };
+                running.push((Reverse(now + durations[local]), Reverse(local)));
+                busy += durations[local];
+            }
+            let Some((Reverse(finish), Reverse(local))) = running.pop() else {
+                // Nothing running and nothing ready: the graph is exhausted or
+                // cyclic. The graph builder rejects cycles, so this is the end.
+                break;
+            };
+            now = finish;
+            done += 1;
+            for &dependent in &self.dependents[local] {
+                waiting[dependent] -= 1;
+                if waiting[dependent] == 0 {
+                    ready.push((self.priority[dependent], Reverse(dependent)));
+                }
+            }
+        }
+
+        Simulation {
+            jobs,
+            makespan_ms: now,
+            busy_ms: busy,
+            critical_path_ms: self.critical_path_ms,
+            work_ms: self.work_ms,
+            actions: n,
+        }
+    }
+}
+
+/// Result of scheduling without executing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Simulation {
+    pub jobs: usize,
+    pub makespan_ms: u64,
+    pub busy_ms: u64,
+    pub critical_path_ms: u64,
+    pub work_ms: u64,
+    pub actions: usize,
+}
+
+impl Simulation {
+    pub fn utilization_pct(&self) -> f64 {
+        let capacity = self.makespan_ms.saturating_mul(self.jobs as u64);
+        if capacity == 0 {
+            return 0.0;
+        }
+        100.0 * self.busy_ms as f64 / capacity as f64
+    }
+
+    /// How far above the unbeatable lower bound this schedule lands.
+    pub fn over_critical_path_pct(&self) -> Option<f64> {
+        (self.critical_path_ms > 0).then(|| {
+            100.0 * (self.makespan_ms as f64 - self.critical_path_ms as f64)
+                / self.critical_path_ms as f64
+        })
+    }
+}
+
+impl<'a> Engine<'a> {
+    pub fn new(
+        root: &'a Path,
+        graph: &'a BuildGraph,
+        closure: Vec<ActionId>,
+        toolchain_hash: String,
+        opts: BuildOptions,
+    ) -> Self {
+        let journal = Journal::load(root);
+        let plan = Schedule::plan(graph, closure, &journal, opts.scheduler, opts.estimator);
+        let Schedule {
+            closure,
+            closure_index,
+            dependents,
+            waiting,
+            priority,
+            critical_path_ms,
+            work_ms: estimated_work_ms,
+            ..
+        } = plan;
         let ready = waiting
             .iter()
             .enumerate()
@@ -231,6 +506,9 @@ impl<'a> Engine<'a> {
             closure,
             closure_index,
             dependents,
+            priority,
+            critical_path_ms,
+            estimated_work_ms,
             toolchain_hash,
             opts,
             cache: Mutex::new(HashCache::load(root)),
@@ -250,11 +528,13 @@ impl<'a> Engine<'a> {
 
     pub fn run(self) -> Result<BuildReport> {
         let workers = self.opts.jobs.max(1).min(self.closure.len().max(1));
+        let started = std::time::Instant::now();
         std::thread::scope(|scope| {
             for _ in 0..workers {
                 scope.spawn(|| self.worker());
             }
         });
+        let makespan_ms = started.elapsed().as_millis() as u64;
 
         let shared = self.shared.into_inner().unwrap();
         if !self.opts.dry_run {
@@ -279,7 +559,24 @@ impl<'a> Engine<'a> {
                 outcome,
             });
         }
-        Ok(BuildReport { results })
+        let (busy_ms, executed) =
+            results
+                .iter()
+                .fold((0u64, 0usize), |(b, n), r| match r.outcome {
+                    Outcome::Executed { duration_ms, .. } => (b + duration_ms, n + 1),
+                    _ => (b, n),
+                });
+        let stats = BuildStats {
+            scheduler: self.opts.scheduler.as_str(),
+            estimator: self.opts.estimator.as_str(),
+            jobs: workers,
+            makespan_ms,
+            busy_ms,
+            critical_path_ms: self.critical_path_ms,
+            estimated_work_ms: self.estimated_work_ms,
+            executed,
+        };
+        Ok(BuildReport { results, stats })
     }
 
     fn worker(&self) {
@@ -791,18 +1088,18 @@ impl<'a> Engine<'a> {
             .envs(env)
             .env("LC_ALL", "C")
             .env("LANG", "C")
+            // Actions never read from the terminal. Inheriting stdin lets a
+            // command that expects input (`cat > out` when ${in} expanded to
+            // nothing, an accidental interactive prompt) block forever with no
+            // output and no diagnostic, which looks exactly like a slow build.
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         Ok(command)
     }
 
     fn priority(&self, local: usize) -> u64 {
-        if self.opts.critical_path {
-            default_duration(self.graph.actions[self.closure[local]].kind)
-                + self.dependents[local].len() as u64
-        } else {
-            0
-        }
+        self.priority[local]
     }
 
     fn print_progress(
@@ -849,6 +1146,82 @@ fn default_duration(kind: ActionKind) -> u64 {
         ActionKind::Compile => 20,
         ActionKind::Genrule => 10,
         ActionKind::Test => 50,
+    }
+}
+
+/// Duration estimates for scheduling. Estimates only order work, so an
+/// inaccurate model costs makespan and never correctness.
+struct Estimates {
+    kind: Estimator,
+    /// Median observed duration per action kind, learned from this
+    /// workspace's journal. Empty unless the learned estimator is selected.
+    learned: BTreeMap<u8, u64>,
+}
+
+impl Estimates {
+    fn new(kind: Estimator, graph: &BuildGraph, journal: &Journal) -> Self {
+        let mut learned = BTreeMap::new();
+        if kind == Estimator::Learned {
+            let mut by_kind: BTreeMap<u8, Vec<u64>> = BTreeMap::new();
+            let mut kind_of: HashMap<&str, ActionKind> = HashMap::new();
+            for action in &graph.actions {
+                kind_of.insert(action.id.as_str(), action.kind);
+            }
+            for (id, entry) in &journal.actions {
+                // Journal ids are `action@profile[@platform]`; the action id
+                // is the prefix before the first '@'.
+                let action_id = id.split('@').next().unwrap_or(id);
+                if let Some(&k) = kind_of.get(action_id) {
+                    if entry.duration_ms > 0 {
+                        by_kind
+                            .entry(kind_code(k))
+                            .or_default()
+                            .push(entry.duration_ms);
+                    }
+                }
+            }
+            for (k, mut samples) in by_kind {
+                samples.sort_unstable();
+                learned.insert(k, samples[samples.len() / 2].max(1));
+            }
+        }
+        Self { kind, learned }
+    }
+
+    fn of(
+        &self,
+        graph: &BuildGraph,
+        action: &frostbuild_core::graph::ActionNode,
+        journal: &Journal,
+    ) -> u64 {
+        let recorded = || {
+            journal
+                .actions
+                .get(&journal_id(graph, action))
+                .map(|e| e.duration_ms)
+                .filter(|&d| d > 0)
+        };
+        match self.kind {
+            Estimator::Static => 1,
+            Estimator::Heuristic => default_duration(action.kind),
+            Estimator::Journal => recorded().unwrap_or_else(|| default_duration(action.kind)),
+            Estimator::Learned => recorded().unwrap_or_else(|| {
+                self.learned
+                    .get(&kind_code(action.kind))
+                    .copied()
+                    .unwrap_or_else(|| default_duration(action.kind))
+            }),
+        }
+    }
+}
+
+fn kind_code(kind: ActionKind) -> u8 {
+    match kind {
+        ActionKind::Compile => 0,
+        ActionKind::Archive => 1,
+        ActionKind::Link => 2,
+        ActionKind::Genrule => 3,
+        ActionKind::Test => 4,
     }
 }
 

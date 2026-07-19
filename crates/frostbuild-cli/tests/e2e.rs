@@ -579,3 +579,91 @@ fn sandbox_rejects_undeclared_workspace_header() {
         "undeclared header was not diagnosed:\n{out}"
     );
 }
+
+#[test]
+fn strategies_are_selectable_and_measured() {
+    let ws = Workspace::new("strategies");
+    for (scheduler, estimator) in [
+        ("critical-path", "journal"),
+        ("critical-path", "learned"),
+        ("fifo", "static"),
+        ("fifo", "heuristic"),
+    ] {
+        let dir = ws.dir.join(".frost");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (ok, out) = ws.frost(&[
+            "build",
+            "--scheduler",
+            scheduler,
+            "--estimator",
+            estimator,
+            "--stats",
+        ]);
+        assert!(ok, "{scheduler}/{estimator} failed:\n{out}");
+        // Every strategy runs the same actions and reports what it cost, so a
+        // comparison never depends on rerunning with a stopwatch.
+        assert!(out.contains("5 executed"), "{out}");
+        assert!(
+            out.contains(&format!("strategy    {scheduler} / {estimator}")),
+            "stats must name the strategy in effect:\n{out}"
+        );
+        assert!(out.contains("utilization"), "{out}");
+        assert!(out.contains("critical"), "{out}");
+    }
+}
+
+#[test]
+fn action_reading_stdin_does_not_hang_the_build() {
+    let ws = Workspace::new("stdin");
+    // `cat` with no operand reads stdin. If actions inherit the terminal this
+    // blocks forever and the build looks slow rather than broken.
+    ws.append(
+        "frost.toml",
+        "\n[target.reads_stdin]\nkind = \"genrule\"\n\
+         cmd = \"cat > ${out}\"\noutputs = [\"gen/stdin.txt\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build", "reads_stdin"]);
+    assert!(ok, "build must finish rather than block on stdin:\n{out}");
+    assert_eq!(
+        std::fs::read_to_string(ws.dir.join("gen/stdin.txt")).unwrap(),
+        "",
+        "stdin is empty, so the action produces an empty file"
+    );
+}
+
+#[test]
+fn simulate_compares_strategies_without_building() {
+    let ws = Workspace::new("simulate");
+    let (ok, out) = ws.build_explain();
+    assert!(ok, "{out}");
+    let before = std::fs::read(ws.dir.join(".frost/journal.bin")).unwrap();
+
+    let (ok, out) = ws.frost(&["simulate", "--jobs", "1,4"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("critical path"), "{out}");
+    assert!(out.contains("critical-path / journal"), "{out}");
+    assert!(out.contains("fifo / journal"), "{out}");
+    assert!(out.contains("-j 4"), "{out}");
+    assert!(out.contains("fastest:"), "{out}");
+
+    // Simulation must not touch build state: it is safe to run mid-session.
+    assert_eq!(
+        std::fs::read(ws.dir.join(".frost/journal.bin")).unwrap(),
+        before,
+        "simulate must not write to the journal"
+    );
+
+    let (ok, json) = ws.frost(&["simulate", "--json"]);
+    assert!(ok, "{json}");
+    let parsed: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+    assert_eq!(parsed["actions"], 5);
+    let points = parsed["points"].as_array().unwrap();
+    assert!(!points.is_empty());
+    let cp = parsed["critical_path_ms"].as_u64().unwrap();
+    for p in points {
+        assert!(
+            p["makespan_ms"].as_u64().unwrap() >= cp,
+            "no schedule beats the critical path: {p}"
+        );
+    }
+}
