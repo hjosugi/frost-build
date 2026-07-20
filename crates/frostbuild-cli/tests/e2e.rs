@@ -431,6 +431,24 @@ fn cxx_glob_test_and_compdb_are_usable() {
 }
 
 #[test]
+fn test_all_selects_every_test_target() {
+    let ws = Workspace::new("test-all");
+    ws.append(
+        "frost.toml",
+        "\n[target.first]\nkind = \"test\"\ncmd = \"true\"\n\
+         \n[target.second]\nkind = \"test\"\ncmd = \"true\"\n",
+    );
+
+    // An explicit target would normally select only that target. `--all`
+    // intentionally expands the selection to every declared test target.
+    let (ok, out) = ws.frost(&["test", "first", "--all", "--no-cache"]);
+    assert!(ok && out.contains("tests: 2 passed"), "{out}");
+
+    let (ok, out) = ws.frost(&["test", "--all", "--predictive"]);
+    assert!(!ok && out.contains("cannot be used with"), "{out}");
+}
+
+#[test]
 fn multi_package_labels_build_across_packages() {
     let ws = Workspace::new("packages");
     std::fs::create_dir_all(ws.dir.join("lib")).unwrap();

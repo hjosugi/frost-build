@@ -83,7 +83,7 @@ enum Cmd {
         affected: bool,
         #[arg(long)]
         predictive: bool,
-        #[arg(long, conflicts_with = "affected")]
+        #[arg(long, conflicts_with_all = ["affected", "predictive"])]
         all: bool,
         #[arg(long)]
         no_cache: bool,
@@ -288,6 +288,7 @@ fn run(cli: Cli) -> Result<i32> {
                 daemon,
                 affected: false,
                 predictive: false,
+                all: false,
                 scheduler,
                 estimator,
             },
@@ -298,7 +299,7 @@ fn run(cli: Cli) -> Result<i32> {
             keep_going,
             affected,
             predictive,
-            all: _,
+            all,
             no_cache,
             explain,
             profile,
@@ -326,6 +327,7 @@ fn run(cli: Cli) -> Result<i32> {
                 daemon,
                 affected,
                 predictive,
+                all,
                 scheduler,
                 estimator,
             },
@@ -775,6 +777,7 @@ struct BuildRequest {
     daemon: bool,
     affected: bool,
     predictive: bool,
+    all: bool,
     scheduler: SchedulerArg,
     estimator: EstimatorArg,
 }
@@ -807,6 +810,9 @@ fn run_build_via_daemon(root: &std::path::Path, request: &BuildRequest) -> Resul
     }
     if request.predictive {
         args.push("--predictive".into());
+    }
+    if request.all {
+        args.push("--all".into());
     }
     if request.sandbox {
         args.push("--sandbox".into());
@@ -863,7 +869,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     }
     let graph = load_graph(root, &request.profile, &request.platform)?;
     let toolchain = toolchain_closure_fingerprint_cached(root, &graph.toolchain)?;
-    let mut requested = if request.test_mode && request.targets.is_empty() {
+    let mut requested = if request.test_mode && (request.all || request.targets.is_empty()) {
         graph
             .targets
             .values()
