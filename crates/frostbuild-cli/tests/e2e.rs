@@ -55,13 +55,15 @@ impl Workspace {
 
     #[cfg(unix)]
     fn frost_pty(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+        let command_line = pty_command_line(&self.dir, args);
         let mut command = Command::new("script");
         command
-            .args(["--quiet", "--return", "/dev/null", "--"])
-            .arg(frost_bin())
-            .arg("-C")
-            .arg(&self.dir)
-            .args(args);
+            // `-- <command> <args...>` was added to newer util-linux
+            // releases. Ubuntu's CI image still requires the long-standing
+            // `-c <command>` form.
+            .args(["-q", "-e", "-c"])
+            .arg(command_line)
+            .arg("/dev/null");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -95,6 +97,25 @@ impl Workspace {
         assert!(out.status.success(), "built app should run");
         String::from_utf8_lossy(&out.stdout).to_string()
     }
+}
+
+#[cfg(unix)]
+fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
+    let command = std::iter::once(frost_bin().to_string())
+        .chain(std::iter::once("-C".to_string()))
+        .chain(std::iter::once(workspace.to_string_lossy().into_owned()))
+        .chain(args.iter().map(|arg| (*arg).to_string()))
+        .map(|arg| shell_quote(&arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // `script -c` starts a shell on older util-linux. Replacing that shell
+    // keeps Frost as the foreground process that receives raw-mode Ctrl-C.
+    format!("exec {command}")
+}
+
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 impl Drop for Workspace {
@@ -229,11 +250,9 @@ outputs = ["slow.txt"]
     );
     let started = std::time::Instant::now();
     let mut child = Command::new("script")
-        .args(["--quiet", "--return", "/dev/null", "--"])
-        .arg(frost_bin())
-        .arg("-C")
-        .arg(&ws.dir)
-        .arg("build")
+        .args(["-q", "-e", "-c"])
+        .arg(pty_command_line(&ws.dir, &["build"]))
+        .arg("/dev/null")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
