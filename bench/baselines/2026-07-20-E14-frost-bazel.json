@@ -1,0 +1,198 @@
+{
+  "config": {
+    "iterations": 5,
+    "jobs": 8,
+    "scenarios": [
+      "clean",
+      "noop",
+      "incremental_leaf",
+      "hot_header",
+      "cache_hit_rebuild"
+    ],
+    "sizes": [
+      1000
+    ],
+    "tools": [
+      "frost",
+      "bazel"
+    ]
+  },
+  "digest": "5b1863fa54297525dbe40bf373c5dde14bfe868549b7aaf4ad48f55a84619353",
+  "environment": {
+    "captured_at": "2026-07-20T05:07:27Z",
+    "cpu_count": 8,
+    "cpu_governor": "performance",
+    "hostname": "E14",
+    "load_avg": [
+      10.958984375,
+      14.92138671875,
+      15.53857421875
+    ],
+    "machine": "x86_64",
+    "platform": "Linux-7.1.2-3-cachyos-x86_64-with-glibc2.42",
+    "processor": "",
+    "python": "3.14.6",
+    "turbo": "enabled"
+  },
+  "generated_at": "2026-07-20T05:07:27Z",
+  "results": [
+    {
+      "graph": {
+        "action_count": 1000,
+        "dependency_edge_count": 999,
+        "edge_digest_sha256": "6437bac11b0fbca0627f3519de4fce1e17726beeac818fbe5a6e2165ed501eb8",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "linear-chain"
+      },
+      "iterations": 5,
+      "jobs": 8,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 1404.017,
+          "median_ms": 661.138,
+          "min_ms": 503.785,
+          "samples_ms": [
+            1404.017,
+            864.43,
+            641.029,
+            661.138,
+            503.785
+          ]
+        },
+        "clean": {
+          "max_ms": 9331.981,
+          "median_ms": 5212.958,
+          "min_ms": 4302.377,
+          "samples_ms": [
+            9241.079,
+            9331.981,
+            5212.958,
+            5130.198,
+            4302.377
+          ]
+        },
+        "hot_header": {
+          "max_ms": 3382.652,
+          "median_ms": 3036.959,
+          "min_ms": 2565.474,
+          "samples_ms": [
+            2565.474,
+            2604.133,
+            3382.652,
+            3036.959,
+            3255.534
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 65.503,
+          "median_ms": 61.136,
+          "min_ms": 60.2,
+          "samples_ms": [
+            65.503,
+            60.2,
+            62.558,
+            61.136,
+            61.014
+          ]
+        },
+        "noop": {
+          "max_ms": 61.89,
+          "median_ms": 55.335,
+          "min_ms": 54.614,
+          "samples_ms": [
+            56.989,
+            55.335,
+            54.614,
+            61.89,
+            55.081
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "frost",
+      "version": "frost 0.2.0"
+    },
+    {
+      "graph": {
+        "action_count": 1000,
+        "dependency_edge_count": 999,
+        "edge_digest_sha256": "6437bac11b0fbca0627f3519de4fce1e17726beeac818fbe5a6e2165ed501eb8",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "linear-chain"
+      },
+      "iterations": 5,
+      "jobs": 8,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "applicable": false,
+          "reason": "Bazel has no external CAS configured in this local harness"
+        },
+        "clean": {
+          "max_ms": 30112.067,
+          "median_ms": 17349.777,
+          "min_ms": 13910.458,
+          "samples_ms": [
+            19281.144,
+            13910.458,
+            17349.777,
+            30112.067,
+            15795.344
+          ]
+        },
+        "hot_header": {
+          "max_ms": 10762.586,
+          "median_ms": 8639.148,
+          "min_ms": 7379.638,
+          "samples_ms": [
+            8639.148,
+            10311.193,
+            10762.586,
+            7485.934,
+            7379.638
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 182.129,
+          "median_ms": 176.73,
+          "min_ms": 167.356,
+          "samples_ms": [
+            179.526,
+            176.73,
+            167.356,
+            176.167,
+            182.129
+          ]
+        },
+        "noop": {
+          "max_ms": 225.18,
+          "median_ms": 175.482,
+          "min_ms": 148.285,
+          "samples_ms": [
+            225.18,
+            193.626,
+            156.169,
+            148.285,
+            175.482
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "bazel",
+      "version": "bazel 9.1.0"
+    }
+  ],
+  "schema": "frost-bench-standard-v2",
+  "suite": "standard"
+}

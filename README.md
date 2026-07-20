@@ -75,7 +75,7 @@ frost -C myrepo daemon status
   `build --stats` to calibrate it against a real run
 - Unix-socket daemon, recursive watcher, protocol versioning and fallback
 - opt-in Linux bubblewrap sandbox and process-group cancellation
-- Ninja subset importer and reproducible Ninja/Make/Frost benchmark harness
+- Ninja subset importer and reproducible Ninja/Make/Frost/Bazel benchmark harness
 
 Remote cache/execution remain v2 protocol work; the local model is deliberately
 REAPI-translatable. See [remote cache](docs/07_remote_cache_study.md) and
@@ -141,11 +141,18 @@ python3 -m unittest discover -s tests
 
 ./frost-bench run --suite standard \
   --tools frost,ninja,make --sizes 1000,10000 --iterations 5 --jobs 8
+
+BAZEL_BIN=/path/to/bazel scripts/compare_bazel.sh
 ```
 
 Results include host/load metadata and medians. Existing baseline JSON is in
-`bench/baselines/`; `scripts/reproduce.sh` reproduces the published runs. A 2x
-claim is workload-specific, never universal, and must be backed by harness JSON.
+`bench/baselines/`; `scripts/reproduce.sh` reproduces the published runs.
+The checked-in real Bazel 9.1.0 comparison uses the same generated 1,000-action
+linear graph for both tools and verifies its target and dependency-edge sets
+before timing. On the recorded E14 run, Frost was 3.17x faster for no-op and
+2.89x faster for a leaf-only rebuild. This is a workload-specific local result,
+not a universal speed claim; the report also records a high starting load
+average and that Bazel had no external CAS configured.
 
 ## Installation and versioning
 

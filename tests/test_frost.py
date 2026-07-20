@@ -310,6 +310,31 @@ class FrostBenchTestCase(unittest.TestCase):
         with self.assertRaises(Exception):
             frost_bench.parse_sizes("1000,0")
 
+    def test_bazel_and_frost_describe_the_same_action_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            frost_bench.generate_workspace(root, 4)
+            manifest = (root / "frost.toml").read_text(encoding="utf-8")
+            bazel = (root / "BUILD.bazel").read_text(encoding="utf-8")
+
+        for index in range(4):
+            name = frost_bench.target_name(index)
+            self.assertIn(f"[target.{name}]", manifest)
+            self.assertIn(f'name = "{name}"', bazel)
+        self.assertEqual(manifest.count('kind = "genrule"'), 4)
+        self.assertEqual(bazel.count("genrule("), 4)
+        self.assertEqual(
+            frost_bench.graph_contract(4),
+            {
+                "shape": "linear-chain",
+                "action_count": 4,
+                "dependency_edge_count": 3,
+                "edge_digest_sha256": "cacb186fa9fdae8bc99d9b7ac4d473f61b75f929bdc00fb7ab2be45c102e9217",
+                "per_action_source_inputs": ["src/nodeNNNNN.txt", "include/hot.h"],
+                "manifests_verified_equivalent": True,
+            },
+        )
+
     @unittest.skipUnless(shutil.which("ninja") or shutil.which("make"), "requires ninja or make")
     def test_standard_suite_reports_median_scenarios(self) -> None:
         tool = "ninja" if shutil.which("ninja") else "make"

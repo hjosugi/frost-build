@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Median benchmark harness for generated Ninja/Make workspaces."""
+"""Median benchmark harness for equivalent generated build graphs."""
 
 from __future__ import annotations
 
@@ -11,16 +11,18 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import statistics
 import subprocess
 import tempfile
 import time
+import tomllib
 from typing import Any
 
-SCHEMA = "frost-bench-standard-v1"
+SCHEMA = "frost-bench-standard-v2"
 STANDARD_SCENARIOS = ("clean", "noop", "incremental_leaf", "hot_header", "cache_hit_rebuild")
-SUPPORTED_TOOLS = ("ninja", "make", "frost")
+SUPPORTED_TOOLS = ("ninja", "make", "frost", "bazel")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -92,34 +94,6 @@ def environment_snapshot() -> dict[str, Any]:
     }
 
 
-def write_stamp_tool(root: pathlib.Path) -> None:
-    tools = root / "tools"
-    tools.mkdir(parents=True, exist_ok=True)
-    stamp = tools / "stamp.py"
-    stamp.write_text(
-        """#!/usr/bin/env python3
-from __future__ import annotations
-
-import hashlib
-import pathlib
-import sys
-
-out = pathlib.Path(sys.argv[1])
-digest = hashlib.sha256()
-for name in sys.argv[2:]:
-    path = pathlib.Path(name)
-    digest.update(name.encode())
-    digest.update(b"\\0")
-    if path.exists():
-        digest.update(path.read_bytes())
-out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(digest.hexdigest() + "\\n", encoding="utf-8")
-""",
-        encoding="utf-8",
-    )
-    stamp.chmod(0o755)
-
-
 def target_name(index: int) -> str:
     return f"node{index:05d}"
 
@@ -130,13 +104,14 @@ def generate_workspace(root: pathlib.Path, size: int) -> None:
     (root / "src").mkdir(parents=True)
     (root / "include").mkdir()
     (root / "out").mkdir()
-    write_stamp_tool(root)
     (root / "include/hot.h").write_text("HOT=1\n", encoding="utf-8")
     for index in range(size):
         (root / "src" / f"{target_name(index)}.txt").write_text(f"value={index}\n", encoding="utf-8")
     write_ninja(root, size)
     write_makefile(root, size)
     write_frost_toml(root, size)
+    write_bazel(root, size)
+    verify_generated_graphs(root, size)
 
 
 def write_ninja(root: pathlib.Path, size: int) -> None:
@@ -164,7 +139,7 @@ def write_makefile(root: pathlib.Path, size: int) -> None:
     ]
     for index in range(size):
         name = target_name(index)
-        deps = [f"src/{name}.txt", "include/hot.h", "tools/stamp.py"]
+        deps = [f"src/{name}.txt", "include/hot.h"]
         if index > 0:
             deps.insert(1, f"out/{target_name(index - 1)}.out")
         lines.append(f"out/{name}.out: {' '.join(deps)}")
@@ -184,7 +159,7 @@ def write_frost_toml(root: pathlib.Path, size: int) -> None:
         deps = [target_name(index - 1)] if index > 0 else []
         lines.append(f"[target.{name}]")
         lines.append('kind = "genrule"')
-        lines.append('cmd = "cat ${in} > ${out}"')
+        lines.append('cmd = "printf \'%s\\\\n\' ${out} > ${out}"')
         lines.append("deps = [" + ", ".join(json.dumps(dep) for dep in deps) + "]")
         lines.append(
             "inputs = ["
@@ -194,6 +169,72 @@ def write_frost_toml(root: pathlib.Path, size: int) -> None:
         lines.append(f"outputs = [{json.dumps(f'.frost/out/{name}.out')}]")
         lines.append("")
     (root / "frost.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_bazel(root: pathlib.Path, size: int) -> None:
+    (root / "MODULE.bazel").write_text('module(name = "frost_bench")\n', encoding="utf-8")
+    lines = ['package(default_visibility = ["//visibility:public"])', ""]
+    for index in range(size):
+        name = target_name(index)
+        srcs = [f"src/{name}.txt", "include/hot.h"]
+        if index > 0:
+            srcs.insert(1, f":{target_name(index - 1)}")
+        lines.extend(
+            [
+                "genrule(",
+                f'    name = "{name}",',
+                "    srcs = [" + ", ".join(json.dumps(src) for src in srcs) + "],",
+                f'    outs = ["out/{name}.out"],',
+                '    cmd = "printf \'%s\\\\n\' $@ > $@",',
+                ")",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "filegroup(",
+            '    name = "all",',
+            f'    srcs = [":{target_name(size - 1)}"],',
+            ")",
+            "",
+        ]
+    )
+    (root / "BUILD.bazel").write_text("\n".join(lines), encoding="utf-8")
+
+
+def verify_generated_graphs(root: pathlib.Path, size: int) -> None:
+    with (root / "frost.toml").open("rb") as file:
+        frost = tomllib.load(file)
+    frost_targets = frost.get("target", {})
+    frost_edges = sorted(
+        (name, dependency)
+        for name, target in frost_targets.items()
+        for dependency in target.get("deps", [])
+    )
+
+    bazel_text = (root / "BUILD.bazel").read_text(encoding="utf-8")
+    bazel_edges: list[tuple[str, str]] = []
+    bazel_names: list[str] = []
+    for block in re.findall(r"genrule\(\n(.*?)\n\)", bazel_text, flags=re.DOTALL):
+        name_match = re.search(r'^\s*name = "([^"]+)",$', block, flags=re.MULTILINE)
+        srcs_match = re.search(r"^\s*srcs = \[(.*)\],$", block, flags=re.MULTILINE)
+        if name_match is None or srcs_match is None:
+            raise RuntimeError("generated Bazel genrule is malformed")
+        name = name_match.group(1)
+        bazel_names.append(name)
+        for dependency in re.findall(r'":(node[0-9]+)"', srcs_match.group(1)):
+            bazel_edges.append((name, dependency))
+
+    expected_edges = [
+        (target_name(index), target_name(index - 1)) for index in range(1, size)
+    ]
+    expected_names = [target_name(index) for index in range(size)]
+    if sorted(frost_targets) != expected_names:
+        raise RuntimeError("generated Frost target set differs from the graph contract")
+    if sorted(bazel_names) != expected_names:
+        raise RuntimeError("generated Bazel target set differs from the graph contract")
+    if frost_edges != expected_edges or sorted(bazel_edges) != expected_edges:
+        raise RuntimeError("Frost and Bazel dependency edges are not equivalent")
 
 
 def clean_outputs(root: pathlib.Path) -> None:
@@ -212,6 +253,22 @@ def clean_tool_outputs(root: pathlib.Path, spec: ToolSpec, *, cache: bool = Fals
             out = frost_dir / "out"
             if out.exists():
                 shutil.rmtree(out)
+        return
+    if spec.name == "bazel":
+        output_root = root.parent / f".{root.name}.bazel-user-root"
+        if spec.argv:
+            subprocess.run(
+                [
+                    spec.argv[0],
+                    f"--output_user_root={output_root}",
+                    "clean",
+                    "--expunge",
+                ],
+                cwd=root,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         return
     clean_outputs(root)
 
@@ -257,6 +314,16 @@ def tool_specs(names: list[str]) -> list[ToolSpec]:
                 )
             )
             continue
+        if name == "bazel":
+            configured = os.environ.get("BAZEL_BIN")
+            executable = configured or shutil.which("bazel")
+            specs.append(
+                ToolSpec(
+                    name=name,
+                    argv=(executable,) if executable else (),
+                )
+            )
+            continue
         executable = shutil.which(name)
         if executable is None:
             specs.append(ToolSpec(name=name, argv=()))
@@ -270,7 +337,17 @@ def tool_specs(names: list[str]) -> list[ToolSpec]:
 def run_tool(root: pathlib.Path, spec: ToolSpec, jobs: int) -> float:
     if not spec.argv:
         raise FileNotFoundError(spec.name)
-    if spec.name == "frost":
+    if spec.name == "bazel":
+        output_root = root.parent / f".{root.name}.bazel-user-root"
+        cmd = [
+            spec.argv[0],
+            f"--output_user_root={output_root}",
+            "build",
+            "//:all",
+            "--jobs",
+            str(max(1, jobs)),
+        ]
+    elif spec.name == "frost":
         cmd = [*spec.argv, "--jobs", str(max(1, jobs))]
     else:
         cmd = [*spec.argv, "-j", str(max(1, jobs))]
@@ -291,6 +368,35 @@ def summarize(samples: list[float]) -> dict[str, Any]:
 
 def scenario_not_applicable(reason: str) -> dict[str, Any]:
     return {"applicable": False, "reason": reason}
+
+
+def graph_contract(size: int) -> dict[str, Any]:
+    edges = [(target_name(index), target_name(index - 1)) for index in range(1, size)]
+    payload = json.dumps(edges, separators=(",", ":")).encode()
+    return {
+        "shape": "linear-chain",
+        "action_count": size,
+        "dependency_edge_count": len(edges),
+        "edge_digest_sha256": hashlib.sha256(payload).hexdigest(),
+        "per_action_source_inputs": ["src/nodeNNNNN.txt", "include/hot.h"],
+        "manifests_verified_equivalent": True,
+    }
+
+
+def tool_version(spec: ToolSpec) -> str | None:
+    if not spec.argv:
+        return None
+    executable = spec.argv[0]
+    flag = "--version" if spec.name != "make" else "--version"
+    try:
+        output = subprocess.check_output(
+            [executable, flag],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return output.splitlines()[0].strip() if output else None
 
 
 def measure_tool(root: pathlib.Path, spec: ToolSpec, size: int, iterations: int, jobs: int) -> dict[str, Any]:
@@ -340,17 +446,22 @@ def measure_tool(root: pathlib.Path, spec: ToolSpec, size: int, iterations: int,
             cache_hit_samples.append(run_tool(root, spec, jobs))
         scenarios["cache_hit_rebuild"] = summarize(cache_hit_samples)
     else:
-        scenarios["cache_hit_rebuild"] = scenario_not_applicable(
-            f"{spec.name} has no content-addressed action cache in this harness",
+        reason = (
+            "Bazel has no external CAS configured in this local harness"
+            if spec.name == "bazel"
+            else f"{spec.name} has no content-addressed action cache in this harness"
         )
+        scenarios["cache_hit_rebuild"] = scenario_not_applicable(reason)
 
     return {
         "tool": spec.name,
+        "version": tool_version(spec),
         "size": size,
         "status": "ok",
         "iterations": iterations,
         "jobs": jobs,
         "target_count": size,
+        "graph": graph_contract(size),
         "scenarios": scenarios,
     }
 

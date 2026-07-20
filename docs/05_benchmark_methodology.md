@@ -119,25 +119,33 @@ naive full rebuild of all build targets
 
 It is a simulation benchmark. It proves the pruning strategy, not compiler speed.
 
-## How to compare with Bazel
+## Real Frost / Bazel comparison
 
-If Bazel is installed:
+Install Bazel or Bazelisk, then run:
 
 ```bash
-bash scripts/compare_bazel.sh
+BAZEL_BIN=/path/to/bazel scripts/compare_bazel.sh
 ```
 
-The sample workspace includes:
+The comparison is not a simulation and does not silently skip when Bazel is
+missing. It runs the standard harness against the Frost and Bazel binaries and
+fails unless both results have status `ok`. The generator writes a Frost
+manifest and a `BUILD.bazel` file for the same linear action graph:
 
 ```text
-sample/MODULE.bazel
-sample/BUILD.bazel
-sample/tools/gen.py
+1,000 actions
+999 dependency edges
+one source input and one shared header per action
+the same output-writing shell operation
 ```
 
-The Bazel comparison is optional because this zip must run even on machines without Bazel.
+Before timing, the harness parses both generated manifests and rejects any
+target-set or dependency-edge mismatch. The report stores the verified graph
+contract, its edge digest, both tool versions, all samples, and host/load
+metadata. Bazel's cache-restore scenario is explicitly not applicable because
+this local harness does not configure an external CAS.
 
-## Standard Ninja / Make baseline harness
+## Standard Ninja / Make / Frost / Bazel baseline harness
 
 Use `frost-bench` when the comparison target is a conventional timestamp based
 builder rather than the FrostBuild simulation:
@@ -146,8 +154,8 @@ builder rather than the FrostBuild simulation:
 ./frost-bench run --suite standard --tools ninja,make --sizes 1000,10000 --iterations 5 --jobs 8
 ```
 
-The standard suite generates identical chain-shaped workspaces for each tool and
-size. It records median-of-5 timings for:
+The standard suite generates equivalent chain-shaped workspaces for each tool
+and size. It records median-of-5 timings for:
 
 ```text
 clean
@@ -157,10 +165,10 @@ hot_header
 cache_hit_rebuild
 ```
 
-`cache_hit_rebuild` is marked not applicable for Ninja and Make because this
-harness does not add an external content-addressed action cache to those tools.
-That keeps the report honest while preserving the scenario slot for FrostBuild
-and remote-cache runners.
+`cache_hit_rebuild` is marked not applicable for Ninja, Make, and local Bazel
+because this harness does not add an external content-addressed action cache to
+those tools. That keeps the report honest while preserving the scenario slot
+for FrostBuild and future remote-cache runners.
 
 Reports include host, platform, Python version, CPU count, load average, CPU
 governor, and turbo state. Use `--out bench/baselines/<date>-<host>.json` to
@@ -177,6 +185,25 @@ sample Frost POC workspace before running `frost.py bench`, so it does not depen
 on stale local output.
 
 ## Current baseline
+
+The committed `bench/baselines/2026-07-20-E14-frost-bazel.json` is a real
+Frost 0.2.0 / Bazel 9.1.0 run captured on 2026-07-20 with 8 jobs, performance
+governor, turbo enabled, and the verified 1,000-action/999-edge graph. The
+starting one-minute load average was 10.96, so these numbers must not be
+generalized to an idle host.
+
+Median timings in milliseconds:
+
+```text
+tool    clean      noop     incremental_leaf   hot_header
+frost   5212.958   55.335   61.136             3036.959
+bazel   17349.777  175.482  176.730            8639.148
+```
+
+For this generated local workload, the measured Bazel/Frost ratios were 3.33x
+clean, 3.17x no-op, 2.89x leaf-only incremental, and 2.84x shared-header
+rebuild. Bazel ran without an external CAS, so no remote-cache comparison is
+claimed.
 
 The committed `bench/baselines/2026-07-05-E14.json` was captured on
 2026-07-05 with 8 jobs, CPU governor `performance`, and turbo enabled.
