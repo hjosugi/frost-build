@@ -64,6 +64,12 @@ impl Workspace {
             .args(["-q", "-e", "-c"])
             .arg(command_line)
             .arg("/dev/null");
+        if !env.iter().any(|(key, _)| *key == "CI") {
+            // GitHub Actions sets CI for the test harness itself. Positive TTY
+            // cases must model an interactive user, while the dedicated CI
+            // case below explicitly puts it back.
+            command.env_remove("CI");
+        }
         for (key, value) in env {
             command.env(key, value);
         }
@@ -233,8 +239,9 @@ outputs = ["broken.txt"]
 #[test]
 #[cfg(unix)]
 fn ctrl_c_in_raw_tui_mode_still_cancels_the_build() {
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::process::Stdio;
+    use std::sync::mpsc;
 
     let ws = Workspace::empty("tui-cancel");
     ws.write(
@@ -256,19 +263,54 @@ outputs = ["slow.txt"]
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env_remove("CI")
         .spawn()
         .expect("spawn TUI build");
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    let mut stdout = child.stdout.take().expect("script stdout");
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let output_reader = std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buffer = [0u8; 4096];
+        let mut announced = false;
+        loop {
+            let read = stdout.read(&mut buffer).expect("read TUI output");
+            if read == 0 {
+                break;
+            }
+            captured.extend_from_slice(&buffer[..read]);
+            if !announced
+                && captured
+                    .windows(b"\x1b[?1049h".len())
+                    .any(|window| window == b"\x1b[?1049h")
+            {
+                let _ = ready_sender.send(());
+                announced = true;
+            }
+        }
+        captured
+    });
+    ready_receiver
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("TUI did not enter raw alternate-screen mode");
     child
         .stdin
         .take()
         .expect("script stdin")
         .write_all(&[3])
         .expect("send Ctrl-C");
-    let out = child.wait_with_output().expect("wait for cancelled build");
-    assert_eq!(out.status.code(), Some(130));
+    let status = child.wait().expect("wait for cancelled build");
+    let captured = output_reader.join().expect("join TUI output reader");
+    let mut stderr = Vec::new();
+    child
+        .stderr
+        .take()
+        .expect("script stderr")
+        .read_to_end(&mut stderr)
+        .expect("read script stderr");
+    let output = String::from_utf8_lossy(&captured).to_string() + &String::from_utf8_lossy(&stderr);
+    assert_eq!(status.code(), Some(130), "{output:?}");
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(2),
+        started.elapsed() < std::time::Duration::from_millis(2_500),
         "Ctrl-C was swallowed by raw terminal mode"
     );
 }
