@@ -723,7 +723,36 @@ fn print_completions(shell: CompletionShell) {
     }
 }
 
+#[cfg(windows)]
 fn main() {
+    // Windows executables default to a 1 MiB main-thread stack.  Constructing
+    // the full clap command tree can exceed that in debug builds as the CLI
+    // grows, so run the actual entry point on an explicitly sized stack.  Keep
+    // this Windows-only to avoid adding thread startup to Unix no-op latency.
+    match std::thread::Builder::new()
+        .name("frost-main".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(frost_main)
+    {
+        Ok(worker) => {
+            if worker.join().is_err() {
+                eprintln!("frost: main thread panicked");
+                std::process::exit(2);
+            }
+        }
+        Err(error) => {
+            eprintln!("frost: failed to start main thread: {error}");
+            std::process::exit(2);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn main() {
+    frost_main();
+}
+
+fn frost_main() {
     // Dynamic completion scripts call back into this binary, allowing target,
     // profile and platform candidates to reflect the current frost.toml.
     clap_complete::CompleteEnv::with_factory(Cli::command)
