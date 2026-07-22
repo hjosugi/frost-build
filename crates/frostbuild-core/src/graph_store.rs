@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use crate::graph::BuildGraph;
 use crate::manifest::{Manifest, HOST_PLATFORM};
 
 const MAGIC: &[u8; 8] = b"FRSTGR01";
-const VERSION: u32 = 3;
+const VERSION: u32 = 6;
 
 /// Evidence that the manifest inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
@@ -23,8 +24,18 @@ const VERSION: u32 = 3;
 struct SourcesStamp {
     /// (workspace-relative path, BLAKE3 of bytes) per contributing manifest.
     manifests: Vec<(String, String)>,
-    /// (workspace-relative dir path, mtime_ns) for every non-ignored dir.
-    dirs: Vec<(String, i128)>,
+    /// Identity of every non-ignored directory and its immediate entries.
+    dirs: Vec<DirStamp>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DirStamp {
+    path: String,
+    mtime_ns: i128,
+    /// BLAKE3 of sorted native entry names plus their filesystem kind.
+    /// This is required in addition to mtime: Windows can expose the same
+    /// directory timestamp immediately before and after an entry mutation.
+    entries_hash: [u8; 32],
 }
 
 pub struct GraphStore;
@@ -63,6 +74,24 @@ impl GraphStore {
     pub fn load_cached(root: &Path, profile: &str, platform: &str) -> Option<BuildGraph> {
         let path = store_path(root, profile, platform);
         load_graph(&path, None, Some(root)).ok()
+    }
+
+    /// Validate the manifest/package-discovery evidence in a cached graph
+    /// without deserializing the graph payload itself.
+    ///
+    /// A whole-workspace no-op certificate already describes the files that
+    /// must remain unchanged. It still needs to prove that the graph
+    /// definition is current, but decoding thousands of actions merely to
+    /// learn that no action will run defeats that fast path.
+    pub fn cached_sources_current(root: &Path, profile: &str, platform: &str) -> bool {
+        Self::cached_fingerprint(root, profile, platform).is_some()
+    }
+
+    /// Fingerprint of the manifest/profile/platform tuple embedded in a
+    /// source-current graph store, without deserializing its graph payload.
+    pub fn cached_fingerprint(root: &Path, profile: &str, platform: &str) -> Option<[u8; 32]> {
+        let path = store_path(root, profile, platform);
+        validate_cached_sources(&path, root).ok()
     }
 
     pub fn validate_bytes(bytes: &[u8]) -> Result<()> {
@@ -104,17 +133,17 @@ fn sources_stamp(root: &Path, manifest_paths: &[String]) -> Result<SourcesStamp>
         };
         manifests.push((ignore.to_string(), digest));
     }
-    // The workspace root itself: file adds/removes at the top level only
-    // show up in the root dir's own mtime.
-    let mut dirs = vec![(String::new(), mtime_ns(&std::fs::metadata(root)?))];
+    let mut dirs = Vec::new();
     walk_dirs(root, root, &mut dirs)?;
-    dirs.sort();
+    dirs.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(SourcesStamp { manifests, dirs })
 }
 
 /// Mirrors `discover_package_manifests` skip rules so the stamp covers
 /// exactly the tree that package discovery and glob expansion can see.
-fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<(String, i128)>) -> Result<()> {
+fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<DirStamp>) -> Result<()> {
+    let mut entries = Vec::new();
+    let mut child_dirs = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         if matches!(
@@ -124,19 +153,66 @@ fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<(String, i128)>) -> Result<(
             continue;
         }
         let ty = entry.file_type()?;
+        let kind = if ty.is_symlink() {
+            b'l'
+        } else if ty.is_dir() {
+            b'd'
+        } else if ty.is_file() {
+            b'f'
+        } else {
+            b'o'
+        };
+        entries.push((entry.file_name(), kind));
         if ty.is_dir() && !ty.is_symlink() {
-            let path = entry.path();
-            let meta = entry.metadata()?;
-            let rel = path
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push((rel, mtime_ns(&meta)));
-            walk_dirs(root, &path, out)?;
+            child_dirs.push(entry.path());
         }
     }
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+    let mut hasher = blake3::Hasher::new();
+    for (name, kind) in entries {
+        hash_os_str(&mut hasher, &name);
+        hasher.update(&[kind]);
+    }
+    let path = dir
+        .strip_prefix(root)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    out.push(DirStamp {
+        path,
+        mtime_ns: mtime_ns(&std::fs::metadata(dir)?),
+        entries_hash: *hasher.finalize().as_bytes(),
+    });
+    child_dirs.sort();
+    for child in child_dirs {
+        walk_dirs(root, &child, out)?;
+    }
     Ok(())
+}
+
+#[cfg(unix)]
+fn hash_os_str(hasher: &mut blake3::Hasher, value: &OsStr) {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = value.as_bytes();
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+#[cfg(windows)]
+fn hash_os_str(hasher: &mut blake3::Hasher, value: &OsStr) {
+    use std::os::windows::ffi::OsStrExt;
+    let units: Vec<u16> = value.encode_wide().collect();
+    hasher.update(&(units.len() as u64).to_le_bytes());
+    for unit in units {
+        hasher.update(&unit.to_le_bytes());
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn hash_os_str(hasher: &mut blake3::Hasher, value: &OsStr) {
+    let value = value.to_string_lossy();
+    hasher.update(&(value.len() as u64).to_le_bytes());
+    hasher.update(value.as_bytes());
 }
 
 #[cfg(unix)]
@@ -194,19 +270,35 @@ fn load_graph(
         anyhow::ensure!(parsed.fingerprint == fingerprint, "stale graph store");
     }
     if let Some(root) = stamp_root {
-        // Ignore-file entries are re-added by sources_stamp (and may be
-        // ABSENT); only real manifests are required to exist.
-        let manifest_paths: Vec<String> = parsed
-            .stamp
-            .manifests
-            .iter()
-            .map(|(p, _)| p.clone())
-            .filter(|p| p != ".gitignore" && p != ".frostignore")
-            .collect();
-        let current = sources_stamp(root, &manifest_paths)?;
-        anyhow::ensure!(current == parsed.stamp, "workspace sources changed");
+        ensure_sources_current(root, &parsed.stamp)?;
     }
     postcard::from_bytes(parsed.payload).context("corrupt graph store")
+}
+
+fn validate_cached_sources(path: &Path, root: &Path) -> Result<[u8; 32]> {
+    let file = File::open(path)?;
+    // SAFETY: the mapping is read-only and `file` remains alive until mapping creation.
+    let mmap = unsafe { Mmap::map(&file)? };
+    let parsed = parse_header(&mmap)?;
+    ensure_sources_current(root, &parsed.stamp)?;
+    Ok(parsed
+        .fingerprint
+        .try_into()
+        .expect("graph header fingerprint is always 32 bytes"))
+}
+
+fn ensure_sources_current(root: &Path, stamp: &SourcesStamp) -> Result<()> {
+    // Ignore-file entries are re-added by sources_stamp (and may be ABSENT);
+    // only real manifests are required to exist.
+    let manifest_paths: Vec<String> = stamp
+        .manifests
+        .iter()
+        .map(|(p, _)| p.clone())
+        .filter(|p| p != ".gitignore" && p != ".frostignore")
+        .collect();
+    let current = sources_stamp(root, &manifest_paths)?;
+    anyhow::ensure!(current == *stamp, "workspace sources changed");
+    Ok(())
 }
 
 fn save_graph(
@@ -284,6 +376,11 @@ mod tests {
         let manifest = Manifest::load(&root).unwrap();
         GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
 
+        assert!(GraphStore::cached_sources_current(
+            &root,
+            "debug",
+            HOST_PLATFORM
+        ));
         let cached =
             GraphStore::load_cached(&root, "debug", HOST_PLATFORM).expect("warm hit after save");
         assert_eq!(cached.actions.len(), 2);
@@ -295,6 +392,11 @@ mod tests {
             "[target.a]\nkind='cc_binary'\nsrcs=['a.c']\ncflags=['-O2']\n",
         )
         .unwrap();
+        assert!(!GraphStore::cached_sources_current(
+            &root,
+            "debug",
+            HOST_PLATFORM
+        ));
         assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none());
         std::fs::remove_dir_all(root).ok();
     }
