@@ -1,10 +1,15 @@
-# What was changed in July 2026, and what was learned doing it
+# What was learned on 20 July 2026
 
 A record of one working session on frost, kept because most of what it
 produced is knowledge rather than code: seven bugs of one shape, two
 performance hypotheses that were wrong, and one benchmark that was not
 measuring what it claimed. The code is in the history. This is the part that
 would otherwise have to be rediscovered.
+
+This is a historical snapshot of the repository at commit `d72a86d`, not a
+description of the current release. Later v0.3.0 results are recorded below so
+that measurements from different implementations and workloads are not
+silently conflated.
 
 ## The bugs were all the same shape
 
@@ -99,7 +104,7 @@ Two lessons, both general:
 - The internal profile and the external comparison have to agree. They did
   here, which is what made the harness the suspect rather than the engine.
 
-## Where the honest numbers stand
+## Where the numbers stood at the end of the session
 
 - no-op, 10k targets: frost ~176 ms, Ninja ~45 ms. **frost loses, 3.9x.**
 - clean, 2k targets, matched commands: frost 7.6 s, Ninja 4.7 s. **1.61x.**
@@ -109,8 +114,23 @@ Two lessons, both general:
   standalone, and before this session's fixes it was slower than not using it.
 
 None of the above should be quoted without its conditions. The claim frost can
-support today is "correct, and faster than Make on incremental work"; "fastest"
-is not supported by any measurement in this repository.
+support at the end of this session was "correct, and faster than Make on
+incremental work"; "fastest" was not supported by any measurement in this
+repository.
+
+## Subsequent v0.3.0 update
+
+The release after this session changed the daemon and the measured no-op path.
+The checked 10k standalone graph reached 15.620 ms. A separate one-target,
+warm-certificate harness measured 1.711 ms end-to-end through the daemon CLI
+and 0.238 ms for the direct daemon socket roundtrip. Those one-target results
+supersede the statement above that `--daemon` gave no speedup, but they do not
+establish the 10k-target sub-5-ms and greater-than-2x-Ninja gates in #25.
+
+v0.3.0 also shipped the local verified DeltaCDC core and language-neutral
+direct-argv command/test targets used by the Rust, Go, Java, Python and
+TypeScript harnesses. The remote-cache calibration in #82 and npm/Vite
+monorepo completion evidence in #87 intentionally remain open.
 
 ## Method notes
 
