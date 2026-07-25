@@ -395,6 +395,10 @@ fn measure_daemon_socket(root: &Path) -> Result<f64> {
         version: frostbuild_daemon::PROTOCOL_VERSION,
         program: root.join("deliberately-missing-frost"),
         args: Vec::new(),
+        // This request must be answered by the certificate alone, so the
+        // child build it would otherwise spawn is unrunnable by construction
+        // and needs no environment.
+        env: Vec::new(),
         fast_noop: Some(frostbuild_daemon::FastNoopRequest {
             profile: "debug".into(),
             platform: frostbuild_core::manifest::HOST_PLATFORM.into(),

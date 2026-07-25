@@ -1504,16 +1504,24 @@ fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
             Ok(0)
         }
         DaemonCmd::Start => {
-            if frostbuild_daemon::request(
+            match frostbuild_daemon::request(
                 root,
                 &Request::Status {
                     version: PROTOCOL_VERSION,
                 },
-            )
-            .is_ok()
-            {
-                println!("frostd: already running");
-                return Ok(0);
+            ) {
+                Ok(response) if !is_protocol_mismatch(&response) => {
+                    println!("frostd: already running");
+                    return Ok(0);
+                }
+                // A daemon is resident but speaks another protocol version, so
+                // binding a second one would fail after a pointless wait.
+                Ok(_) => bail!(
+                    "a frostd from another frost version is running for this workspace; stop it \
+                     with `frost daemon stop` (a daemon older than 0.3.4 may have to be terminated \
+                     manually)"
+                ),
+                Err(_) => {}
             }
             let executable = std::env::current_exe()?;
             std::process::Command::new(executable)
@@ -1547,6 +1555,13 @@ fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
                     version: PROTOCOL_VERSION,
                 },
             )?;
+            if is_protocol_mismatch(&response) {
+                println!(
+                    "frostd: running, but speaks protocol {} rather than {PROTOCOL_VERSION}",
+                    response.version
+                );
+                return Ok(response.code);
+            }
             println!(
                 "frostd: {} (protocol {})",
                 response.stdout, response.version
@@ -2865,11 +2880,13 @@ fn run_pick(
     )
 }
 
+/// Run this build through the workspace daemon, or return `Ok(None)` when the
+/// daemon cannot be asked to produce exactly the build this process would.
 fn run_build_via_daemon(
     root: &std::path::Path,
     request: &BuildRequest,
     enable_fast_noop: bool,
-) -> Result<i32> {
+) -> Result<Option<i32>> {
     use frostbuild_daemon::{FastNoopRequest, Request, PROTOCOL_VERSION};
     let mut args = vec![
         "-C".to_string(),
@@ -2936,10 +2953,21 @@ fn run_build_via_daemon(
     if let Some(trace) = &request.trace {
         args.extend(["--trace".into(), trace.to_string_lossy().into_owned()]);
     }
+    // The daemon applies this to the child build verbatim. An environment
+    // frost cannot represent as text is not forwarded rather than silently
+    // altered, so such a build runs in this process instead.
+    let mut environment = Vec::new();
+    for (key, value) in std::env::vars_os() {
+        match (key.into_string(), value.into_string()) {
+            (Ok(key), Ok(value)) => environment.push((key, value)),
+            _ => return Ok(None),
+        }
+    }
     let request_message = Request::Run {
         version: PROTOCOL_VERSION,
         program: std::env::current_exe()?,
         args,
+        env: environment,
         fast_noop: enable_fast_noop.then(|| FastNoopRequest {
             profile: request.profile.clone(),
             platform: request.platform.clone(),
@@ -2953,9 +2981,50 @@ fn run_build_via_daemon(
             frostbuild_daemon::request(root, &request_message)?
         }
     };
+    let response = if is_protocol_mismatch(&response) {
+        // A daemon from a different frost version is resident. Replace it and
+        // retry once; one too old to honour a shutdown request has to be
+        // stopped by hand, and reporting a build failure for that is worse
+        // than building here.
+        let _ = frostbuild_daemon::request(
+            root,
+            &Request::Shutdown {
+                version: PROTOCOL_VERSION,
+            },
+        );
+        match replace_daemon_and_retry(root, &request_message) {
+            Some(response) => response,
+            None => {
+                eprintln!(
+                    "frost: warning: a frostd from another frost version is running for this \
+                     workspace and would not stop; building without the daemon"
+                );
+                return Ok(None);
+            }
+        }
+    } else {
+        response
+    };
     print!("{}", response.stdout);
     eprint!("{}", response.stderr);
-    Ok(response.code)
+    Ok(Some(response.code))
+}
+
+fn is_protocol_mismatch(response: &frostbuild_daemon::Response) -> bool {
+    response.code == 2
+        && response
+            .stderr
+            .contains(frostbuild_daemon::PROTOCOL_MISMATCH)
+}
+
+fn replace_daemon_and_retry(
+    root: &std::path::Path,
+    request_message: &frostbuild_daemon::Request,
+) -> Option<frostbuild_daemon::Response> {
+    daemon_command(root, DaemonCmd::Start).ok()?;
+    frostbuild_daemon::request(root, request_message)
+        .ok()
+        .filter(|response| !is_protocol_mismatch(response))
 }
 
 fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
@@ -2973,7 +3042,11 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         && !request.predictive
         && !request.all;
     if request.daemon {
-        return run_build_via_daemon(root, &request, enable_fast_noop);
+        // A daemon that cannot serve this request correctly declines it; the
+        // build then runs in this process, which is always the same build.
+        if let Some(code) = run_build_via_daemon(root, &request, enable_fast_noop)? {
+            return Ok(code);
+        }
     }
     if enable_fast_noop {
         let started = Instant::now();
