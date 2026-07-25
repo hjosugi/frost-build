@@ -1523,7 +1523,7 @@ fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
                 // binding a second one would fail after a pointless wait.
                 Ok(_) => bail!(
                     "a frostd from another frost version is running for this workspace; stop it \
-                     with `frost daemon stop` (a daemon older than 0.3.4 may have to be terminated \
+                     with `frost daemon stop` (a daemon older than 0.4.0 may have to be terminated \
                      manually)"
                 ),
                 Err(_) => {}
