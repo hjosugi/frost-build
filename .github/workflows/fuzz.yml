@@ -3,13 +3,25 @@ on:
   schedule:
     - cron: "43 2 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   fuzz:
+    name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [manifest, depfile, journal, graph_store]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: nightly
-      - run: cargo +nightly install cargo-fuzz --locked
-      - run: for target in manifest depfile journal graph_store; do cargo +nightly fuzz run "$target" -- -max_total_time=60; done
+      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
+        with:
+          tool: cargo-fuzz@0.13.2
+      - run: cargo +nightly fuzz run "${{ matrix.target }}" -- -max_total_time=60

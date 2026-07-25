@@ -5,6 +5,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-25
+
+### Added
+
+- `frost import-npm` discovers npm workspaces and selected package-script
+  gates, tracks transitive in-repository workspace dependencies, fingerprints
+  npm and Node, and refuses to overwrite an existing manifest.
+
+### Performance
+
+- CI reuses Rust dependency caches across lockfile changes, avoids duplicate
+  release and host-portability compilation, cancels superseded pull-request
+  runs, installs `cargo-deny` from its pinned action, and runs the four nightly
+  fuzz targets in parallel.
+
 ## [0.3.2] - 2026-07-23
 
 ### Added
