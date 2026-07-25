@@ -7,6 +7,7 @@ pub mod hashcache;
 pub mod journal;
 pub mod manifest;
 pub mod paths;
+pub mod remote;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

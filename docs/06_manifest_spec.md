@@ -43,7 +43,7 @@ is never overwritten.
 
 ```toml
 [toolchain]
-cc = "cc"          # defaults shown
+cc = "cc"          # defaults shown; `gcc`/`g++` on a host without these names
 cxx = "c++"
 ar = "ar"
 kofunc = "/path/to/kofun/bin/kofun" # optional; required by kofun_binary

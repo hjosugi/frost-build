@@ -78,6 +78,23 @@ enum Cmd {
         /// Disable successful test-result cache
         #[arg(long)]
         no_cache: bool,
+        /// Shared cache consulted when the local journal misses: a directory
+        /// path, file:///path, or http://host/prefix. Never required for
+        /// correctness — every response is verified and any failure falls back
+        /// to building locally
+        #[arg(long, value_name = "ENDPOINT")]
+        remote_cache: Option<String>,
+        /// Also publish what this build produces to --remote-cache
+        #[arg(long, requires = "remote_cache")]
+        remote_upload: bool,
+        /// Seconds to wait for one remote cache request
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value = "10",
+            requires = "remote_cache"
+        )]
+        remote_timeout: u64,
         /// Isolate actions from undeclared workspace files with bubblewrap
         #[arg(long)]
         sandbox: bool,
@@ -271,6 +288,23 @@ enum Cmd {
         all: bool,
         #[arg(long)]
         no_cache: bool,
+        /// Shared cache consulted when the local journal misses: a directory
+        /// path, file:///path, or http://host/prefix. Never required for
+        /// correctness — every response is verified and any failure falls back
+        /// to building locally
+        #[arg(long, value_name = "ENDPOINT")]
+        remote_cache: Option<String>,
+        /// Also publish what this build produces to --remote-cache
+        #[arg(long, requires = "remote_cache")]
+        remote_upload: bool,
+        /// Seconds to wait for one remote cache request
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value = "10",
+            requires = "remote_cache"
+        )]
+        remote_timeout: u64,
         #[arg(long)]
         explain: bool,
         #[arg(
@@ -820,6 +854,9 @@ fn run(cli: Cli) -> Result<i32> {
             platform,
             all_platforms,
             no_cache,
+            remote_cache,
+            remote_upload,
+            remote_timeout,
             sandbox,
             check_determinism,
             trace,
@@ -843,6 +880,9 @@ fn run(cli: Cli) -> Result<i32> {
                 check_determinism: check_determinism.is_some(),
                 trace,
                 stats,
+                remote_cache,
+                remote_upload,
+                remote_timeout,
                 no_tui,
                 test_mode: false,
                 daemon,
@@ -948,6 +988,9 @@ fn run(cli: Cli) -> Result<i32> {
             predictive,
             all,
             no_cache,
+            remote_cache,
+            remote_upload,
+            remote_timeout,
             explain,
             profile,
             platform,
@@ -972,6 +1015,9 @@ fn run(cli: Cli) -> Result<i32> {
                 check_determinism: false,
                 trace: None,
                 stats: false,
+                remote_cache,
+                remote_upload,
+                remote_timeout,
                 no_tui,
                 test_mode: true,
                 daemon,
@@ -1609,6 +1655,9 @@ struct BuildRequest {
     check_determinism: bool,
     trace: Option<PathBuf>,
     stats: bool,
+    remote_cache: Option<String>,
+    remote_upload: bool,
+    remote_timeout: u64,
     no_tui: bool,
     test_mode: bool,
     daemon: bool,
@@ -1655,6 +1704,9 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         check_determinism: false,
         trace: None,
         stats: false,
+        remote_cache: None,
+        remote_upload: false,
+        remote_timeout: 10,
         no_tui: false,
         test_mode: false,
         daemon: false,
@@ -1966,11 +2018,7 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|directory| directory.join(name))
-            .find(|candidate| is_executable_file(candidate))
-    })
+    frostbuild_core::paths::find_on_path(name, is_executable_file)
 }
 
 fn resolve_program(root: &Path, selected: PathBuf, label: &str) -> Result<PathBuf> {
@@ -2258,6 +2306,9 @@ fn run_target(
             check_determinism: false,
             trace: None,
             stats: false,
+            remote_cache: None,
+            remote_upload: false,
+            remote_timeout: 10,
             no_tui: false,
             test_mode: false,
             daemon: false,
@@ -2439,6 +2490,9 @@ fn run_ide(
             check_determinism: false,
             trace: None,
             stats: false,
+            remote_cache: None,
+            remote_upload: false,
+            remote_timeout: 10,
             no_tui: false,
             test_mode: false,
             daemon: false,
@@ -2684,6 +2738,9 @@ fn run_debug(
             check_determinism: false,
             trace: None,
             stats: false,
+            remote_cache: None,
+            remote_upload: false,
+            remote_timeout: 10,
             no_tui: false,
             test_mode: false,
             daemon: false,
@@ -2873,6 +2930,9 @@ fn run_pick(
             check_determinism: false,
             trace: None,
             stats: false,
+            remote_cache: None,
+            remote_upload: false,
+            remote_timeout: 10,
             no_tui: false,
             test_mode: tests,
             daemon: false,
@@ -2913,6 +2973,16 @@ fn run_build_via_daemon(
     }
     if request.no_cache {
         args.push("--no-cache".into());
+    }
+    if let Some(endpoint) = &request.remote_cache {
+        args.extend(["--remote-cache".into(), endpoint.clone()]);
+        if request.remote_upload {
+            args.push("--remote-upload".into());
+        }
+        args.extend([
+            "--remote-timeout".into(),
+            request.remote_timeout.to_string(),
+        ]);
     }
     if request.no_tui {
         args.push("--no-tui".into());
@@ -3045,7 +3115,10 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         && !request.stats
         && !request.affected
         && !request.predictive
-        && !request.all;
+        && !request.all
+        // The certificate answers "nothing to do here". A build that would also
+        // publish to a shared cache still has something to do.
+        && request.remote_cache.is_none();
     if request.daemon {
         // A daemon that cannot serve this request correctly declines it; the
         // build then runs in this process, which is always the same build.
@@ -3133,6 +3206,19 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
     }
     let closure = graph.action_closure(&requested)?;
+    // A misspelled endpoint is a configuration error worth reporting before the
+    // build; an endpoint that is merely unreachable is not, and is handled per
+    // request by falling back to local execution.
+    let remote = match &request.remote_cache {
+        Some(spec) => Some(std::sync::Arc::new(
+            frostbuild_core::remote::RemoteCache::parse(
+                spec,
+                std::time::Duration::from_secs(request.remote_timeout),
+                request.remote_upload,
+            )?,
+        )),
+        None => None,
+    };
     let (progress, renderer) = progress::start(request.no_tui, request.verbose);
     let opts = BuildOptions {
         jobs: request.jobs.unwrap_or_else(default_jobs),
@@ -3154,6 +3240,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
             EstimatorArg::Learned => frostbuild_exec::Estimator::Learned,
         },
         progress: Some(progress),
+        remote: remote.clone(),
         ..BuildOptions::default()
     };
 
@@ -3179,6 +3266,24 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
 
     if let Some(trace) = request.trace {
         write_trace(root, trace, &report)?;
+    }
+
+    if let Some(remote) = &remote {
+        let summary = remote.summary();
+        // Printed unconditionally when a remote cache was configured: a shared
+        // cache that is silently failing looks exactly like one that is simply
+        // cold, and the difference is worth a line.
+        println!(
+            "remote: {} hit, {} miss, {} down ({}), {} up ({}), {} rejected, {} error",
+            summary.action_hits,
+            summary.action_misses,
+            summary.blobs_downloaded,
+            human_bytes(summary.bytes_downloaded),
+            summary.blobs_uploaded,
+            human_bytes(summary.bytes_uploaded),
+            summary.rejected,
+            summary.errors,
+        );
     }
 
     let failed = report.failed();

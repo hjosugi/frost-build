@@ -210,14 +210,14 @@ fn changing_declared_output_set_invalidates_cache() {
         "mkdir -p ${config}; printf one > ${config}/one.txt; printf two > ${config}/two.txt",
     );
     #[cfg(windows)]
-    // cmd.exe redirection needs a native path: `>debug/one.txt` fails because
-    // `/` starts a switch. Declared outputs stay `/`-separated as frost paths
-    // always are; only the command text is host syntax, and it reaches the
-    // manifest through TOML, where a backslash is itself escaped.
+    // No `if not exist` guard. cmd binds the rest of the line to the if-branch,
+    // so with the output parent already present the whole chain was skipped and
+    // the action "succeeded" having written nothing. frost creates the parent of
+    // every declared output, so the guard was never needed.
     let (shell, shell_arg, command) = (
         "cmd.exe",
         "/C",
-        "if not exist ${config} mkdir ${config} & echo one>${config}\\\\one.txt & echo two>${config}\\\\two.txt",
+        "echo one>${config}/one.txt & echo two>${config}/two.txt",
     );
     let manifest = |outputs: &str| {
         format!(
@@ -428,6 +428,78 @@ depfile_format = "lines"
         "the reported dependency must be tracked:\n{out}"
     );
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\ntwo\n");
+}
+
+#[test]
+fn a_shared_cache_builds_a_cold_workspace_without_executing_anything() {
+    // Two workspaces with identical sources: the second must be able to take
+    // everything from the shared cache, including the outputs of actions whose
+    // real inputs (headers) are only discovered by running them.
+    let shared = std::env::temp_dir().join(format!("frost-remote-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&shared);
+    let endpoint = shared.to_str().unwrap().to_string();
+
+    let producer = Workspace::new("remote-producer");
+    let (ok, out) = producer.frost(&[
+        "build",
+        "--remote-cache",
+        &endpoint,
+        "--remote-upload",
+        "--explain",
+    ]);
+    assert!(ok, "producing build failed:\n{out}");
+    assert!(
+        out.contains("remote:"),
+        "the remote summary must be shown:\n{out}"
+    );
+    assert!(
+        !out.contains("0 up ("),
+        "the producing build must publish:\n{out}"
+    );
+
+    let consumer = Workspace::new("remote-consumer");
+    let (ok, out) = consumer.frost(&["build", "--remote-cache", &endpoint, "--explain"]);
+    assert!(ok, "consuming build failed:\n{out}");
+    assert!(
+        !out.contains(" ran "),
+        "a cold workspace must not execute anything with a warm shared cache:\n{out}"
+    );
+    assert_eq!(
+        consumer.run_app(),
+        "frost: 42\n",
+        "and must produce the binary"
+    );
+
+    // An unreachable endpoint costs speed and nothing else.
+    let stale = Workspace::new("remote-unreachable");
+    let (ok, out) = stale.frost(&["build", "--remote-cache", "http://127.0.0.1:1/frost"]);
+    assert!(
+        ok,
+        "an unreachable remote cache must not fail the build:\n{out}"
+    );
+
+    // A blob that no longer hashes to its digest is refused, and the action is
+    // executed instead of restoring bytes nobody can vouch for.
+    let tampered = Workspace::new("remote-tampered");
+    for entry in std::fs::read_dir(shared.join("cas")).unwrap() {
+        std::fs::write(entry.unwrap().path(), b"tampered").unwrap();
+    }
+    let (ok, out) = tampered.frost(&["build", "--remote-cache", &endpoint, "--explain"]);
+    assert!(
+        ok,
+        "a tampered remote cache must not fail the build:\n{out}"
+    );
+    assert!(
+        !out.contains("0 rejected"),
+        "the tampered blobs must be reported as rejected:\n{out}"
+    );
+    assert_eq!(
+        tampered.run_app(),
+        "frost: 42\n",
+        "and the workspace must be built locally instead"
+    );
+
+    std::fs::remove_dir_all(shared).ok();
 }
 
 #[cfg(target_os = "linux")]
@@ -3085,11 +3157,15 @@ fn a_different_toolchain_binary_invalidates_the_workspace() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // The sample leaves the driver to the host default, so this declares one.
     ws.write(
         "frost.toml",
         &std::fs::read_to_string(ws.dir.join("frost.toml"))
             .unwrap()
-            .replace("cc = \"cc\"", &format!("cc = {:?}", fake.to_str().unwrap())),
+            .replace(
+                "[toolchain]\n",
+                &format!("[toolchain]\ncc = {:?}\n", fake.to_str().unwrap()),
+            ),
     );
     let (_, out) = ws.build_explain();
     assert!(

@@ -384,7 +384,8 @@ mod tests {
         let cached =
             GraphStore::load_cached(&root, "debug", HOST_PLATFORM).expect("warm hit after save");
         assert_eq!(cached.actions.len(), 2);
-        assert_eq!(cached.toolchain.cc, "cc");
+        // The manifest declares no driver, so this is the host default.
+        assert_eq!(cached.toolchain.cc, crate::manifest::default_cc());
 
         // Manifest edit invalidates the warm path.
         std::fs::write(

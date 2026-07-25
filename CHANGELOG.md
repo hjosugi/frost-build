@@ -5,6 +5,36 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `--remote-cache=<endpoint>` consults a shared cache when the local journal
+  misses, and `--remote-upload` publishes what the build produced. A shared
+  directory and plain HTTP are supported. The lookup key covers declared inputs
+  only, with the producing run's discovered inputs recorded as a verified trace,
+  so a workspace with no journal can reuse a compile whose real inputs include
+  headers it has never read. Responses are digest verified, executable mode is
+  recovered from the digest, and every miss, corruption or transport failure
+  falls back to local execution; a per-build summary reports hits, misses, bytes
+  moved, rejections and errors.
+
+### Changed
+
+- The default C and C++ drivers are the host's conventional names: `cc`/`c++` on
+  Unix and `gcc`/`g++` on Windows, where the POSIX names generally do not exist.
+  A scaffolded workspace and the bundled sample now compile on Windows without
+  an explicit `[toolchain]` driver.
+- Windows CI runs the whole workspace suite, one test at a time with unbuffered
+  output, using the image's MinGW toolchain.
+
+### Fixed
+
+- Executables named without an extension resolve on Windows: `PATH` search now
+  tries the host's `PATHEXT` candidates, so a workspace asking for `gcc` no
+  longer fails with "not found in PATH" while the same name works in the shell.
+- Command text in a Windows manifest no longer relies on an `if not exist`
+  guard: `cmd` binds the rest of the line to the if-branch, so the guarded chain
+  was skipped once frost had created the output's parent.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added

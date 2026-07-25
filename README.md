@@ -94,6 +94,10 @@ frost -C myrepo query rdeps util
 frost -C myrepo query deps app --json
 frost -C myrepo query somepath app //libs/util:util
 
+# Shared cache across machines/CI: verified, optional, never load-bearing
+frost -C myrepo build --remote-cache http://cache.internal/frost
+frost -C myrepo build --remote-cache /mnt/shared/frost-cache --remote-upload
+
 # IDE, trace and persistent service
 frost -C myrepo compdb
 frost -C myrepo build --trace trace.json
@@ -136,6 +140,12 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   deltas and persistent exact/delta reuse accounting; independent chunk
   publication and positioned private-file restoration use the bounded Rayon
   pool without weakening the final digest gate
+- optional shared cache (`--remote-cache`, `--remote-upload`) over a shared
+  directory or plain HTTP: keyed by declared inputs with the producing run's
+  discovered inputs recorded as a verified trace, so a workspace with no journal
+  reuses compiles whose real inputs it has never read. Every response is digest
+  verified, executable mode is recovered from the digest, and any miss,
+  corruption or transport failure falls back to building locally
 - early cutoff, affected test selection and opt-in determinism checking
 - mmap/versioned graph cache, `plan`, `explain`, Chrome trace and compdb
 - `init` safely auto-detects native C/C++ or plain Java; Java becomes one

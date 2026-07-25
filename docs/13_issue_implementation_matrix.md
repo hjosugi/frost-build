@@ -33,7 +33,7 @@ history, specific hardware, a release tag, or an external service.
 | #110 | macOS runs the whole workspace suite; exclusions are declared in the tests (`cfg(unix)`, `cfg(target_os = "linux")`, bubblewrap early return, JDK consistency) and tabulated in docs/09. Windows runs a named subset: its image has no `cc`/`ar`, and the full suite ran for over half an hour instead of failing. Both remain open |
 | #111 | Property gates gate arbitrarily corrupted CAS chunk manifests and no-op certificates on every pull request. Libfuzzer targets for both remain open because neither decoder is reachable from a byte slice without widening the public API |
 | #112 | docs/README.md indexes every document by purpose and records why the duplicated numeric prefixes stay |
-| #108 | Not implemented. `crates/` contains no remote transport at all; the issue exists so #82's remote calibration and #64's executor experiment have a prerequisite to depend on |
+| #108 | `--remote-cache` / `--remote-upload` over a shared directory or plain HTTP. Declared-input trace key with the producing run's discovered inputs verified on the consumer, digest-verified responses with the mode recovered from the digest, publication through the existing `LocalCas` boundary, and fallback to local execution on every failure. Measured: a cold workspace built from the shared cache in 2 ms with nothing executed. REAPI protobuf/gRPC, HTTPS, `FindMissingBlobs` batching and chunk-level transfer are open |
 
 The v0.3.0 release and its Linux/macOS/Windows archives provide the publication
 gate for #81, #83 and #84. The remaining cache-v2 research is deliberately

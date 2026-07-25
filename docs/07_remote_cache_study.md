@@ -44,3 +44,51 @@ Decision:
 - File a v2 requirement before remote work: freeze a protobuf-compatible action
   descriptor and output tree format so local action keys can be translated
   without rebuilding the cache.
+
+## Implemented client (v0.5.0)
+
+`--remote-cache=<endpoint>` consults a shared cache when the local journal
+misses, and `--remote-upload` publishes what the build produced. Two backends
+answer the same semantics: a directory (a shared volume, NFS/SMB, or a
+bind-mounted CI cache) and plain HTTP `GET`/`PUT` on `<prefix>/{ac,cas}/<name>`.
+
+The lookup key is the action key over **declared** inputs only. frost discovers
+some inputs by running the action, so a cold workspace cannot compute the full
+input set in advance; the entry therefore records the inputs the producing run
+discovered with their digests, and a consumer accepts it only when every one of
+those paths currently holds the recorded digest. That makes an entry a
+constructive trace rather than a guess, and it is what allows a workspace with no
+journal to reuse a compile whose real inputs include headers it has never read.
+
+Soundness follows the local rules exactly:
+
+- a response is verified against the digest that was asked for, and the mode is
+  recovered from the digest — frost digests cover the executable bit, so the
+  matching mode is the mode, and a blob matching neither is corrupt
+- verified bytes are published through the ordinary `LocalCas` boundary, so
+  restoration, chunking and GC behave as they do for locally produced output
+- an entry whose recorded output set is not exactly what the action declares is
+  refused, as the local journal refuses it (#64)
+- every failure — miss, unreadable entry, unverifiable blob, unreachable
+  endpoint, timeout — falls back to executing the action. The build cannot fail
+  because of the remote cache, and the per-build summary line reports hits,
+  misses, bytes moved, rejections and errors so a silently failing cache does not
+  look like a cold one
+- names are restricted to hex/underscore tokens, so a hostile entry cannot
+  address a path outside the cache
+
+Measured on the bundled C sample: a producing build published 5 actions
+(19.93 KiB), and a second workspace with no local cache built entirely from the
+shared cache in 2 ms with 5 hits and nothing executed.
+
+Deliberately not implemented yet:
+
+- REAPI protobuf/gRPC, ByteStream, `FindMissingBlobs` batching and compressor
+  negotiation. The layout is digest-addressed so it translates, but the wire
+  format is not REAPI yet
+- HTTPS. Rather than pretend to verify a certificate, `https://` is refused with
+  the suggestion to terminate TLS locally
+- chunk-level transfer (#82). Whole blobs move today; the chunk layer belongs on
+  top of a calibrated cost model rather than under an uncalibrated one
+- remote execution (#64), which needs this data plane first
+
