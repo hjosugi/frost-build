@@ -44,6 +44,12 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Fixed
 
+- `frost init --language java` passes `JAVA_HOME` to the build. `javac` and
+  `java` are stubs on macOS that select a JDK from it, so a build that cleared
+  it compiled for a different JDK than the developer's own `java` could load.
+- One workspace means one daemon however its path is spelled: the socket name is
+  derived from the resolved path, so a client that resolved a symlinked prefix
+  (`/var` on macOS) and one that did not no longer miss each other.
 - A client that hangs up before reading its answer no longer takes the daemon
   down with it; a failed reply ends only that connection.
 - The daemon watcher strips the resolved workspace root from event paths, so a

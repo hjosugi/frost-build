@@ -108,8 +108,18 @@ pub struct Response {
 /// path so that each workspace still gets its own daemon.
 #[cfg(unix)]
 pub fn socket_path(root: &Path) -> PathBuf {
-    let key = blake3::hash(root.as_os_str().as_encoded_bytes()).to_hex();
+    let key = blake3::hash(workspace_key(root).as_os_str().as_encoded_bytes()).to_hex();
     runtime_dir().join(format!("frostd-{}.sock", &key[..16]))
+}
+
+/// The spelling of the workspace path that identifies its daemon.
+///
+/// One workspace must mean one daemon however it was named. On macOS the
+/// temporary directory is reached through a symlinked `/var`, so a client that
+/// resolved the path and one that did not derived two different socket names for
+/// the same workspace and never met.
+fn workspace_key(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
 }
 
 #[cfg(unix)]

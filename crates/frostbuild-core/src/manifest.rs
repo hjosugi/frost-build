@@ -1210,7 +1210,12 @@ fn scaffold_java(root: &Path) -> Result<Scaffold> {
          [target.{name}]\nkind = \"command\"\ntool = \"javac\"\n\
          args = [\"-encoding\", \"UTF-8\", \"-g\", \"-d\", \"${{clean_dir}}\", \"${{in}}\"]\n\
          inputs = {}\noutputs = {outputs}\nclean_dirs = [{classes:?}]\n\
-         steps = [{{ tool = \"frost\", args = {} }}]\nsandbox = false\n",
+         steps = [{{ tool = \"frost\", args = {} }}]\n\
+         # `javac` and `java` are stubs on macOS that pick the JDK from\n\
+         # JAVA_HOME, so a build that cleared it would compile for a different\n\
+         # JDK than the one the developer runs. Its value is action-key\n\
+         # material, so switching JDKs invalidates rather than mixes.\n\
+         pass_env = [\"JAVA_HOME\"]\nsandbox = false\n",
         toml_array(&sources),
         toml_array(&pack_args),
     );

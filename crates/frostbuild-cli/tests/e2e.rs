@@ -1049,6 +1049,9 @@ clean_dirs = [".frost/tmp/${config}/java"]
 steps = [{ tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
                                        "--output", "${out}",
                                        "--main-class", "Hello"] }]
+# On macOS `javac` is a stub that selects the JDK from JAVA_HOME, so a build
+# that cleared it would target a different JDK than the `java` below.
+pass_env = ["JAVA_HOME"]
 sandbox = false
 "#
             .to_string(),
