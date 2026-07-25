@@ -188,7 +188,12 @@ pub fn serve(root: &Path) -> Result<()> {
         events: Condvar::new(),
     });
     let event_state = Arc::clone(&state);
-    let root_owned = root.to_path_buf();
+    // Event paths arrive resolved. On macOS the workspace usually sits under
+    // `/var/folders/...`, a symlink to `/private/var/folders/...`, so stripping
+    // the unresolved root would fail for every event: each change would be
+    // recorded as an absolute foreign path instead of a workspace path, and no
+    // barrier would ever be recognised.
+    let root_owned = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else {
             let mut state = event_state.state.lock().unwrap();
@@ -225,13 +230,17 @@ pub fn serve(root: &Path) -> Result<()> {
     })?;
     watcher.watch(root, RecursiveMode::Recursive)?;
     for connection in listener.incoming() {
-        let mut stream = connection?;
+        let Ok(mut stream) = connection else { continue };
         let request: Request = match read_frame(&mut stream) {
             Ok(value) => value,
             Err(_) => continue,
         };
         let (response, shutdown) = handle(root, request, &state);
-        write_frame(&mut stream, &response)?;
+        // A client that hung up before reading its answer used to take the
+        // daemon down with it: the write error propagated out of the accept
+        // loop. One interrupted `frost build` must not end the workspace's
+        // daemon, so a failed reply ends only that connection.
+        let _ = write_frame(&mut stream, &response);
         if shutdown {
             break;
         }

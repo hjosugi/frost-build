@@ -44,6 +44,11 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Fixed
 
+- A client that hangs up before reading its answer no longer takes the daemon
+  down with it; a failed reply ends only that connection.
+- The daemon watcher strips the resolved workspace root from event paths, so a
+  workspace reached through a symlinked prefix (`/var` on macOS) records
+  workspace-relative dirty paths and recognises its own barriers.
 - Default `arflags` are `["rcs"]` on macOS. `rcsD` asks for a deterministic
   archive, but the cctools `ar` Xcode ships rejects `D` outright, so every
   archive action failed on a macOS host with a default manifest.

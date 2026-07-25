@@ -6,24 +6,40 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
-/// Do `javac` and `java` on this host belong to the same JDK?
+/// Can a class `javac` produces be run by `java` on this host?
 ///
 /// A host can have a newer compiler than runtime on `PATH` — the macOS CI image
-/// does — and then a class this test compiles cannot be run at all
-/// (`UnsupportedClassVersionError`). That is a property of the host, not of
-/// frost, so the Java cases skip instead of reporting a build failure.
+/// does — and then every class these tests compile fails to load with
+/// `UnsupportedClassVersionError`. That is a property of the host, not of frost,
+/// so the Java cases skip. The check compiles and runs a class rather than
+/// comparing `-version` strings, because those differ per vendor and the
+/// property that matters is exactly this one.
 fn java_toolchain_is_consistent() -> bool {
-    let major = |tool: &str| -> Option<u32> {
-        let output = Command::new(tool).arg("-version").output().ok()?;
-        let text = String::from_utf8_lossy(&output.stdout).to_string()
-            + &String::from_utf8_lossy(&output.stderr);
-        text.split_whitespace()
-            .find_map(|word| word.split('.').next()?.parse::<u32>().ok())
-    };
-    match (major("javac"), major("java")) {
-        (Some(compiler), Some(runtime)) => compiler <= runtime,
-        _ => false,
+    let dir = std::env::temp_dir().join(format!("frost-java-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return false;
     }
+    let source = dir.join("Probe.java");
+    let written = std::fs::write(
+        &source,
+        "public final class Probe { public static void main(String[] a) {} }\n",
+    );
+    let ok = written.is_ok()
+        && Command::new("javac")
+            .arg("-d")
+            .arg(&dir)
+            .arg(&source)
+            .output()
+            .is_ok_and(|out| out.status.success())
+        && Command::new("java")
+            .arg("-cp")
+            .arg(&dir)
+            .arg("Probe")
+            .output()
+            .is_ok_and(|out| out.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+    ok
 }
 
 fn frost_bin() -> &'static str {
