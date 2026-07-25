@@ -16,10 +16,10 @@ macOS and Windows archives alongside static Linux.
 
 ## What CI runs where
 
-Because releases ship macOS and Windows archives, both hosts run the whole
-workspace test suite, not a smoke subset. A host runs every test that is not
-explicitly excluded, and the exclusions live in the tests themselves so they are
-visible where they apply:
+macOS runs the whole workspace test suite, not a smoke subset: it has the same
+C toolchain shape as Linux, and releases ship a macOS archive. It runs every test
+that is not explicitly excluded, and the exclusions live in the tests themselves
+so they are visible where they apply:
 
 | Gate | Excluded from | Reason |
 |---|---|---|
@@ -30,7 +30,17 @@ visible where they apply:
 
 Optional-tool E2E cases (Rust, Go, Java, Python, Node, `zig cc`, `fzf`, Kofun)
 skip when the tool is missing rather than failing, so a host without them still
-reports a meaningful result.
+reports a meaningful result. The Java cases also skip when `javac` is newer than
+`java` on the host, because a class compiled there cannot be run at all — the
+macOS runner image is in that state.
+
+Windows runs library/binary unit tests plus a named E2E subset: the command
+adapter, declared-output-set cache identity, platform and `init` diagnostics, and
+`doctor`. The image has no `cc`/`ar`, so the native C/C++ cases cannot run there
+at all, and running the whole suite left the job executing for over half an hour
+rather than failing — both are open in #110. Widening the Windows E2E surface
+needs a C toolchain on the image or the native MSVC contract (#109, whose
+`showincludes` support is covered by parser unit tests until then).
 
 The Windows C/C++ adapter still emits GCC/Clang-style depfile and link flags;
 it is suitable for a GNU-like or explicitly wrapped toolchain, not yet a

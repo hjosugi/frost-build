@@ -6,6 +6,26 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
+/// Do `javac` and `java` on this host belong to the same JDK?
+///
+/// A host can have a newer compiler than runtime on `PATH` — the macOS CI image
+/// does — and then a class this test compiles cannot be run at all
+/// (`UnsupportedClassVersionError`). That is a property of the host, not of
+/// frost, so the Java cases skip instead of reporting a build failure.
+fn java_toolchain_is_consistent() -> bool {
+    let major = |tool: &str| -> Option<u32> {
+        let output = Command::new(tool).arg("-version").output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        text.split_whitespace()
+            .find_map(|word| word.split('.').next()?.parse::<u32>().ok())
+    };
+    match (major("javac"), major("java")) {
+        (Some(compiler), Some(runtime)) => compiler <= runtime,
+        _ => false,
+    }
+}
+
 fn frost_bin() -> &'static str {
     env!("CARGO_BIN_EXE_frost")
 }
@@ -991,7 +1011,7 @@ sandbox = false
         );
         defaults.push("go");
     }
-    if available("javac") {
+    if available("javac") && java_toolchain_is_consistent() {
         ws.write(
             "src/Hello.java",
             "public final class Hello { static final class Nested {} \
@@ -2774,10 +2794,8 @@ fn init_writes_a_manifest_that_actually_builds() {
 
 #[test]
 fn init_java_writes_a_runnable_deterministic_jar_manifest() {
-    if Command::new("javac").arg("-version").output().is_err()
-        || Command::new("java").arg("-version").output().is_err()
-    {
-        eprintln!("skipping Java init E2E: javac and java are required");
+    if !java_toolchain_is_consistent() {
+        eprintln!("skipping Java init E2E: javac and java must be present and from the same JDK");
         return;
     }
 

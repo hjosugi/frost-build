@@ -72,8 +72,11 @@ action keys. A named tool may be on `PATH`, absolute, or workspace-relative;
 a workspace-relative wrapper is also a declared action input. C++20 modules
 are not v1 functionality.
 
-`arflags` (default `["rcsD"]`) overrides the archiver invocation for toolchains
-whose `ar` lacks GNU's deterministic flag.
+`arflags` overrides the archiver invocation. The default is `["rcsD"]`, whose
+`D` asks for a byte-identical archive from identical members; on macOS it is
+`["rcs"]`, because the cctools `ar` Xcode ships rejects `D` outright and would
+otherwise fail every archive action. Point `ar` at `llvm-ar` and set `arflags`
+to get the deterministic flag on a macOS host.
 
 ## Platforms (cross / device builds)
 

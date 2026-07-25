@@ -15,6 +15,26 @@ pub const HOST_PLATFORM: &str = "host";
 /// The profile every workspace has without declaring one.
 pub const DEFAULT_PROFILE: &str = "debug";
 
+/// Archiver flags a workspace gets without declaring any.
+///
+/// `D` asks for a deterministic archive — identical bytes for identical
+/// members, independent of when they were written — which is why it is the
+/// default wherever it exists. The cctools `ar` that Xcode ships rejects it
+/// outright (`illegal option -- D`), so keeping it unconditional made every
+/// archive action fail on a macOS host with a default manifest. There, member
+/// identity already comes from the object files Frost tracks, and a workspace
+/// that wants the flag can point `ar` at `llvm-ar` and set `arflags`.
+pub fn default_arflags() -> &'static [String] {
+    static FLAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FLAGS.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            vec!["rcs".to_string()]
+        } else {
+            vec!["rcsD".to_string()]
+        }
+    })
+}
+
 /// The closest candidate to `input`, when one is close enough to be worth
 /// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -492,7 +512,7 @@ impl Manifest {
                 arflags: raw
                     .toolchain
                     .arflags
-                    .unwrap_or_else(|| vec!["rcsD".to_string()]),
+                    .unwrap_or_else(|| default_arflags().to_vec()),
                 cflags: raw.toolchain.cflags,
                 cxxflags: raw.toolchain.cxxflags,
                 ldflags: raw.toolchain.ldflags,
@@ -1643,7 +1663,7 @@ mod tests {
         assert_eq!(host.cc, "gcc");
         assert_eq!(host.kofunc.as_deref(), Some("host-kofun"));
         assert_eq!(host.cflags, vec!["-O2"]);
-        assert_eq!(host.arflags, vec!["rcsD"]);
+        assert_eq!(host.arflags, default_arflags());
 
         let cross = m.toolchain_for("aarch64").unwrap();
         assert_eq!(cross.cc, "aarch64-linux-gnu-gcc");

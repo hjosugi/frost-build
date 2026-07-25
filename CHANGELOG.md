@@ -23,9 +23,10 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 - Action-key schema v4 adds the declared owned-directory set, so changing it
   does not reuse an earlier result. Existing journals rebuild once.
-- macOS and Windows CI runs the whole workspace test suite instead of one smoke
-  test, since releases ship archives for both. Host exclusions are declared in
-  the tests and tabulated in `docs/09_platform_support.md`.
+- macOS CI runs the whole workspace test suite instead of one smoke test, and
+  Windows runs a named subset covering the paths its image can reach. Host
+  exclusions are declared in the tests and tabulated in
+  `docs/09_platform_support.md`.
 
 ### Documentation
 
@@ -41,6 +42,9 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Fixed
 
+- Default `arflags` are `["rcs"]` on macOS. `rcsD` asks for a deterministic
+  archive, but the cctools `ar` Xcode ships rejects `D` outright, so every
+  archive action failed on a macOS host with a default manifest.
 - A daemon build now runs with the invoking client's environment instead of the
   environment the daemon inherited when it started. `CPATH=a frost build
   --daemon` against a daemon started with `CPATH=b` built, and then reported as
