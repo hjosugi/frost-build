@@ -5,6 +5,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `--remote-cache=<endpoint>` consults a shared cache when the local journal
+  misses, and `--remote-upload` publishes what the build produced. A shared
+  directory and plain HTTP are supported. The lookup key covers declared inputs
+  only, with the producing run's discovered inputs recorded as a verified trace,
+  so a workspace with no journal can reuse a compile whose real inputs include
+  headers it has never read. Responses are digest verified, executable mode is
+  recovered from the digest, and every miss, corruption or transport failure
+  falls back to local execution; a per-build summary reports hits, misses, bytes
+  moved, rejections and errors.
+
 ### Changed
 
 - The default C and C++ drivers are the host's conventional names: `cc`/`c++` on

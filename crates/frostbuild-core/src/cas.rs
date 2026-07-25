@@ -214,6 +214,12 @@ impl LocalCas {
     /// The exact-object path costs one final hash. Chunk/delta fallback also
     /// verifies each component before the final blob hash. Actions whose
     /// outputs are already intact never reach either restore path.
+    /// Is this blob already local, as a whole object or as a chunk manifest?
+    /// Used to avoid asking a shared cache for bytes this workspace has.
+    pub fn has(&self, digest: &str) -> bool {
+        self.object(digest).is_file() || self.manifest(digest).is_file()
+    }
+
     pub fn materialize(&self, digest: &str, destination: &Path) -> Result<bool> {
         let object = self.object(digest);
         if object.is_file() {

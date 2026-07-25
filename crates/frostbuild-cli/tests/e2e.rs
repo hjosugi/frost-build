@@ -430,6 +430,78 @@ depfile_format = "lines"
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\ntwo\n");
 }
 
+#[test]
+fn a_shared_cache_builds_a_cold_workspace_without_executing_anything() {
+    // Two workspaces with identical sources: the second must be able to take
+    // everything from the shared cache, including the outputs of actions whose
+    // real inputs (headers) are only discovered by running them.
+    let shared = std::env::temp_dir().join(format!("frost-remote-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&shared);
+    let endpoint = shared.to_str().unwrap().to_string();
+
+    let producer = Workspace::new("remote-producer");
+    let (ok, out) = producer.frost(&[
+        "build",
+        "--remote-cache",
+        &endpoint,
+        "--remote-upload",
+        "--explain",
+    ]);
+    assert!(ok, "producing build failed:\n{out}");
+    assert!(
+        out.contains("remote:"),
+        "the remote summary must be shown:\n{out}"
+    );
+    assert!(
+        !out.contains("0 up ("),
+        "the producing build must publish:\n{out}"
+    );
+
+    let consumer = Workspace::new("remote-consumer");
+    let (ok, out) = consumer.frost(&["build", "--remote-cache", &endpoint, "--explain"]);
+    assert!(ok, "consuming build failed:\n{out}");
+    assert!(
+        !out.contains(" ran "),
+        "a cold workspace must not execute anything with a warm shared cache:\n{out}"
+    );
+    assert_eq!(
+        consumer.run_app(),
+        "frost: 42\n",
+        "and must produce the binary"
+    );
+
+    // An unreachable endpoint costs speed and nothing else.
+    let stale = Workspace::new("remote-unreachable");
+    let (ok, out) = stale.frost(&["build", "--remote-cache", "http://127.0.0.1:1/frost"]);
+    assert!(
+        ok,
+        "an unreachable remote cache must not fail the build:\n{out}"
+    );
+
+    // A blob that no longer hashes to its digest is refused, and the action is
+    // executed instead of restoring bytes nobody can vouch for.
+    let tampered = Workspace::new("remote-tampered");
+    for entry in std::fs::read_dir(shared.join("cas")).unwrap() {
+        std::fs::write(entry.unwrap().path(), b"tampered").unwrap();
+    }
+    let (ok, out) = tampered.frost(&["build", "--remote-cache", &endpoint, "--explain"]);
+    assert!(
+        ok,
+        "a tampered remote cache must not fail the build:\n{out}"
+    );
+    assert!(
+        !out.contains("0 rejected"),
+        "the tampered blobs must be reported as rejected:\n{out}"
+    );
+    assert_eq!(
+        tampered.run_app(),
+        "frost: 42\n",
+        "and the workspace must be built locally instead"
+    );
+
+    std::fs::remove_dir_all(shared).ok();
+}
+
 #[cfg(target_os = "linux")]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())
