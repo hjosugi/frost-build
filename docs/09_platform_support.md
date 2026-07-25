@@ -24,6 +24,7 @@ so they are visible where they apply:
 | Gate | Excluded from | Reason |
 |---|---|---|
 | `cfg(unix)` tests | Windows | POSIX shell command text, `/bin/sh` tool paths, signal semantics |
+| MSVC `cl.exe`/`link.exe` | every host | the Windows C/C++ adapter emits GCC/Clang-style flags, so a MinGW or wrapped toolchain is required (#109 covers its dependency report format) |
 | `cfg(target_os = "linux")` tests | macOS, Windows | pseudo-terminal cases drive util-linux `script`, whose arguments differ from the BSD tool |
 | `--sandbox` E2E | every host without bubblewrap | the test returns early when `/usr/bin/bwrap` is absent, so the Linux-only backend does not fail elsewhere |
 | MSVC `showincludes` E2E | not yet written | `depfile_format = "showincludes"` is covered by parser unit tests until a Windows MSVC job exists (#109) |
@@ -34,16 +35,17 @@ reports a meaningful result. The Java cases also skip when `javac` is newer than
 `java` on the host, because a class compiled there cannot be run at all — the
 macOS runner image is in that state.
 
-Windows runs library/binary unit tests plus a named E2E subset: the command
-adapter, platform and `init` diagnostics, and `doctor`. The declared-output-set
-case is not in it: its `cmd.exe` branch had never run, and after correcting the
-path separator and its TOML escaping the redirection still does not create the
-file under `cmd /C` argument quoting. The engine behaviour it covers is verified
-on Linux and macOS, and the Windows command text is open in #110. The image has no `cc`/`ar`, so the native C/C++ cases cannot run there
-at all, and running the whole suite left the job executing for over half an hour
-rather than failing — both are open in #110. Widening the Windows E2E surface
-needs a C toolchain on the image or the native MSVC contract (#109, whose
-`showincludes` support is covered by parser unit tests until then).
+Windows runs the same whole suite. The image ships MinGW, and the default driver
+names are the host's (`gcc`/`g++` where `cc`/`c++` do not exist), so the native
+C/C++ cases run there too. Tests run one at a time with unbuffered output, so a
+case that hangs is named in the log rather than leaving the job to expire.
+
+Two Windows-only defects surfaced when those cases first ran. `frost.toml` is
+TOML, so a `\` in command text is itself escaped; and `cmd` binds the remainder
+of the line to an `if` branch, so `if not exist dir mkdir dir & echo x>dir\f`
+skipped everything once frost had already created the output's parent — the
+action "succeeded" having written nothing. frost creates the parent of every
+declared output, so such a guard is never needed in command text.
 
 The Windows C/C++ adapter still emits GCC/Clang-style depfile and link flags;
 it is suitable for a GNU-like or explicitly wrapped toolchain, not yet a

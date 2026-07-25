@@ -15,6 +15,30 @@ pub const HOST_PLATFORM: &str = "host";
 /// The profile every workspace has without declaring one.
 pub const DEFAULT_PROFILE: &str = "debug";
 
+/// C and C++ driver names a workspace gets without declaring any.
+///
+/// `cc` and `c++` are the POSIX-conventional names and exist on Linux and
+/// macOS. On Windows they generally do not: a MinGW installation provides
+/// `gcc`/`g++`, and MSVC provides `cl`. Defaulting to `cc` there meant a
+/// scaffolded workspace could not compile anything until the author looked up
+/// why `compiler "cc" not found in PATH` appeared on a host we publish a
+/// release archive for.
+pub fn default_cc() -> &'static str {
+    if cfg!(windows) {
+        "gcc"
+    } else {
+        "cc"
+    }
+}
+
+pub fn default_cxx() -> &'static str {
+    if cfg!(windows) {
+        "g++"
+    } else {
+        "c++"
+    }
+}
+
 /// Archiver flags a workspace gets without declaring any.
 ///
 /// `D` asks for a deterministic archive — identical bytes for identical
@@ -504,8 +528,11 @@ impl Manifest {
         Ok(Self {
             default_targets,
             toolchain: Toolchain {
-                cc: raw.toolchain.cc.unwrap_or_else(|| "cc".to_string()),
-                cxx: raw.toolchain.cxx.unwrap_or_else(|| "c++".to_string()),
+                cc: raw.toolchain.cc.unwrap_or_else(|| default_cc().to_string()),
+                cxx: raw
+                    .toolchain
+                    .cxx
+                    .unwrap_or_else(|| default_cxx().to_string()),
                 ar: raw.toolchain.ar.unwrap_or_else(|| "ar".to_string()),
                 kofunc: raw.toolchain.kofunc,
                 tools: raw.toolchain.tools,
@@ -1124,11 +1151,16 @@ fn scaffold_native(root: &Path) -> Result<Scaffold> {
         name.clone()
     };
     manifest.push_str(&format!("default_targets = [\"{default_target}\"]\n\n"));
-    manifest.push_str(
-        "[toolchain]\ncc = \"cc\"\ncxx = \"c++\"\ncflags = [\"-Wall\"]\n\n\
+    // The drivers are written out rather than left implicit so the manifest
+    // stays reviewable, and they are the host's conventional names: `cc`/`c++`
+    // on Unix, `gcc`/`g++` where those do not exist.
+    manifest.push_str(&format!(
+        "[toolchain]\ncc = \"{}\"\ncxx = \"{}\"\ncflags = [\"-Wall\"]\n\n\
          [profile.debug]\ncflags = [\"-O0\", \"-g\"]\n\n\
          [profile.release]\ncflags = [\"-O3\", \"-DNDEBUG\"]\n\n",
-    );
+        default_cc(),
+        default_cxx(),
+    ));
 
     if binary_srcs.is_empty() {
         manifest.push_str(&format!("[target.{name}]\nkind = \"cc_library\"\n"));

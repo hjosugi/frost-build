@@ -210,14 +210,14 @@ fn changing_declared_output_set_invalidates_cache() {
         "mkdir -p ${config}; printf one > ${config}/one.txt; printf two > ${config}/two.txt",
     );
     #[cfg(windows)]
-    // cmd.exe redirection needs a native path: `>debug/one.txt` fails because
-    // `/` starts a switch. Declared outputs stay `/`-separated as frost paths
-    // always are; only the command text is host syntax, and it reaches the
-    // manifest through TOML, where a backslash is itself escaped.
+    // No `if not exist` guard. cmd binds the rest of the line to the if-branch,
+    // so with the output parent already present the whole chain was skipped and
+    // the action "succeeded" having written nothing. frost creates the parent of
+    // every declared output, so the guard was never needed.
     let (shell, shell_arg, command) = (
         "cmd.exe",
         "/C",
-        "if not exist ${config} mkdir ${config} & echo one>${config}\\\\one.txt & echo two>${config}\\\\two.txt",
+        "echo one>${config}/one.txt & echo two>${config}/two.txt",
     );
     let manifest = |outputs: &str| {
         format!(
@@ -3085,11 +3085,15 @@ fn a_different_toolchain_binary_invalidates_the_workspace() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // The sample leaves the driver to the host default, so this declares one.
     ws.write(
         "frost.toml",
         &std::fs::read_to_string(ws.dir.join("frost.toml"))
             .unwrap()
-            .replace("cc = \"cc\"", &format!("cc = {:?}", fake.to_str().unwrap())),
+            .replace(
+                "[toolchain]\n",
+                &format!("[toolchain]\ncc = {:?}\n", fake.to_str().unwrap()),
+            ),
     );
     let (_, out) = ws.build_explain();
     assert!(

@@ -5,7 +5,8 @@
 default_targets = ["app"]
 
 [toolchain]
-cc = "cc"
+# The C driver is left to the host default (`cc`, or `gcc` where that name
+# does not exist) so this workspace builds anywhere frost is published.
 cflags = ["-O2", "-Wall"]
 
 [target.gen_config]

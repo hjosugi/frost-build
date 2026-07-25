@@ -5,6 +5,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- The default C and C++ drivers are the host's conventional names: `cc`/`c++` on
+  Unix and `gcc`/`g++` on Windows, where the POSIX names generally do not exist.
+  A scaffolded workspace and the bundled sample now compile on Windows without
+  an explicit `[toolchain]` driver.
+- Windows CI runs the whole workspace suite, one test at a time with unbuffered
+  output, using the image's MinGW toolchain.
+
+### Fixed
+
+- Command text in a Windows manifest no longer relies on an `if not exist`
+  guard: `cmd` binds the rest of the line to the if-branch, so the guarded chain
+  was skipped once frost had created the output's parent.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added
