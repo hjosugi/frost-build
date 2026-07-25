@@ -212,11 +212,12 @@ fn changing_declared_output_set_invalidates_cache() {
     #[cfg(windows)]
     // cmd.exe redirection needs a native path: `>debug/one.txt` fails because
     // `/` starts a switch. Declared outputs stay `/`-separated as frost paths
-    // always are; only the command text is host syntax.
+    // always are; only the command text is host syntax, and it reaches the
+    // manifest through TOML, where a backslash is itself escaped.
     let (shell, shell_arg, command) = (
         "cmd.exe",
         "/C",
-        "if not exist ${config} mkdir ${config} & echo one>${config}\\one.txt & echo two>${config}\\two.txt",
+        "if not exist ${config} mkdir ${config} & echo one>${config}\\\\one.txt & echo two>${config}\\\\two.txt",
     );
     let manifest = |outputs: &str| {
         format!(
