@@ -2808,7 +2808,12 @@ fn run_pick(
     {
         let stdin = child.stdin.as_mut().context("failed to open fzf input")?;
         for row in &rows {
-            writeln!(stdin, "{row}")?;
+            if let Err(error) = writeln!(stdin, "{row}") {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    break;
+                }
+                return Err(error.into());
+            }
         }
     }
     let output = child.wait_with_output()?;
