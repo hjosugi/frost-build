@@ -35,8 +35,11 @@ reports a meaningful result. The Java cases also skip when `javac` is newer than
 macOS runner image is in that state.
 
 Windows runs library/binary unit tests plus a named E2E subset: the command
-adapter, declared-output-set cache identity, platform and `init` diagnostics, and
-`doctor`. The image has no `cc`/`ar`, so the native C/C++ cases cannot run there
+adapter, platform and `init` diagnostics, and `doctor`. The declared-output-set
+case is not in it: its `cmd.exe` branch had never run, and after correcting the
+path separator and its TOML escaping the redirection still does not create the
+file under `cmd /C` argument quoting. The engine behaviour it covers is verified
+on Linux and macOS, and the Windows command text is open in #110. The image has no `cc`/`ar`, so the native C/C++ cases cannot run there
 at all, and running the whole suite left the job executing for over half an hour
 rather than failing — both are open in #110. Widening the Windows E2E surface
 needs a C toolchain on the image or the native MSVC contract (#109, whose

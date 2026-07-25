@@ -65,7 +65,6 @@ jobs:
           cargo test -p frostbuild-cli --test e2e --locked --
           --test-threads 1
           host_portable_command_target_builds_and_caches
-          changing_declared_output_set_invalidates_cache
           unknown_platform_fails_with_diagnostic
           init_mixed_workspace_requires_an_explicit_language
           init_refuses_a_directory_it_cannot_describe
