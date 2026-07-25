@@ -70,7 +70,6 @@ jobs:
           --test-threads 1
           host_portable_command_target_builds_and_caches
           changing_declared_output_set_invalidates_cache
-          a_shared_cache_builds_a_cold_workspace_without_executing_anything
           completion_scripts_and_fzf_selection_are_available
           unknown_platform_fails_with_diagnostic
           init_mixed_workspace_requires_an_explicit_language

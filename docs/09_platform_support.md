@@ -45,6 +45,11 @@ the platform/`init`/`doctor` diagnostics. Two things stop the rest, both open in
 - `daemon_build_status_and_stop` hangs rather than failing. The full-suite run
   named it: every case before it completed in seconds, and it was still running
   25 minutes later
+- native binaries are declared without a name extension. With the toolchain
+  resolving, compilation and archiving now succeed on Windows and the link step
+  fails with `declared output .frost/bin/debug/app was not created`, because the
+  driver writes `app.exe`. Declared artifact names need the host executable
+  suffix, which reaches `run`, `dev`, `debug`, `ide` and the test runner as well
 
 Three Windows-only defects were found and fixed by running those cases:
 
