@@ -1105,6 +1105,11 @@ fn run(cli: Cli) -> Result<i32> {
                         for &action in &target.actions {
                             intermediate_dirs
                                 .extend(graph.actions[action].clean_dirs.iter().cloned());
+                            // Frost owns these outright, so cleaning has to
+                            // take the whole directory rather than the files it
+                            // happened to record last time.
+                            intermediate_dirs
+                                .extend(graph.actions[action].output_dirs.iter().cloned());
                         }
                     }
                 }

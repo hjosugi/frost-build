@@ -117,6 +117,11 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 - `[platform.*]` cross/device toolchains with per-platform trees and caches,
   plus one-command host-and-device builds via `--all-platforms`
 - dynamic GCC/Clang depfile ingestion and generated-file order-only edges
+- `output_dirs`: a command target may own whole directories when the tool names
+  its outputs after their content (bundlers, `tsc --outDir`). The tree is
+  scanned after execution, recorded and published like any output, restored
+  exactly on a hit, and represented in the graph by a content stamp, so
+  dependents get real edges and early cutoff
 - parallel critical-path scheduler, captured diagnostics and `--keep-going`
 - interactive TTY progress with job slots, cache/timing state, critical path,
   scrollable logs, automatic plain CI/pipe output and `--no-tui`

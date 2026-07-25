@@ -5,6 +5,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `command` targets may declare `output_dirs`: directories Frost owns entirely,
+  for tools whose output file names cannot be written down in advance. The tree
+  is scanned after execution, digested, journalled and published to the CAS;
+  a hit restores exactly the recorded tree; a `.frost/tree/CONFIG/TARGET/contents`
+  stamp represents it in the graph so dependents get ordinary edges and early
+  cutoff. `${output_dir}` / `${output_dirs}` expand in command arguments.
+
+### Changed
+
+- Action-key schema v4 adds the declared owned-directory set, so changing it
+  does not reuse an earlier result. Existing journals rebuild once.
+
 ### Fixed
 
 - A daemon build now runs with the invoking client's environment instead of the

@@ -13,6 +13,8 @@ pub type ActionId = usize;
 pub const OBJ_DIR: &str = ".frost/obj";
 pub const LIB_DIR: &str = ".frost/lib";
 pub const BIN_DIR: &str = ".frost/bin";
+/// Frost-owned stamps recording the contents of declared `output_dirs`.
+pub const TREE_STAMP_DIR: &str = ".frost/tree";
 
 /// The interpreter frost runs every genrule and shell test through.
 ///
@@ -75,6 +77,11 @@ pub struct ActionNode {
     /// Enforce producer completion without adding content to the action key.
     pub order_only_inputs: Vec<FileId>,
     pub outputs: Vec<FileId>,
+    /// Workspace-relative directories this action owns entirely. Every file
+    /// under one is recorded as an output, which is how a tool whose output
+    /// file names cannot be written down in advance is still cacheable.
+    #[serde(default)]
+    pub output_dirs: Vec<String>,
     /// Workspace-relative path of the Makefile-style depfile this action
     /// writes (compile actions only).
     pub depfile: Option<String>,
@@ -227,6 +234,7 @@ impl BuildGraph {
                         inputs,
                         order_only_inputs: Vec::new(),
                         outputs: outputs.clone(),
+                        output_dirs: Vec::new(),
                         depfile: None,
                     })?;
                     target_node.actions.push(action);
@@ -325,6 +333,7 @@ impl BuildGraph {
                         inputs,
                         order_only_inputs: Vec::new(),
                         outputs: vec![stamp_id],
+                        output_dirs: Vec::new(),
                         depfile: None,
                     })?;
                     target_node.actions.push(action);
@@ -389,6 +398,11 @@ impl BuildGraph {
                         .as_ref()
                         .map(|path| expand_config_template(path, &tree, profile, platform))
                         .transpose()?;
+                    let output_dirs = target
+                        .output_dirs
+                        .iter()
+                        .map(|path| expand_config_template(path, &tree, profile, platform))
+                        .collect::<Result<Vec<_>>>()?;
                     let clean_dirs = target
                         .clean_dirs
                         .iter()
@@ -400,6 +414,7 @@ impl BuildGraph {
                         &input_paths,
                         &dependency_paths,
                         &outputs,
+                        &output_dirs,
                         &clean_dirs,
                         depfile.as_deref(),
                         &tree,
@@ -428,6 +443,7 @@ impl BuildGraph {
                             &input_paths,
                             &dependency_paths,
                             &outputs,
+                            &output_dirs,
                             &clean_dirs,
                             depfile.as_deref(),
                             &tree,
@@ -435,7 +451,20 @@ impl BuildGraph {
                             platform,
                         )?);
                     }
-                    let output_ids = outputs
+                    // An owned directory is not a graph file, so dependents
+                    // would have nothing to wait for and no content to notice
+                    // changing. Frost writes a stamp naming every file in the
+                    // recorded tree with its digest: dependents take an edge to
+                    // it, and an identical tree produces an identical stamp, so
+                    // early cutoff works on trees exactly as on single files.
+                    let mut action_outputs = outputs.clone();
+                    if !output_dirs.is_empty() {
+                        action_outputs.push(format!(
+                            "{TREE_STAMP_DIR}/{tree}/{}/contents",
+                            path_key(name)
+                        ));
+                    }
+                    let output_ids = action_outputs
                         .iter()
                         .map(|path| graph.file(path))
                         .collect::<Vec<_>>();
@@ -454,6 +483,7 @@ impl BuildGraph {
                         inputs,
                         order_only_inputs: Vec::new(),
                         outputs: output_ids.clone(),
+                        output_dirs,
                         depfile,
                     })?;
                     target_node.actions.push(action);
@@ -513,6 +543,7 @@ impl BuildGraph {
                         inputs,
                         order_only_inputs: Vec::new(),
                         outputs: vec![bin_id, emitted_c_id],
+                        output_dirs: Vec::new(),
                         depfile: None,
                     })?;
                     target_node.actions.push(action);
@@ -580,6 +611,7 @@ impl BuildGraph {
                             inputs,
                             order_only_inputs,
                             outputs: vec![obj_id],
+                            output_dirs: Vec::new(),
                             depfile: Some(depfile),
                         })?;
                         target_node.actions.push(action);
@@ -610,6 +642,7 @@ impl BuildGraph {
                                 inputs: obj_ids.clone(),
                                 order_only_inputs: Vec::new(),
                                 outputs: vec![lib_id],
+                                output_dirs: Vec::new(),
                                 depfile: None,
                             })?;
                             target_node.actions.push(action);
@@ -653,6 +686,7 @@ impl BuildGraph {
                                 inputs,
                                 order_only_inputs: Vec::new(),
                                 outputs: vec![bin_id],
+                                output_dirs: Vec::new(),
                                 depfile: None,
                             })?;
                             target_node.actions.push(action);
@@ -679,6 +713,7 @@ impl BuildGraph {
                                     inputs: vec![bin_id],
                                     order_only_inputs: Vec::new(),
                                     outputs: vec![stamp_id],
+                                    output_dirs: Vec::new(),
                                     depfile: None,
                                 })?;
                                 target_node.actions.push(test);
@@ -1051,6 +1086,7 @@ fn expand_command_args(
     inputs: &[String],
     dependency_inputs: &[String],
     outputs: &[String],
+    output_dirs: &[String],
     clean_dirs: &[String],
     depfile: Option<&str>,
     config: &str,
@@ -1063,23 +1099,42 @@ fn expand_command_args(
             "${in}" => argv.extend(inputs.iter().cloned()),
             "${deps}" => argv.extend(dependency_inputs.iter().cloned()),
             "${outs}" => argv.extend(outputs.iter().cloned()),
+            "${output_dirs}" => argv.extend(output_dirs.iter().cloned()),
             "${clean_dirs}" => argv.extend(clean_dirs.iter().cloned()),
             _ => {
                 if arg.contains("${in}")
                     || arg.contains("${deps}")
                     || arg.contains("${outs}")
+                    || arg.contains("${output_dirs}")
                     || arg.contains("${clean_dirs}")
                 {
                     bail!(
                         "multi-value command variables must occupy one complete argument: {arg:?}"
                     );
                 }
-                let output_dir = outputs[0]
-                    .rsplit_once('/')
-                    .map_or(".", |(directory, _)| directory);
-                let mut expanded = arg
-                    .replace("${out_dir}", output_dir)
-                    .replace("${out}", &outputs[0]);
+                let mut expanded = arg.clone();
+                if expanded.contains("${out}") || expanded.contains("${out_dir}") {
+                    // A target that only owns directories has no single output
+                    // path to name, which is a manifest error rather than a
+                    // reason to index into an empty list.
+                    let Some(first) = outputs.first() else {
+                        bail!(
+                            "command arg {arg:?} uses ${{out}}/${{out_dir}} but the target                              declares no outputs (use ${{output_dir}} for an owned directory)"
+                        );
+                    };
+                    let output_dir = first
+                        .rsplit_once('/')
+                        .map_or(".", |(directory, _)| directory);
+                    expanded = expanded
+                        .replace("${out_dir}", output_dir)
+                        .replace("${out}", first);
+                }
+                if expanded.contains("${output_dir}") {
+                    let Some(first) = output_dirs.first() else {
+                        bail!("command arg uses ${{output_dir}} but no output_dirs are declared");
+                    };
+                    expanded = expanded.replace("${output_dir}", first);
+                }
                 if expanded.contains("${depfile}") {
                     let Some(depfile) = depfile else {
                         bail!("command arg uses ${{depfile}} but no depfile is configured");
@@ -1096,9 +1151,9 @@ fn expand_command_args(
                 if expanded.contains("${") {
                     bail!(
                         "unknown command variable in {arg:?} (supported: ${{in}}, ${{deps}}, \
-                         ${{out}}, ${{out_dir}}, ${{outs}}, ${{clean_dir}}, \
-                         ${{clean_dirs}}, ${{depfile}}, ${{config}}, ${{profile}}, \
-                         ${{platform}})"
+                         ${{out}}, ${{out_dir}}, ${{outs}}, ${{output_dir}}, \
+                         ${{output_dirs}}, ${{clean_dir}}, ${{clean_dirs}}, \
+                         ${{depfile}}, ${{config}}, ${{profile}}, ${{platform}})"
                     );
                 }
                 argv.push(expanded);

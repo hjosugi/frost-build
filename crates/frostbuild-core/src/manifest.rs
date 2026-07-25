@@ -176,6 +176,10 @@ struct RawTarget {
     inputs: Vec<String>,
     #[serde(default)]
     outputs: Vec<String>,
+    /// Directories whose entire contents are this target's output, for tools
+    /// whose output file names cannot be written down in advance.
+    #[serde(default)]
+    output_dirs: Vec<String>,
     /// Tests may opt out of sandboxing when they intentionally inspect the host.
     sandbox: Option<bool>,
 }
@@ -263,6 +267,9 @@ pub struct Target {
     pub depfile: Option<String>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    /// Command target only: directories Frost owns entirely. Every file under
+    /// one is recorded as an output of the action that declared it.
+    pub output_dirs: Vec<String>,
     pub sandbox: bool,
     /// Package directory relative to the workspace root (empty for root).
     pub package: String,
@@ -530,6 +537,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     let includes = validate_paths(&spec.includes).context("includes")?;
     let inputs = validate_paths(&spec.inputs).context("inputs")?;
     let outputs = validate_paths(&spec.outputs).context("outputs")?;
+    let output_dirs = validate_paths(&spec.output_dirs).context("output_dirs")?;
     let clean_dirs = validate_paths(&spec.clean_dirs).context("clean_dirs")?;
     let depfile = spec
         .depfile
@@ -544,7 +552,8 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         || !spec.steps.is_empty()
         || !clean_dirs.is_empty()
         || spec.preserve_outputs
-        || depfile.is_some();
+        || depfile.is_some()
+        || !output_dirs.is_empty();
 
     match spec.kind {
         TargetKind::CcBinary | TargetKind::CcLibrary | TargetKind::CcTest => {
@@ -645,13 +654,45 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
             if !valid_target_name(tool) {
                 bail!("command requires tool = \"NAME\" matching [A-Za-z0-9_-]+");
             }
-            if outputs.is_empty() {
-                bail!("command requires non-empty outputs");
+            if outputs.is_empty() && output_dirs.is_empty() {
+                bail!("command requires non-empty outputs or output_dirs");
             }
             if outputs.iter().any(|output| !output.contains("${config}")) {
                 bail!(
                     "command outputs must contain ${{config}} so profile/platform builds stay isolated"
                 );
+            }
+            if output_dirs.iter().any(|dir| !dir.contains("${config}")) {
+                bail!(
+                    "command output_dirs must contain ${{config}} so profile/platform builds stay isolated"
+                );
+            }
+            // Frost deletes and republishes an owned directory wholesale, so
+            // anything else that names a path inside one would be describing
+            // the same bytes under two different ownership rules.
+            for dir in &output_dirs {
+                let prefix = format!("{}/", dir.trim_end_matches('/'));
+                if let Some(other) = output_dirs
+                    .iter()
+                    .find(|other| *other != dir && other.starts_with(&prefix))
+                {
+                    bail!("command output_dir {other:?} is nested inside {dir:?}");
+                }
+                if let Some(output) = outputs.iter().find(|output| output.starts_with(&prefix)) {
+                    bail!("command output {output:?} is inside output_dir {dir:?}");
+                }
+                if let Some(clean) = clean_dirs
+                    .iter()
+                    .find(|clean| clean.starts_with(&prefix) || **clean == *dir)
+                {
+                    bail!("command clean_dir {clean:?} is inside output_dir {dir:?}");
+                }
+                if depfile
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&prefix))
+                {
+                    bail!("command depfile must not be inside output_dir {dir:?}");
+                }
             }
             if depfile
                 .as_ref()
@@ -720,6 +761,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         depfile,
         inputs,
         outputs,
+        output_dirs,
         sandbox: spec.sandbox.unwrap_or(true),
         package: String::new(),
     })
@@ -840,6 +882,11 @@ fn expand_manifest_paths(manifest: &mut Manifest, root: &Path, package: &str) ->
             .collect();
         target.outputs = target
             .outputs
+            .iter()
+            .map(|p| prefix_path(package, p))
+            .collect();
+        target.output_dirs = target
+            .output_dirs
             .iter()
             .map(|p| prefix_path(package, p))
             .collect();
@@ -1374,6 +1421,50 @@ mod tests {
             assert!(
                 Manifest::parse_str(&invalid).is_err(),
                 "invalid command target was accepted:\n{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_targets_may_own_output_directories_instead_of_naming_files() {
+        // A bundler names its outputs after their content, so the file list
+        // cannot be written down in advance. Declaring the directory is the
+        // only honest description of what the action produces.
+        let valid = r#"
+            [toolchain.tools]
+            npm = "npm"
+
+            [target.web]
+            kind = "command"
+            tool = "npm"
+            args = ["run", "build"]
+            inputs = ["src/**/*.ts", "package.json"]
+            output_dirs = ["dist/${config}"]
+        "#;
+        let manifest = Manifest::parse_str(valid).unwrap();
+        let target = &manifest.targets["web"];
+        assert!(target.outputs.is_empty(), "no file needs to be named");
+        assert_eq!(target.output_dirs, vec!["dist/${config}"]);
+
+        for invalid in [
+            // Without ${config} two configurations would publish into one tree.
+            valid.replace("dist/${config}", "dist"),
+            // Ownership of the same bytes must not be claimed twice.
+            valid.replace(
+                "output_dirs = [\"dist/${config}\"]",
+                "output_dirs = [\"dist/${config}\", \"dist/${config}/assets\"]",
+            ),
+            format!("{valid}\noutputs = [\"dist/${{config}}/index.html\"]"),
+            valid.replace(
+                "output_dirs = [\"dist/${config}\"]",
+                "output_dirs = [\"dist/${config}\"]\nclean_dirs = [\"dist/${config}/tmp\"]",
+            ),
+            // Only command targets own directories.
+            valid.replace("kind = \"command\"", "kind = \"genrule\"") + "\ncmd = \"true\"\n",
+        ] {
+            assert!(
+                Manifest::parse_str(&invalid).is_err(),
+                "invalid output_dirs target was accepted:\n{invalid}"
             );
         }
     }

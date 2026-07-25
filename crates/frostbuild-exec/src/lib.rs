@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use frostbuild_core::cas::LocalCas;
 use frostbuild_core::depfile;
 use frostbuild_core::graph::{ActionId, ActionKind, BuildGraph};
@@ -873,7 +873,7 @@ impl<'a> Engine<'a> {
                     return Ok(false);
                 }
             }
-            if action.outputs.len() != previous.outputs.len() {
+            if !self.recorded_outputs_match(action, previous) {
                 return Ok(false);
             }
             for &file in &action.outputs {
@@ -886,6 +886,26 @@ impl<'a> Engine<'a> {
                     .is_some_and(|other| other != digest)
                 {
                     return Ok(false);
+                }
+            }
+            // Files inside an owned directory are recorded outputs without
+            // being graph files, so they are checked alongside discovered
+            // inputs rather than through the per-file slots.
+            if !action.output_dirs.is_empty() {
+                for (path, digest) in &previous.outputs {
+                    if !action
+                        .output_dirs
+                        .iter()
+                        .any(|directory| path_is_inside(directory, path))
+                    {
+                        continue;
+                    }
+                    if discovered_expected
+                        .insert(path.as_str(), digest.as_str())
+                        .is_some_and(|other| other != digest)
+                    {
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -1132,7 +1152,7 @@ impl<'a> Engine<'a> {
                 match self.outputs_intact(prev) {
                     Ok(None) => return Outcome::Cached,
                     Ok(Some(bad)) => {
-                        if self.restore_outputs(prev).unwrap_or(false) {
+                        if self.restore_outputs(action, prev).unwrap_or(false) {
                             return Outcome::Cached;
                         }
                         return self.execute(
@@ -1190,6 +1210,11 @@ impl<'a> Engine<'a> {
             if !action.preserve_outputs {
                 let _ = std::fs::remove_file(self.root.join(path));
             }
+        }
+        if !action.preserve_outputs {
+            // The recorded tree must be exactly what this run produced, so a
+            // file the previous run left behind cannot linger into it.
+            self.discard_output_dirs(action);
         }
         if let Err(err) = self.reset_clean_dirs(action) {
             return Outcome::Failed {
@@ -1263,11 +1288,23 @@ impl<'a> Engine<'a> {
             }
         };
 
-        let output_paths: Vec<String> = action
+        let mut output_paths: Vec<String> = action
             .outputs
             .iter()
             .map(|&f| self.graph.files[f].path.clone())
             .collect();
+        // Owned directories are scanned after the command ran, so their file
+        // names never had to be predicted. From here they are ordinary
+        // recorded outputs: digested, published to the CAS, and restored.
+        match self.record_output_dirs(action) {
+            Ok(tree) => output_paths.extend(tree),
+            Err(err) => {
+                return Outcome::Failed {
+                    reason,
+                    detail: format!("{err:#}"),
+                }
+            }
+        }
         let outputs = match self.digest_all(&output_paths) {
             Ok(m) => m,
             Err(err) => {
@@ -1363,6 +1400,27 @@ impl<'a> Engine<'a> {
             for path in &output_paths {
                 self.cache.invalidate(path);
             }
+            // A rerun may name its tree files differently, which is itself
+            // non-determinism: rescan rather than re-digesting the first set,
+            // so an added or renamed file is compared instead of missed.
+            let mut output_paths = output_paths.clone();
+            if !action.output_dirs.is_empty() {
+                output_paths.retain(|path| {
+                    action
+                        .output_dirs
+                        .iter()
+                        .all(|directory| !path.starts_with(&format!("{directory}/")))
+                });
+                match self.record_output_dirs(action) {
+                    Ok(tree) => output_paths.extend(tree),
+                    Err(err) => {
+                        return Outcome::Failed {
+                            reason,
+                            detail: format!("determinism rerun output scan failed: {err:#}"),
+                        }
+                    }
+                }
+            }
             let second_outputs = match self.digest_all(&output_paths) {
                 Ok(value) => value,
                 Err(err) => {
@@ -1452,6 +1510,7 @@ impl<'a> Engine<'a> {
                 argv: argv.as_ref(),
                 cwd: ".",
                 toolchain_hash: &self.toolchain_hash,
+                output_dirs: &action.output_dirs,
             },
             environment,
             inputs,
@@ -1462,16 +1521,37 @@ impl<'a> Engine<'a> {
         )
     }
 
+    /// Every declared output was recorded, and nothing was recorded that this
+    /// action no longer claims. With owned directories the recorded set is
+    /// discovered rather than declared, so membership is checked against the
+    /// declared directories instead of by count.
     fn recorded_outputs_match(
         &self,
         action: &frostbuild_core::graph::ActionNode,
         previous: &JournalEntry,
     ) -> bool {
-        action.outputs.len() == previous.outputs.len()
-            && action
-                .outputs
-                .iter()
-                .all(|&file| previous.outputs.contains_key(&self.graph.files[file].path))
+        if action.output_dirs.is_empty() {
+            return action.outputs.len() == previous.outputs.len()
+                && action
+                    .outputs
+                    .iter()
+                    .all(|&file| previous.outputs.contains_key(&self.graph.files[file].path));
+        }
+        let declared: BTreeSet<&str> = action
+            .outputs
+            .iter()
+            .map(|&file| self.graph.files[file].path.as_str())
+            .collect();
+        declared
+            .iter()
+            .all(|path| previous.outputs.contains_key(*path))
+            && previous.outputs.keys().all(|path| {
+                declared.contains(path.as_str())
+                    || action
+                        .output_dirs
+                        .iter()
+                        .any(|directory| path_is_inside(directory, path))
+            })
     }
 
     fn digest_all(&self, paths: &[String]) -> Result<BTreeMap<String, String>> {
@@ -1506,6 +1586,11 @@ impl<'a> Engine<'a> {
                     directories.insert(parent.to_path_buf());
                 }
             }
+            // A tool told to write into a directory frost owns should find it
+            // present, exactly as it finds the parent of a declared output.
+            for owned in &action.output_dirs {
+                directories.insert(self.root.join(owned));
+            }
         }
         for parent in directories {
             std::fs::create_dir_all(&parent)
@@ -1514,7 +1599,18 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn restore_outputs(&self, prev: &JournalEntry) -> Result<bool> {
+    fn restore_outputs(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        prev: &JournalEntry,
+    ) -> Result<bool> {
+        // An owned directory is restored as a whole: remove it first so a file
+        // that is not in the recorded tree cannot survive the restore. Single
+        // declared outputs are overwritten in place, as before. Restoration is
+        // only attempted for a tree that was already found stale, and a failed
+        // restore falls through to re-execution, so removing first cannot lose
+        // a tree that was intact.
+        self.discard_output_dirs(action);
         for (path, digest) in &prev.outputs {
             if !self.cas.materialize(digest, &self.root.join(path))? {
                 return Ok(false);
@@ -1528,6 +1624,96 @@ impl<'a> Engine<'a> {
         for &output in &action.outputs {
             let _ = std::fs::remove_file(self.root.join(&self.graph.files[output].path));
         }
+        self.discard_output_dirs(action);
+    }
+
+    /// Remove the directories this action owns. Frost publishes an owned
+    /// directory wholesale, so a half-written tree from a failed or superseded
+    /// run must not survive to be mistaken for output.
+    fn discard_output_dirs(&self, action: &frostbuild_core::graph::ActionNode) {
+        for directory in &action.output_dirs {
+            for path in self.scan_output_dir(directory).unwrap_or_default() {
+                self.cache.invalidate(&path);
+            }
+            let _ = std::fs::remove_dir_all(self.root.join(directory));
+        }
+    }
+
+    /// Workspace-relative paths of every file under one owned directory, in a
+    /// deterministic order. Symlinks are reported so the caller can reject
+    /// them: a tree republished through the CAS would silently become regular
+    /// files, which is a different tree.
+    fn scan_output_dir(&self, directory: &str) -> Result<Vec<String>> {
+        fn walk(root: &Path, relative: &Path, out: &mut Vec<String>) -> Result<()> {
+            let mut entries = std::fs::read_dir(root.join(relative))
+                .with_context(|| format!("failed to read {}", relative.display()))?
+                .collect::<std::io::Result<Vec<_>>>()?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let child = relative.join(entry.file_name());
+                let kind = entry.file_type()?;
+                if kind.is_dir() && !kind.is_symlink() {
+                    walk(root, &child, out)?;
+                } else {
+                    let path = child
+                        .to_str()
+                        .with_context(|| format!("non-UTF-8 output path {}", child.display()))?;
+                    if kind.is_symlink() {
+                        bail!("output_dir entry {path} is a symlink, which Frost cannot republish");
+                    }
+                    out.push(path.replace('\\', "/"));
+                }
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(self.root, Path::new(directory), &mut out)
+            .with_context(|| format!("failed to scan output_dir {directory}"))?;
+        Ok(out)
+    }
+
+    /// Scan every owned directory and write the stamp that represents the tree
+    /// in the graph. Returns the recorded file paths.
+    fn record_output_dirs(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+    ) -> Result<Vec<String>> {
+        if action.output_dirs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut files = Vec::new();
+        for directory in &action.output_dirs {
+            if !self.root.join(directory).is_dir() {
+                bail!("command succeeded but declared output_dir {directory} was not created");
+            }
+            files.extend(self.scan_output_dir(directory)?);
+        }
+        for path in &files {
+            self.cache.invalidate(path);
+        }
+        let digests = self.digest_all(&files)?;
+        let mut stamp = String::from("frost-tree-v1\n");
+        for (path, digest) in &digests {
+            stamp.push_str(digest);
+            stamp.push(' ');
+            stamp.push_str(path);
+            stamp.push('\n');
+        }
+        for &output in &action.outputs {
+            let relative = &self.graph.files[output].path;
+            if !relative.starts_with(frostbuild_core::graph::TREE_STAMP_DIR) {
+                continue;
+            }
+            let path = self.root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            std::fs::write(&path, stamp.as_bytes())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            self.cache.invalidate(relative);
+        }
+        Ok(files)
     }
 
     /// Test outputs are Frost-owned success stamps, not files the test
@@ -1856,6 +2042,9 @@ fn sandbox_command(
     for directory in &action.clean_dirs {
         writable.insert(root.join(directory));
     }
+    for directory in &action.output_dirs {
+        writable.insert(root.join(directory));
+    }
     for directory in writable {
         std::fs::create_dir_all(&directory)?;
         add_sandbox_dirs(&mut command, root, directory.parent(), &mut made_dirs);
@@ -1938,6 +2127,10 @@ struct StreamedActionDescriptor<'a> {
     argv: &'a [String],
     cwd: &'a str,
     toolchain_hash: &'a str,
+    /// Directories the action owns entirely. Declaring a different set changes
+    /// which bytes the action is answerable for, exactly as changing the
+    /// declared output paths does (#64).
+    output_dirs: &'a [String],
 }
 
 fn streamed_action_key<'a>(
@@ -1947,7 +2140,7 @@ fn streamed_action_key<'a>(
     outputs: impl IntoIterator<Item = &'a str>,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_key_field(&mut hasher, "schema", "frost-action-key-v3");
+    update_key_field(&mut hasher, "schema", "frost-action-key-v4");
     update_key_field(&mut hasher, "builder", descriptor.builder);
     update_key_field(&mut hasher, "target", descriptor.target);
     update_key_field(&mut hasher, "cwd", descriptor.cwd);
@@ -1966,7 +2159,19 @@ fn streamed_action_key<'a>(
     for path in outputs {
         update_key_field(&mut hasher, "output", path);
     }
+    for directory in descriptor.output_dirs {
+        update_key_field(&mut hasher, "output_dir", directory);
+    }
     hasher.finalize().to_hex().to_string()
+}
+
+/// Is `path` a file under `directory`? Compared segment-wise so `dist2/a` is
+/// not mistaken for a file inside `dist`.
+fn path_is_inside(directory: &str, path: &str) -> bool {
+    let directory = directory.trim_end_matches('/');
+    path.len() > directory.len()
+        && path.starts_with(directory)
+        && path.as_bytes()[directory.len()] == b'/'
 }
 
 fn action_key_argv(action: &frostbuild_core::graph::ActionNode) -> Cow<'_, [String]> {
@@ -2176,6 +2381,7 @@ mod tests {
             ("src/main.c".to_string(), "def".to_string()),
         ]);
         let outputs = vec!["out/main".to_string(), "out/main.map".to_string()];
+        let output_dirs = vec!["out/tree".to_string()];
         let mut canonical = frostbuild_core::ActionKey::new(
             "frost-engine-v1",
             "compile:main",
@@ -2192,6 +2398,9 @@ mod tests {
         for path in &outputs {
             canonical = canonical.with_output(path);
         }
+        for path in &output_dirs {
+            canonical = canonical.with_output_dir(path);
+        }
         assert_eq!(
             streamed_action_key(
                 StreamedActionDescriptor {
@@ -2200,6 +2409,7 @@ mod tests {
                     argv: &argv,
                     cwd: ".",
                     toolchain_hash: "toolchain",
+                    output_dirs: &output_dirs,
                 },
                 &env,
                 &inputs,
@@ -2231,6 +2441,7 @@ mod tests {
                 inputs: Vec::new(),
                 order_only_inputs: Vec::new(),
                 outputs: Vec::new(),
+                output_dirs: Vec::new(),
                 depfile: None,
             }
         }
@@ -2242,6 +2453,7 @@ mod tests {
                     argv: action_key_argv(action).as_ref(),
                     cwd: ".",
                     toolchain_hash: "toolchain",
+                    output_dirs: &action.output_dirs,
                 },
                 &BTreeMap::new(),
                 &BTreeMap::new(),
