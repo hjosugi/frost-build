@@ -10,6 +10,7 @@ inputs, early cutoff and content-addressed output restoration.
 The normative architecture is [DESIGN.md](DESIGN.md); the manifest specification
 is [docs/06_manifest_spec.md](docs/06_manifest_spec.md), and the per-language
 definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win_matrix.md).
+[docs/README.md](docs/README.md) indexes every document by what it is for.
 
 ## Quick start
 
@@ -116,7 +117,14 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 - debug/release/custom profiles with independent output/cache identities
 - `[platform.*]` cross/device toolchains with per-platform trees and caches,
   plus one-command host-and-device builds via `--all-platforms`
-- dynamic GCC/Clang depfile ingestion and generated-file order-only edges
+- dynamic GCC/Clang depfile ingestion and generated-file order-only edges;
+  `depfile_format` also accepts a plain path list or `cl.exe /showIncludes`
+  notes read from captured output
+- `output_dirs`: a command target may own whole directories when the tool names
+  its outputs after their content (bundlers, `tsc --outDir`). The tree is
+  scanned after execution, recorded and published like any output, restored
+  exactly on a hit, and represented in the graph by a content stamp, so
+  dependents get real edges and early cutoff
 - parallel critical-path scheduler, captured diagnostics and `--keep-going`
 - interactive TTY progress with job slots, cache/timing state, critical path,
   scrollable logs, automatic plain CI/pipe output and `--no-tui`

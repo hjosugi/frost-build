@@ -15,6 +15,26 @@ pub const HOST_PLATFORM: &str = "host";
 /// The profile every workspace has without declaring one.
 pub const DEFAULT_PROFILE: &str = "debug";
 
+/// Archiver flags a workspace gets without declaring any.
+///
+/// `D` asks for a deterministic archive — identical bytes for identical
+/// members, independent of when they were written — which is why it is the
+/// default wherever it exists. The cctools `ar` that Xcode ships rejects it
+/// outright (`illegal option -- D`), so keeping it unconditional made every
+/// archive action fail on a macOS host with a default manifest. There, member
+/// identity already comes from the object files Frost tracks, and a workspace
+/// that wants the flag can point `ar` at `llvm-ar` and set `arflags`.
+pub fn default_arflags() -> &'static [String] {
+    static FLAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FLAGS.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            vec!["rcs".to_string()]
+        } else {
+            vec!["rcsD".to_string()]
+        }
+    })
+}
+
 /// The closest candidate to `input`, when one is close enough to be worth
 /// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -170,12 +190,18 @@ struct RawTarget {
     /// Keep declared outputs in place while rerunning an incremental compiler.
     #[serde(default)]
     preserve_outputs: bool,
-    /// Optional Makefile-format dynamic dependency file.
+    /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
+    /// Format of the dynamic dependency report; see `depfile::Format`.
+    depfile_format: Option<String>,
     #[serde(default)]
     inputs: Vec<String>,
     #[serde(default)]
     outputs: Vec<String>,
+    /// Directories whose entire contents are this target's output, for tools
+    /// whose output file names cannot be written down in advance.
+    #[serde(default)]
+    output_dirs: Vec<String>,
     /// Tests may opt out of sandboxing when they intentionally inspect the host.
     sandbox: Option<bool>,
 }
@@ -261,8 +287,14 @@ pub struct Target {
     pub clean_dirs: Vec<String>,
     pub preserve_outputs: bool,
     pub depfile: Option<String>,
+    /// How this action reports the inputs it read. `showincludes` is read from
+    /// captured output, so it comes without a `depfile` path.
+    pub depfile_format: crate::depfile::Format,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    /// Command target only: directories Frost owns entirely. Every file under
+    /// one is recorded as an output of the action that declared it.
+    pub output_dirs: Vec<String>,
     pub sandbox: bool,
     /// Package directory relative to the workspace root (empty for root).
     pub package: String,
@@ -480,7 +512,7 @@ impl Manifest {
                 arflags: raw
                     .toolchain
                     .arflags
-                    .unwrap_or_else(|| vec!["rcsD".to_string()]),
+                    .unwrap_or_else(|| default_arflags().to_vec()),
                 cflags: raw.toolchain.cflags,
                 cxxflags: raw.toolchain.cxxflags,
                 ldflags: raw.toolchain.ldflags,
@@ -530,6 +562,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     let includes = validate_paths(&spec.includes).context("includes")?;
     let inputs = validate_paths(&spec.inputs).context("inputs")?;
     let outputs = validate_paths(&spec.outputs).context("outputs")?;
+    let output_dirs = validate_paths(&spec.output_dirs).context("output_dirs")?;
     let clean_dirs = validate_paths(&spec.clean_dirs).context("clean_dirs")?;
     let depfile = spec
         .depfile
@@ -537,6 +570,26 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         .map(validate_rel_path)
         .transpose()
         .context("depfile")?;
+    let depfile_format = match spec.depfile_format.as_deref() {
+        None | Some("make") => crate::depfile::Format::Make,
+        Some("lines") => crate::depfile::Format::Lines,
+        Some("showincludes") => crate::depfile::Format::ShowIncludes,
+        Some(other) => {
+            bail!("unknown depfile_format {other:?} (supported: make, lines, showincludes)")
+        }
+    };
+    // `showincludes` is read from captured output, because that is where MSVC
+    // writes it; every other format names a file.
+    if depfile_format.reads_captured_output() {
+        if depfile.is_some() {
+            bail!("depfile_format = \"showincludes\" reads captured output and takes no depfile");
+        }
+    } else if spec.depfile_format.is_some() && depfile.is_none() {
+        bail!(
+            "depfile_format = {:?} requires a depfile path",
+            depfile_format.as_str()
+        );
+    }
     let has_command_fields = spec.tool.is_some()
         || !spec.args.is_empty()
         || !spec.env.is_empty()
@@ -544,7 +597,9 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         || !spec.steps.is_empty()
         || !clean_dirs.is_empty()
         || spec.preserve_outputs
-        || depfile.is_some();
+        || depfile.is_some()
+        || spec.depfile_format.is_some()
+        || !output_dirs.is_empty();
 
     match spec.kind {
         TargetKind::CcBinary | TargetKind::CcLibrary | TargetKind::CcTest => {
@@ -645,13 +700,45 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
             if !valid_target_name(tool) {
                 bail!("command requires tool = \"NAME\" matching [A-Za-z0-9_-]+");
             }
-            if outputs.is_empty() {
-                bail!("command requires non-empty outputs");
+            if outputs.is_empty() && output_dirs.is_empty() {
+                bail!("command requires non-empty outputs or output_dirs");
             }
             if outputs.iter().any(|output| !output.contains("${config}")) {
                 bail!(
                     "command outputs must contain ${{config}} so profile/platform builds stay isolated"
                 );
+            }
+            if output_dirs.iter().any(|dir| !dir.contains("${config}")) {
+                bail!(
+                    "command output_dirs must contain ${{config}} so profile/platform builds stay isolated"
+                );
+            }
+            // Frost deletes and republishes an owned directory wholesale, so
+            // anything else that names a path inside one would be describing
+            // the same bytes under two different ownership rules.
+            for dir in &output_dirs {
+                let prefix = format!("{}/", dir.trim_end_matches('/'));
+                if let Some(other) = output_dirs
+                    .iter()
+                    .find(|other| *other != dir && other.starts_with(&prefix))
+                {
+                    bail!("command output_dir {other:?} is nested inside {dir:?}");
+                }
+                if let Some(output) = outputs.iter().find(|output| output.starts_with(&prefix)) {
+                    bail!("command output {output:?} is inside output_dir {dir:?}");
+                }
+                if let Some(clean) = clean_dirs
+                    .iter()
+                    .find(|clean| clean.starts_with(&prefix) || **clean == *dir)
+                {
+                    bail!("command clean_dir {clean:?} is inside output_dir {dir:?}");
+                }
+                if depfile
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&prefix))
+                {
+                    bail!("command depfile must not be inside output_dir {dir:?}");
+                }
             }
             if depfile
                 .as_ref()
@@ -718,8 +805,10 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         clean_dirs,
         preserve_outputs: spec.preserve_outputs,
         depfile,
+        depfile_format,
         inputs,
         outputs,
+        output_dirs,
         sandbox: spec.sandbox.unwrap_or(true),
         package: String::new(),
     })
@@ -840,6 +929,11 @@ fn expand_manifest_paths(manifest: &mut Manifest, root: &Path, package: &str) ->
             .collect();
         target.outputs = target
             .outputs
+            .iter()
+            .map(|p| prefix_path(package, p))
+            .collect();
+        target.output_dirs = target
+            .output_dirs
             .iter()
             .map(|p| prefix_path(package, p))
             .collect();
@@ -1116,7 +1210,12 @@ fn scaffold_java(root: &Path) -> Result<Scaffold> {
          [target.{name}]\nkind = \"command\"\ntool = \"javac\"\n\
          args = [\"-encoding\", \"UTF-8\", \"-g\", \"-d\", \"${{clean_dir}}\", \"${{in}}\"]\n\
          inputs = {}\noutputs = {outputs}\nclean_dirs = [{classes:?}]\n\
-         steps = [{{ tool = \"frost\", args = {} }}]\nsandbox = false\n",
+         steps = [{{ tool = \"frost\", args = {} }}]\n\
+         # `javac` and `java` are stubs on macOS that pick the JDK from\n\
+         # JAVA_HOME, so a build that cleared it would compile for a different\n\
+         # JDK than the one the developer runs. Its value is action-key\n\
+         # material, so switching JDKs invalidates rather than mixes.\n\
+         pass_env = [\"JAVA_HOME\"]\nsandbox = false\n",
         toml_array(&sources),
         toml_array(&pack_args),
     );
@@ -1379,6 +1478,98 @@ mod tests {
     }
 
     #[test]
+    fn depfile_format_selects_where_the_dependency_report_comes_from() {
+        let manifest = |extra: &str| {
+            format!(
+                r#"
+                [toolchain.tools]
+                cl = "cl.exe"
+
+                [target.obj]
+                kind = "command"
+                tool = "cl"
+                args = ["/c", "${{in}}"]
+                inputs = ["src/main.c"]
+                outputs = [".frost/out/${{config}}/main.obj"]
+                {extra}
+                "#
+            )
+        };
+        let make = Manifest::parse_str(&manifest(
+            "depfile = \".frost/out/${config}/main.d\"\ndepfile_format = \"make\"",
+        ))
+        .unwrap();
+        assert_eq!(
+            make.targets["obj"].depfile_format,
+            crate::depfile::Format::Make
+        );
+
+        // MSVC writes its includes to stdout, so this format takes no path.
+        let showincludes =
+            Manifest::parse_str(&manifest("depfile_format = \"showincludes\"")).unwrap();
+        assert_eq!(
+            showincludes.targets["obj"].depfile_format,
+            crate::depfile::Format::ShowIncludes
+        );
+        assert!(showincludes.targets["obj"].depfile.is_none());
+
+        for invalid in [
+            "depfile_format = \"clang-scan-deps\"",
+            "depfile_format = \"showincludes\"\ndepfile = \".frost/out/${config}/main.d\"",
+            "depfile_format = \"lines\"",
+        ] {
+            assert!(
+                Manifest::parse_str(&manifest(invalid)).is_err(),
+                "invalid depfile_format was accepted: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_targets_may_own_output_directories_instead_of_naming_files() {
+        // A bundler names its outputs after their content, so the file list
+        // cannot be written down in advance. Declaring the directory is the
+        // only honest description of what the action produces.
+        let valid = r#"
+            [toolchain.tools]
+            npm = "npm"
+
+            [target.web]
+            kind = "command"
+            tool = "npm"
+            args = ["run", "build"]
+            inputs = ["src/**/*.ts", "package.json"]
+            output_dirs = ["dist/${config}"]
+        "#;
+        let manifest = Manifest::parse_str(valid).unwrap();
+        let target = &manifest.targets["web"];
+        assert!(target.outputs.is_empty(), "no file needs to be named");
+        assert_eq!(target.output_dirs, vec!["dist/${config}"]);
+
+        for invalid in [
+            // Without ${config} two configurations would publish into one tree.
+            valid.replace("dist/${config}", "dist"),
+            // Ownership of the same bytes must not be claimed twice.
+            valid.replace(
+                "output_dirs = [\"dist/${config}\"]",
+                "output_dirs = [\"dist/${config}\", \"dist/${config}/assets\"]",
+            ),
+            format!("{valid}\noutputs = [\"dist/${{config}}/index.html\"]"),
+            valid.replace(
+                "output_dirs = [\"dist/${config}\"]",
+                "output_dirs = [\"dist/${config}\"]\nclean_dirs = [\"dist/${config}/tmp\"]",
+            ),
+            // Only command targets own directories.
+            valid.replace("kind = \"command\"", "kind = \"genrule\"") + "\ncmd = \"true\"\n",
+        ] {
+            assert!(
+                Manifest::parse_str(&invalid).is_err(),
+                "invalid output_dirs target was accepted:\n{invalid}"
+            );
+        }
+    }
+
+    #[test]
     fn tests_accept_exactly_one_shell_or_direct_argv_contract() {
         let direct = Manifest::parse_str(
             r#"
@@ -1477,7 +1668,7 @@ mod tests {
         assert_eq!(host.cc, "gcc");
         assert_eq!(host.kofunc.as_deref(), Some("host-kofun"));
         assert_eq!(host.cflags, vec!["-O2"]);
-        assert_eq!(host.arflags, vec!["rcsD"]);
+        assert_eq!(host.arflags, default_arflags());
 
         let cross = m.toolchain_for("aarch64").unwrap();
         assert_eq!(cross.cc, "aarch64-linux-gnu-gcc");

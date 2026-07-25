@@ -20,6 +20,8 @@ pub struct ActionKey {
     pub env: BTreeMap<String, String>,
     pub inputs: BTreeMap<String, String>,
     pub outputs: Vec<String>,
+    /// Directories the action owns entirely; see `ActionNode::output_dirs`.
+    pub output_dirs: Vec<String>,
     pub toolchain_hash: String,
 }
 
@@ -39,6 +41,7 @@ impl ActionKey {
             env: BTreeMap::new(),
             inputs: BTreeMap::new(),
             outputs: Vec::new(),
+            output_dirs: Vec::new(),
             toolchain_hash: toolchain_hash.into(),
         }
     }
@@ -55,6 +58,11 @@ impl ActionKey {
 
     pub fn with_output(mut self, path: impl Into<String>) -> Self {
         self.outputs.push(path.into());
+        self
+    }
+
+    pub fn with_output_dir(mut self, path: impl Into<String>) -> Self {
+        self.output_dirs.push(path.into());
         self
     }
 
@@ -90,9 +98,10 @@ impl ActionKey {
                 .iter()
                 .map(|(p, d)| p.len() + d.len() + 32)
                 .sum::<usize>()
-            + self.outputs.iter().map(|p| p.len() + 16).sum::<usize>();
+            + self.outputs.iter().map(|p| p.len() + 16).sum::<usize>()
+            + self.output_dirs.iter().map(|p| p.len() + 20).sum::<usize>();
         let mut payload = String::with_capacity(capacity);
-        write_field(&mut payload, "schema", "frost-action-key-v3");
+        write_field(&mut payload, "schema", "frost-action-key-v4");
         write_field(&mut payload, "builder", &self.builder);
         write_field(&mut payload, "target", &self.target);
         write_field(&mut payload, "cwd", &cwd);
@@ -110,6 +119,9 @@ impl ActionKey {
         }
         for path in &self.outputs {
             write_field(&mut payload, "output", path);
+        }
+        for path in &self.output_dirs {
+            write_field(&mut payload, "output_dir", path);
         }
         payload
     }

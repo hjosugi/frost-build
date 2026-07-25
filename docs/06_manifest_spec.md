@@ -72,8 +72,11 @@ action keys. A named tool may be on `PATH`, absolute, or workspace-relative;
 a workspace-relative wrapper is also a declared action input. C++20 modules
 are not v1 functionality.
 
-`arflags` (default `["rcsD"]`) overrides the archiver invocation for toolchains
-whose `ar` lacks GNU's deterministic flag.
+`arflags` overrides the archiver invocation. The default is `["rcsD"]`, whose
+`D` asks for a byte-identical archive from identical members; on macOS it is
+`["rcs"]`, because the cctools `ar` Xcode ships rejects `D` outright and would
+otherwise fail every archive action. Point `ar` at `llvm-ar` and set `arflags`
+to get the deterministic flag on a macOS host.
 
 ## Platforms (cross / device builds)
 
@@ -230,14 +233,16 @@ release and cross-device writes from colliding. Command arguments support:
 | `${outs}` | one argv item per declared output |
 | `${out}` | first declared output |
 | `${out_dir}` | parent directory of the first output |
+| `${output_dir}` | first declared owned output directory |
+| `${output_dirs}` | one argv item per owned output directory |
 | `${clean_dir}` | first declared clean intermediate directory |
 | `${clean_dirs}` | one argv item per clean intermediate directory |
 | `${depfile}` | configured depfile path |
 | `${config}` | profile or platform/profile output-tree key |
 | `${profile}` / `${platform}` | selected names |
 
-The multi-value forms `${in}`, `${deps}`, `${outs}`, and `${clean_dirs}` must
-occupy a complete argument. Static `env` values and the present-or-absent value of every
+The multi-value forms `${in}`, `${deps}`, `${outs}`, `${output_dirs}` and
+`${clean_dirs}` must occupy a complete argument. Static `env` values and the present-or-absent value of every
 `pass_env` name participate in the action key. All other host variables are
 cleared; Frost then supplies its normal deterministic baseline and forces the
 locale to `C`.
@@ -265,20 +270,77 @@ state needed for a safe retry should itself be a declared output; a failed
 action removes the possibly mixed output set. Clean builds and `frost clean`
 continue to remove the whole configuration output state.
 
-Declared outputs are files, not opaque directory trees. This makes ownership,
-digest verification, early cutoff and remote-cache translation unambiguous.
-An ecosystem command that produces a variable tree should either expose one
-stable boundary artifact (for example a jar), use a small adapter that packs
-the tree deterministically, or remain wholly owned by Cargo/npm/Gradle/Maven.
-The optional depfile is Makefile-format; tools using another dependency format
-need an adapter. `--sandbox` also requires every workspace input to be declared,
+### Owned output directories
+
+Some tools name their outputs after their content, so the file list cannot be
+written down in advance: a bundler emits `assets/index-<hash>.js`, and `tsc
+--outDir` emits whatever the module graph implies. A `command` target may
+declare those directories instead of their files.
+
+```toml
+[target.web]
+kind = "command"
+tool = "npm"
+args = ["run", "build", "--", "--outDir", "${output_dir}"]
+inputs = ["src/**/*.ts", "package.json", "package-lock.json"]
+output_dirs = ["dist/${config}"]
+```
+
+Frost owns a declared directory outright:
+
+- it is removed before the action reruns, so the recorded tree is exactly what
+  that run produced
+- after success every file under it is scanned in a deterministic order,
+  digested, recorded in the journal and published to the CAS, exactly like a
+  declared output
+- a cache hit restores the recorded tree and nothing else; a file the previous
+  run left behind, or one Frost never recorded, does not survive a republish
+- a missing or modified file inside it is restored from the CAS without
+  rerunning the action
+- the declared directory set is action-key material, so changing it does not
+  reuse the earlier result
+
+`outputs` may be empty when `output_dirs` is not. Because a directory is not a
+graph file, Frost writes a stamp under `.frost/tree/CONFIG/TARGET/contents`
+listing every recorded path with its digest, and that stamp is the target's
+graph output: dependents take an ordinary edge to it, and a rerun that
+reproduces the same tree produces the same stamp, so early cutoff applies to
+trees as it does to single files.
+
+Ownership must be unambiguous: an owned directory may not nest inside another,
+and no declared output, clean directory or depfile may live inside one. Symlinks
+inside an owned directory are rejected rather than republished as regular files.
+Every entry must contain `${config}`.
+
+An ecosystem command whose tree Frost should not own can still expose one stable
+boundary artifact (for example a jar), pack the tree deterministically with a
+small adapter, or remain wholly owned by Cargo/npm/Gradle/Maven.
+
+### Dependency report formats
+
+`depfile_format` selects how an action reports the inputs it actually read:
+
+| Value | Source | Shape |
+|---|---|---|
+| `make` (default) | the declared `depfile` path | `gcc -MD -MF` output |
+| `lines` | the declared `depfile` path | one path per line; blank lines and `#` comments ignored |
+| `showincludes` | the action's captured output | `cl.exe /showIncludes` notes |
+
+`showincludes` takes no `depfile` path, because MSVC has no `-MF` and writes its
+includes to stdout; the notes are removed from the build log so a rebuild does
+not print the whole include tree. The path is read after the last `: ` on the
+line, which keeps it correct on a localized toolchain. `lines` exists so a
+wrapper around a tool with some other dependency protocol can report what it
+read without reproducing Makefile escaping. Reported paths under the workspace
+root are recorded workspace-relative, and the recorded list is sorted, so it does
+not depend on which spelling the tool printed. `--sandbox` also requires every workspace input to be declared,
 so package managers that traverse a module cache normally use `sandbox = false`.
 
 ## Incrementality and diagnostics
 
 The BLAKE3 action key covers canonical argv/cwd, environment whitelist,
-toolchain closure, declared output paths, and declared and discovered input
-content. The binary journal is append-only and ignores incomplete crash tails.
+toolchain closure, declared output paths, declared owned output directories, and
+declared and discovered input content. The binary journal is append-only and ignores incomplete crash tails.
 The CAS restores missing output without execution; byte-identical output cuts
 off downstream work.
 

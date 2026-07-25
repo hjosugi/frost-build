@@ -5,8 +5,59 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
+### Added
+
+- `depfile_format` selects the dependency report an action produces: `make`
+  (default), `lines` for a wrapper-friendly path list, or `showincludes` for
+  `cl.exe`, which is read from captured output because MSVC has no `-MF`. The
+  notes are stripped from the build log, and the path is taken after the last
+  `: ` so a localized toolchain still parses.
+- `command` targets may declare `output_dirs`: directories Frost owns entirely,
+  for tools whose output file names cannot be written down in advance. The tree
+  is scanned after execution, digested, journalled and published to the CAS;
+  a hit restores exactly the recorded tree; a `.frost/tree/CONFIG/TARGET/contents`
+  stamp represents it in the graph so dependents get ordinary edges and early
+  cutoff. `${output_dir}` / `${output_dirs}` expand in command arguments.
+
+### Changed
+
+- Action-key schema v4 adds the declared owned-directory set, so changing it
+  does not reuse an earlier result. Existing journals rebuild once.
+- macOS CI runs the whole workspace test suite instead of one smoke test, and
+  Windows runs a named subset covering the paths its image can reach. Host
+  exclusions are declared in the tests and tabulated in
+  `docs/09_platform_support.md`.
+
+### Documentation
+
+- `docs/README.md` indexes every document by purpose and records why the
+  duplicated numeric prefixes are not renamed.
+
+### Security
+
+- Arbitrarily corrupted no-op certificates and CAS chunk manifests are gated by
+  property tests, not only by the designed failure injections: a manifest or
+  certificate that is not byte-exact can never publish bytes or declare a build
+  finished.
+
 ### Fixed
 
+- `frost init --language java` passes `JAVA_HOME` to the build. `javac` and
+  `java` are stubs on macOS that select a JDK from it, so a build that cleared
+  it compiled for a different JDK than the developer's own `java` could load.
+- One workspace means one daemon however its path is spelled: the socket name is
+  derived from the resolved path, so a client that resolved a symlinked prefix
+  (`/var` on macOS) and one that did not no longer miss each other.
+- A client that hangs up before reading its answer no longer takes the daemon
+  down with it; a failed reply ends only that connection.
+- The daemon watcher strips the resolved workspace root from event paths, so a
+  workspace reached through a symlinked prefix (`/var` on macOS) records
+  workspace-relative dirty paths and recognises its own barriers.
+- Default `arflags` are `["rcs"]` on macOS. `rcsD` asks for a deterministic
+  archive, but the cctools `ar` Xcode ships rejects `D` outright, so every
+  archive action failed on a macOS host with a default manifest.
 - A daemon build now runs with the invoking client's environment instead of the
   environment the daemon inherited when it started. `CPATH=a frost build
   --daemon` against a daemon started with `CPATH=b` built, and then reported as

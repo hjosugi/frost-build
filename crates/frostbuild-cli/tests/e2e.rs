@@ -6,6 +6,42 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
+/// Can a class `javac` produces be run by `java` on this host?
+///
+/// A host can have a newer compiler than runtime on `PATH` — the macOS CI image
+/// does — and then every class these tests compile fails to load with
+/// `UnsupportedClassVersionError`. That is a property of the host, not of frost,
+/// so the Java cases skip. The check compiles and runs a class rather than
+/// comparing `-version` strings, because those differ per vendor and the
+/// property that matters is exactly this one.
+fn java_toolchain_is_consistent() -> bool {
+    let dir = std::env::temp_dir().join(format!("frost-java-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let source = dir.join("Probe.java");
+    let written = std::fs::write(
+        &source,
+        "public final class Probe { public static void main(String[] a) {} }\n",
+    );
+    let ok = written.is_ok()
+        && Command::new("javac")
+            .arg("-d")
+            .arg(&dir)
+            .arg(&source)
+            .output()
+            .is_ok_and(|out| out.status.success())
+        && Command::new("java")
+            .arg("-cp")
+            .arg(&dir)
+            .arg("Probe")
+            .output()
+            .is_ok_and(|out| out.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+    ok
+}
+
 fn frost_bin() -> &'static str {
     env!("CARGO_BIN_EXE_frost")
 }
@@ -55,7 +91,10 @@ impl Workspace {
         )
     }
 
-    #[cfg(unix)]
+    // `script -q -e -c` is util-linux syntax. macOS ships the BSD tool, whose
+    // arguments differ, so the pseudo-terminal cases run on Linux; every other
+    // test runs on every host. See docs/09_platform_support.md.
+    #[cfg(target_os = "linux")]
     fn frost_pty(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
         let command_line = pty_command_line(&self.dir, args);
         let mut command = Command::new("script");
@@ -171,10 +210,14 @@ fn changing_declared_output_set_invalidates_cache() {
         "mkdir -p ${config}; printf one > ${config}/one.txt; printf two > ${config}/two.txt",
     );
     #[cfg(windows)]
+    // cmd.exe redirection needs a native path: `>debug/one.txt` fails because
+    // `/` starts a switch. Declared outputs stay `/`-separated as frost paths
+    // always are; only the command text is host syntax, and it reaches the
+    // manifest through TOML, where a backslash is itself escaped.
     let (shell, shell_arg, command) = (
         "cmd.exe",
         "/C",
-        "if not exist ${config} mkdir ${config} & echo one>${config}/one.txt & echo two>${config}/two.txt",
+        "if not exist ${config} mkdir ${config} & echo one>${config}\\\\one.txt & echo two>${config}\\\\two.txt",
     );
     let manifest = |outputs: &str| {
         format!(
@@ -225,7 +268,169 @@ outputs = {outputs}
     );
 }
 
+#[test]
+// The command has to name a file after the contents of another file, which is
+// what makes the output set unpredictable. Expressing that in `cmd.exe` adds
+// nothing to what is being tested; see docs/09_platform_support.md.
 #[cfg(unix)]
+fn command_target_owns_an_output_directory_it_cannot_name_in_advance() {
+    let ws = Workspace::empty("output-dirs");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["report"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.web]
+kind = "command"
+tool = "sh"
+args = ["-c", "mkdir -p dist/${config}/assets; printf built > dist/${config}/$(cat src/name.txt).js; printf shared > dist/${config}/assets/common.css"]
+inputs = ["src/name.txt", "src/version.txt"]
+output_dirs = ["dist/${config}"]
+
+[target.report]
+kind = "command"
+tool = "sh"
+args = ["-c", "ls dist/${config} | tr '\n' ' ' > ${out}"]
+deps = ["web"]
+outputs = [".frost/out/${config}/report.txt"]
+"#,
+    );
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/name.txt", "alpha");
+    // Declared, but the command does not read it: changing it reruns the
+    // command without changing the tree it produces.
+    ws.write("src/version.txt", "1");
+
+    let bundle = ws.dir.join("dist/debug");
+    let report = ws.dir.join(".frost/out/debug/report.txt");
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "tree output build failed:\n{out}");
+    assert_eq!(read(&bundle.join("alpha.js")), "built");
+    assert_eq!(read(&bundle.join("assets/common.css")), "shared");
+    assert!(
+        read(&report).contains("alpha.js"),
+        "the dependent must observe the tree: {}",
+        read(&report)
+    );
+    let stamp = ws.dir.join(".frost/tree/debug/web/contents");
+    assert!(
+        stamp.is_file(),
+        "the tree stamp is the graph node for the dir"
+    );
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // A file missing from an owned directory is restored from the CAS, exactly
+    // as a missing declared output is.
+    std::fs::remove_file(bundle.join("alpha.js")).unwrap();
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+    assert_eq!(read(&bundle.join("alpha.js")), "built", "restored from CAS");
+
+    // A rebuild republishes the whole tree, so nothing from the previous run
+    // and nothing frost never recorded survives into it.
+    std::fs::write(bundle.join("stray.js"), "not mine").unwrap();
+    ws.write("src/name.txt", "beta");
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "tree rebuild failed:\n{out}");
+    assert_eq!(read(&bundle.join("beta.js")), "built");
+    assert!(
+        !bundle.join("alpha.js").exists(),
+        "the previous run's file must not survive the republished tree"
+    );
+    assert!(
+        !bundle.join("stray.js").exists(),
+        "an undeclared file in an owned directory must not survive it either"
+    );
+    assert!(
+        read(&report).contains("beta.js"),
+        "the tree stamp must invalidate the dependent: {}",
+        read(&report)
+    );
+
+    // A rerun that reproduces the same tree produces the same stamp, so the
+    // dependent is cut off rather than rebuilt: early cutoff on a tree works
+    // exactly as it does on a single file.
+    ws.write("src/version.txt", "2");
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("RUN web"),
+        "the changed input must rerun the producer:\n{out}"
+    );
+    assert!(
+        !out.contains("RUN report"),
+        "an identical tree must cut the dependent off:\n{out}"
+    );
+}
+
+#[test]
+// A shell wrapper stands in for a tool whose dependency protocol is not
+// Makefile-shaped; `cmd.exe` adds nothing to what is tested here. The MSVC
+// `showincludes` path is covered by unit tests until Windows CI runs the E2E
+// suite (#110); see docs/09_platform_support.md.
+#[cfg(unix)]
+fn a_plain_path_list_depfile_tracks_undeclared_inputs() {
+    let ws = Workspace::empty("depfile-lines");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["render"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.render]
+kind = "command"
+tool = "sh"
+args = ["-c", "cat src/page.txt src/partial.txt > ${out}; printf 'src/page.txt\nsrc/partial.txt\n' > ${depfile}"]
+inputs = ["src/page.txt"]
+outputs = [".frost/out/${config}/page.html"]
+depfile = ".frost/out/${config}/page.deps"
+depfile_format = "lines"
+"#,
+    );
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/page.txt", "page\n");
+    ws.write("src/partial.txt", "one\n");
+    let page = ws.dir.join(".frost/out/debug/page.html");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "lines depfile build failed:\n{out}");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\none\n");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // src/partial.txt is not declared anywhere. Only the reported dependency
+    // list can make this rebuild.
+    ws.write("src/partial.txt", "two\n");
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("input changed: src/partial.txt"),
+        "the reported dependency must be tracked:\n{out}"
+    );
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\ntwo\n");
+}
+
+#[cfg(target_os = "linux")]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())
         .chain(std::iter::once("-C".to_string()))
@@ -239,7 +444,7 @@ fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     format!("exec {command}")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -286,7 +491,8 @@ fn piped_build_uses_stable_plain_progress() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn tty_build_shows_live_slots_cache_critical_path_and_logs() {
     let ws = Workspace::new("tui-progress");
     let (ok, out) = ws.frost_pty(&["build"], &[]);
@@ -309,7 +515,8 @@ fn tty_build_shows_live_slots_cache_critical_path_and_logs() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn no_tui_and_ci_force_plain_output_even_on_a_tty() {
     for (name, args, env) in [
         ("no-tui", vec!["build", "--no-tui"], vec![]),
@@ -330,7 +537,8 @@ fn no_tui_and_ci_force_plain_output_even_on_a_tty() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn tty_failure_is_rendered_before_the_summary() {
     let ws = Workspace::empty("tui-failure");
     ws.write(
@@ -357,7 +565,8 @@ outputs = ["broken.txt"]
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn ctrl_c_in_raw_tui_mode_still_cancels_the_build() {
     use std::io::{Read, Write};
     use std::process::Stdio;
@@ -822,7 +1031,7 @@ sandbox = false
         );
         defaults.push("go");
     }
-    if available("javac") {
+    if available("javac") && java_toolchain_is_consistent() {
         ws.write(
             "src/Hello.java",
             "public final class Hello { static final class Nested {} \
@@ -844,6 +1053,9 @@ clean_dirs = [".frost/tmp/${config}/java"]
 steps = [{ tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
                                        "--output", "${out}",
                                        "--main-class", "Hello"] }]
+# On macOS `javac` is a stub that selects the JDK from JAVA_HOME, so a build
+# that cleared it would target a different JDK than the `java` below.
+pass_env = ["JAVA_HOME"]
 sandbox = false
 "#
             .to_string(),
@@ -2605,10 +2817,8 @@ fn init_writes_a_manifest_that_actually_builds() {
 
 #[test]
 fn init_java_writes_a_runnable_deterministic_jar_manifest() {
-    if Command::new("javac").arg("-version").output().is_err()
-        || Command::new("java").arg("-version").output().is_err()
-    {
-        eprintln!("skipping Java init E2E: javac and java are required");
+    if !java_toolchain_is_consistent() {
+        eprintln!("skipping Java init E2E: javac and java must be present and from the same JDK");
         return;
     }
 
