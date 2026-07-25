@@ -2414,10 +2414,7 @@ pub fn toolchain_fingerprint(cc: &str) -> Result<String> {
     let resolved: PathBuf = if cc.contains('/') {
         PathBuf::from(cc)
     } else {
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(cc))
-            .find(|candidate| candidate.is_file())
+        frostbuild_core::paths::find_on_path(cc, |candidate| candidate.is_file())
             .with_context(|| format!("compiler {cc:?} not found in PATH"))?
     };
     frostbuild_core::hashcache::hash_file(&resolved)
@@ -2540,10 +2537,7 @@ fn resolve_executable(tool: &str) -> Result<PathBuf> {
     if tool.contains('/') {
         return Ok(PathBuf::from(tool));
     }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(tool))
-        .find(|candidate| candidate.is_file())
+    frostbuild_core::paths::find_on_path(tool, |candidate| candidate.is_file())
         .with_context(|| format!("tool {tool:?} not found in PATH"))
 }
 

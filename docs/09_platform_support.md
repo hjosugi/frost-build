@@ -35,17 +35,29 @@ reports a meaningful result. The Java cases also skip when `javac` is newer than
 `java` on the host, because a class compiled there cannot be run at all — the
 macOS runner image is in that state.
 
-Windows runs the same whole suite. The image ships MinGW, and the default driver
-names are the host's (`gcc`/`g++` where `cc`/`c++` do not exist), so the native
-C/C++ cases run there too. Tests run one at a time with unbuffered output, so a
-case that hangs is named in the log rather than leaving the job to expire.
+Windows runs the unit tests plus the E2E cases its image can reach: the command
+adapter, declared-output-set cache identity, the shared cache, completions, and
+the platform/`init`/`doctor` diagnostics. Two things stop the rest, both open in
+#110 with evidence from a full-suite run:
 
-Two Windows-only defects surfaced when those cases first ran. `frost.toml` is
-TOML, so a `\` in command text is itself escaped; and `cmd` binds the remainder
-of the line to an `if` branch, so `if not exist dir mkdir dir & echo x>dir\f`
-skipped everything once frost had already created the output's parent — the
-action "succeeded" having written nothing. frost creates the parent of every
-declared output, so such a guard is never needed in command text.
+- the bundled sample's genrule is POSIX shell text, so every case built from it
+  fails on `cmd.exe`. A host-portable sample would fix this for ~25 cases
+- `daemon_build_status_and_stop` hangs rather than failing. The full-suite run
+  named it: every case before it completed in seconds, and it was still running
+  25 minutes later
+
+Three Windows-only defects were found and fixed by running those cases:
+
+- tool resolution never appended a name extension, so `gcc` was reported "not
+  found in PATH" while `gcc --version` worked in the same shell. `PATH` search
+  now tries the host's `PATHEXT` candidates
+- the default drivers were `cc`/`c++`, which a MinGW installation does not
+  provide; they are now the host's conventional names
+- `frost.toml` is TOML, so a `\` in command text is itself escaped; and `cmd`
+  binds the remainder of the line to an `if` branch, so
+  `if not exist dir mkdir dir & echo x>dir\f` skipped everything once frost had
+  created the output's parent. frost creates that parent, so the guard is never
+  needed
 
 The Windows C/C++ adapter still emits GCC/Clang-style depfile and link flags;
 it is suitable for a GNU-like or explicitly wrapped toolchain, not yet a

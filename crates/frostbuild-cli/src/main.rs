@@ -2018,11 +2018,7 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|directory| directory.join(name))
-            .find(|candidate| is_executable_file(candidate))
-    })
+    frostbuild_core::paths::find_on_path(name, is_executable_file)
 }
 
 fn resolve_program(root: &Path, selected: PathBuf, label: &str) -> Result<PathBuf> {

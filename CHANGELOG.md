@@ -28,6 +28,9 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Fixed
 
+- Executables named without an extension resolve on Windows: `PATH` search now
+  tries the host's `PATHEXT` candidates, so a workspace asking for `gcc` no
+  longer fails with "not found in PATH" while the same name works in the shell.
 - Command text in a Windows manifest no longer relies on an `if not exist`
   guard: `cmd` binds the rest of the line to the if-branch, so the guarded chain
   was skipped once frost had created the output's parent.
