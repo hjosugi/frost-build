@@ -19,6 +19,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   release and host-portability compilation, cancels superseded pull-request
   runs, installs `cargo-deny` from its pinned action, and runs the four nightly
   fuzz targets in parallel.
+- DeltaCDC corpus reports record exact bytes and per-plan chunking, selection,
+  encode and verified-decode CPU, then derive the bandwidth where delta CPU
+  breaks even with full transfer.
+
+### Fixed
+
+- `import-npm` refuses conventional output-producing and persistent package
+  scripts instead of incorrectly representing them as cacheable test gates.
+- Action-key schema v3 includes declared output paths, and journal reuse
+  requires an exact recorded output set, preventing stale reuse after only the
+  manifest output declaration changes.
 
 ## [0.3.2] - 2026-07-23
 

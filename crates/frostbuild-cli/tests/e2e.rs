@@ -161,6 +161,70 @@ outputs = ["${{config}}/host.txt"]
     assert!(stats["chunk_reuse_ratio"].is_number());
 }
 
+#[test]
+fn changing_declared_output_set_invalidates_cache() {
+    let ws = Workspace::empty("command-output-set");
+    #[cfg(unix)]
+    let (shell, shell_arg, command) = (
+        "/bin/sh",
+        "-c",
+        "mkdir -p ${config}; printf one > ${config}/one.txt; printf two > ${config}/two.txt",
+    );
+    #[cfg(windows)]
+    let (shell, shell_arg, command) = (
+        "cmd.exe",
+        "/C",
+        "if not exist ${config} mkdir ${config} & echo one>${config}/one.txt & echo two>${config}/two.txt",
+    );
+    let manifest = |outputs: &str| {
+        format!(
+            r#"[workspace]
+default_targets = ["producer"]
+
+[toolchain]
+cc = "{shell}"
+cxx = "{shell}"
+ar = "{shell}"
+
+[toolchain.tools]
+producer = "{shell}"
+
+[target.producer]
+kind = "command"
+tool = "producer"
+args = ["{shell_arg}", "{command}"]
+outputs = {outputs}
+"#
+        )
+    };
+
+    ws.write("frost.toml", &manifest(r#"["${config}/one.txt"]"#));
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "initial command build failed:\n{out}");
+
+    let second = ws.dir.join("debug/two.txt");
+    assert!(
+        second.is_file(),
+        "the command should create both test files"
+    );
+    std::fs::remove_file(&second).unwrap();
+    ws.write(
+        "frost.toml",
+        &manifest(r#"["${config}/one.txt", "${config}/two.txt"]"#),
+    );
+
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "output-set rebuild failed:\n{out}");
+    assert!(
+        !out.contains("up to date"),
+        "a changed declared output set must not reuse the old action result:\n{out}"
+    );
+    assert!(
+        second.is_file(),
+        "the command must rerun and recreate the newly declared output"
+    );
+}
+
 #[cfg(unix)]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())

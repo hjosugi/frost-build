@@ -61,6 +61,10 @@ import bsdiff4
 import zstandard as zstd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cost_model import (  # noqa: E402
+    REPORT_SCHEMA,
+    comparison_from_report,
+)
 from fastcdc import FastCdcChunker, GEAR  # noqa: E402  (Bazel bit-compatible)
 
 M64 = (1 << 64) - 1
@@ -84,10 +88,6 @@ def cpu_now() -> float:
 # --------------------------------------------------------------------------
 # delta engines
 # --------------------------------------------------------------------------
-
-def zstd_size(data: bytes, level: int = ZLEVEL_CACHE) -> int:
-    return len(zstd.ZstdCompressor(level=level).compress(data))
-
 
 def _window_log(n: int) -> int:
     return min(30, max(20, (max(n, 1) - 1).bit_length() + 1))
@@ -233,7 +233,7 @@ class Totals:
     cdc_zstd: int = 0
     blobdelta: dict = field(default_factory=lambda: {"bsdiff": 0, "zstd": 0})
     deltacdc: dict = field(default_factory=dict)   # (selector, engine) -> bytes
-    cpu: dict = field(default_factory=dict)
+    cpu_by_plan: dict = field(default_factory=dict)
     residual_chunks: int = 0
     residual_bytes: int = 0
     sel_found: dict = field(default_factory=dict)
@@ -246,19 +246,42 @@ class Totals:
     fallbacks: dict = field(default_factory=dict)
 
 
-def add_cpu(tot: Totals, key: str, dt: float) -> None:
-    tot.cpu[key] = tot.cpu.get(key, 0.0) + dt
+def add_plan_cpu(tot: Totals, plan: str, phase: str, dt: float) -> None:
+    phases = tot.cpu_by_plan.setdefault(plan, {})
+    phases[phase] = phases.get(phase, 0.0) + dt
 
 
-def best_delta(base: bytes, target: bytes, engine: str) -> tuple[int, float]:
-    """Delta size and CPU seconds. Verifies the round trip."""
+def zstd_roundtrip(
+        target: bytes, target_digest: str
+) -> tuple[int, float, float]:
+    """Return compressed size plus encode and decode+digest CPU seconds."""
+    encode_start = cpu_now()
+    compressed = zstd.ZstdCompressor(level=ZLEVEL_CACHE).compress(target)
+    encode_cpu = cpu_now() - encode_start
+    verify_start = cpu_now()
+    reconstructed = zstd.ZstdDecompressor().decompress(compressed)
+    verified = sha(reconstructed) == target_digest
+    verify_cpu = cpu_now() - verify_start
+    if not verified:
+        raise AssertionError("zstd full-chunk round trip failed")
+    return len(compressed), encode_cpu, verify_cpu
+
+
+def best_delta(
+        base: bytes, target: bytes, target_digest: str, engine: str
+) -> tuple[int, float, float]:
+    """Return delta size plus encode and decode+digest CPU seconds."""
     diff, patch = ENGINES[engine]
-    t = cpu_now()
+    encode_start = cpu_now()
     d = diff(base, target)
-    dt = cpu_now() - t
-    if patch(base, d) != target:
+    encode_cpu = cpu_now() - encode_start
+    verify_start = cpu_now()
+    reconstructed = patch(base, d)
+    verified = sha(reconstructed) == target_digest
+    verify_cpu = cpu_now() - verify_start
+    if not verified:
         raise AssertionError(f"{engine} round trip failed")
-    return len(d), dt
+    return len(d), encode_cpu, verify_cpu
 
 
 def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
@@ -289,6 +312,11 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
         for e in engines:
             tot.deltacdc[f"{s}/{e}"] = 0
             tot.fallbacks[f"{s}/{e}"] = 0
+            tot.cpu_by_plan[f"deltacdc/{s}/{e}"] = {}
+    tot.cpu_by_plan["zstd"] = {}
+    tot.cpu_by_plan["cdc+zstd"] = {}
+    for e in engines:
+        tot.cpu_by_plan[f"blobdelta/{e}"] = {}
     per_chunk_rows = []
     t_wall = time.time()
 
@@ -304,12 +332,12 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
                 data = f.read()
             blob_digest = sha(data)
 
-            t = cpu_now()
+            phase_start = cpu_now()
             spans = list(chunker.chunk(data))
-            add_cpu(tot, "chunking", cpu_now() - t)
-            t = cpu_now()
+            chunking_cpu = cpu_now() - phase_start
+            phase_start = cpu_now()
             feats = blob_features(data, sub)
-            add_cpu(tot, "sketch", cpu_now() - t)
+            sketch_cpu = cpu_now() - phase_start
             chunk_list = []
             for i, (off, ln) in enumerate(spans):
                 chunk_list.append(ChunkRef(
@@ -320,23 +348,38 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
                 tot.exact_blob_hits += 1
             else:
                 tot.misses += 1
+                add_plan_cpu(tot, "cdc+zstd", "chunking", chunking_cpu)
+                for e in engines:
+                    add_plan_cpu(
+                        tot, f"deltacdc/pos/{e}", "chunking", chunking_cpu)
+                    add_plan_cpu(
+                        tot, f"deltacdc/sk/{e}", "chunking", chunking_cpu)
+                    add_plan_cpu(
+                        tot, f"deltacdc/hy/{e}", "chunking", chunking_cpu)
+                    add_plan_cpu(
+                        tot, f"deltacdc/sk/{e}", "select", sketch_cpu)
+                    add_plan_cpu(
+                        tot, f"deltacdc/hy/{e}", "select", sketch_cpu)
+                    if "or" in selectors:
+                        add_plan_cpu(
+                            tot, f"deltacdc/or/{e}", "chunking",
+                            chunking_cpu)
                 if len(chunk_list) == 1:
                     tot.one_chunk_misses += 1
                 tot.raw += len(data)
-                t = cpu_now()
-                tot.zstd += zstd_size(data)
-                add_cpu(tot, "zstd_whole", cpu_now() - t)
+                whole_size, whole_encode_cpu, whole_verify_cpu = (
+                    zstd_roundtrip(data, blob_digest)
+                )
+                tot.zstd += whole_size
+                add_plan_cpu(tot, "zstd", "encode", whole_encode_cpu)
+                add_plan_cpu(
+                    tot, "zstd", "decode_verify", whole_verify_cpu)
 
                 residual = [c for c in chunk_list if c.digest not in cas_chunks]
                 tot.exact_chunk_hits += len(chunk_list) - len(residual)
                 tot.residual_chunks += len(residual)
                 tot.residual_bytes += sum(c.length for c in residual)
                 tot.cdc += sum(c.length for c in residual)
-                t = cpu_now()
-                tot.cdc_zstd += sum(
-                    zstd_size(data[c.offset:c.offset + c.length])
-                    for c in residual)
-                add_cpu(tot, "zstd_chunks", cpu_now() - t)
 
                 base_blob = (STORE.read(prev_blob[name][0], 0,
                                         prev_blob[name][1])
@@ -346,9 +389,14 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
                 # whole-blob delta (v1 measurement, kept for continuity)
                 if base_blob is not None:
                     for e in engines:
-                        size, dt = best_delta(base_blob, data, e)
+                        size, encode_cpu, verify_cpu = best_delta(
+                            base_blob, data, blob_digest, e)
                         tot.blobdelta[e] += min(size, len(data))
-                        add_cpu(tot, f"blobdelta_{e}", dt)
+                        add_plan_cpu(
+                            tot, f"blobdelta/{e}", "encode", encode_cpu)
+                        add_plan_cpu(
+                            tot, f"blobdelta/{e}", "decode_verify",
+                            verify_cpu)
                 else:
                     for e in engines:
                         tot.blobdelta[e] += len(data)
@@ -356,17 +404,39 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
                 # ---- DeltaCDC: delta only the residual chunks ----
                 for c in residual:
                     cdata = data[c.offset:c.offset + c.length]
+                    full, full_encode_cpu, full_verify_cpu = zstd_roundtrip(
+                        cdata, c.digest)
+                    tot.cdc_zstd += full
+                    add_plan_cpu(
+                        tot, "cdc+zstd", "encode", full_encode_cpu)
+                    add_plan_cpu(
+                        tot, "cdc+zstd", "decode_verify", full_verify_cpu)
                     cands: dict[str, ChunkRef | None] = {}
 
                     # positional: the base chunk whose byte range overlaps most
+                    select_start = cpu_now()
                     cands["pos"] = _overlap_base(base_chunks, c)
+                    pos_select_cpu = cpu_now() - select_start
 
                     # sketch: feature match over the whole local chunk CAS
-                    t = cpu_now()
+                    select_start = cpu_now()
                     cands["sk"] = _sketch_base(c.feats, sketch_index,
                                                cas_chunks, c.length)
-                    add_cpu(tot, "sketch_lookup", cpu_now() - t)
+                    sketch_select_cpu = cpu_now() - select_start
                     cands["hy"] = cands["sk"] or cands["pos"]
+                    for e in engines:
+                        add_plan_cpu(
+                            tot, f"deltacdc/pos/{e}", "select",
+                            pos_select_cpu)
+                        add_plan_cpu(
+                            tot, f"deltacdc/sk/{e}", "select",
+                            sketch_select_cpu)
+                        hybrid_select_cpu = sketch_select_cpu
+                        if cands["sk"] is None:
+                            hybrid_select_cpu += pos_select_cpu
+                        add_plan_cpu(
+                            tot, f"deltacdc/hy/{e}", "select",
+                            hybrid_select_cpu)
                     for s in ("pos", "sk", "hy"):
                         if cands.get(s) is None:
                             tot.sel_none[s] += 1
@@ -377,43 +447,70 @@ def run(root: str, avg_kib: int, engines: list[str], oracle_sample: int,
                     do_oracle = ("or" in selectors and base_chunks
                                  and rng.random() < oracle_sample)
                     row = {"commit": ci, "name": name, "len": c.length}
+                    # pos/sk/hy frequently select the same base. Compute each
+                    # unique (engine, base digest, target digest) delta once,
+                    # then attribute that measured phase cost to every plan
+                    # that would independently perform it.
+                    delta_cache: dict[
+                        tuple[str, str], tuple[int, float, float]
+                    ] = {}
                     for e in engines:
-                        full = zstd_size(cdata)
                         for s in ("pos", "sk", "hy"):
+                            plan = f"deltacdc/{s}/{e}"
                             b = cands.get(s)
                             if b is None:
                                 tot.deltacdc[f"{s}/{e}"] += full
                                 tot.fallbacks[f"{s}/{e}"] += 1
+                                add_plan_cpu(
+                                    tot, plan, "encode", full_encode_cpu)
+                                add_plan_cpu(
+                                    tot, plan, "decode_verify",
+                                    full_verify_cpu)
                                 continue
-                            size, dt = best_delta(b.data, cdata, e)
-                            add_cpu(tot, f"delta_{e}", dt)
+                            cache_key = (e, b.digest)
+                            measured = delta_cache.get(cache_key)
+                            if measured is None:
+                                measured = best_delta(
+                                    b.data, cdata, c.digest, e)
+                                delta_cache[cache_key] = measured
+                            size, encode_cpu, verify_cpu = measured
+                            add_plan_cpu(
+                                tot, plan, "encode", encode_cpu)
+                            add_plan_cpu(
+                                tot, plan, "decode_verify", verify_cpu)
                             if size < full:
                                 tot.deltacdc[f"{s}/{e}"] += size
                             else:
                                 tot.deltacdc[f"{s}/{e}"] += full
                                 tot.fallbacks[f"{s}/{e}"] += 1
+                                add_plan_cpu(
+                                    tot, plan, "encode", full_encode_cpu)
+                                add_plan_cpu(
+                                    tot, plan, "decode_verify",
+                                    full_verify_cpu)
                             row[f"{s}/{e}"] = size
                         if do_oracle:
                             best = None
                             for b in base_chunks:
-                                size, dt = best_delta(b.data, cdata, e)
-                                add_cpu(tot, f"delta_{e}_oracle", dt)
+                                cache_key = (e, b.digest)
+                                measured = delta_cache.get(cache_key)
+                                if measured is None:
+                                    measured = best_delta(
+                                        b.data, cdata, c.digest, e)
+                                    delta_cache[cache_key] = measured
+                                size, encode_cpu, verify_cpu = measured
+                                add_plan_cpu(
+                                    tot, f"deltacdc/or/{e}", "encode",
+                                    encode_cpu)
+                                add_plan_cpu(
+                                    tot, f"deltacdc/or/{e}",
+                                    "decode_verify", verify_cpu)
                                 if best is None or size < best:
                                     best = size
                             tot.deltacdc[f"or/{e}"] += min(best, full)
                             row[f"or/{e}"] = best
                     if do_oracle:
                         per_chunk_rows.append(row)
-
-                    # blob-level verification of the reconstruction path:
-                    # rebuild the chunk from its chosen base and check its
-                    # digest, exactly as SpliceBlob would.
-                    b = cands.get("pos") or cands.get("sk")
-                    if b is not None:
-                        e = engines[0]
-                        diff, patch = ENGINES[e]
-                        if sha(patch(b.data, diff(b.data, cdata))) != c.digest:
-                            tot.verify_failures += 1
 
             # commit the artifact into the local CAS
             cas_blobs.add(blob_digest)
@@ -477,7 +574,27 @@ def _report(root, avg_kib, engines, tot: Totals, rows, wall) -> dict:
     def mb(x):
         return round(x / 1e6, 3)
 
+    byte_counts = {
+        "raw": tot.raw,
+        "zstd": tot.zstd,
+        "cdc": tot.cdc,
+        "cdc+zstd": tot.cdc_zstd,
+        **{f"blobdelta/{e}": v for e, v in tot.blobdelta.items()
+           if e in engines},
+        **{f"deltacdc/{k}": v for k, v in tot.deltacdc.items()},
+    }
+    cpu_by_plan = {}
+    for plan, phase_values in sorted(tot.cpu_by_plan.items()):
+        cpu_by_plan[plan] = {
+            "phases": {
+                phase: round(value, 6)
+                for phase, value in sorted(phase_values.items())
+            },
+            "total": round(sum(phase_values.values()), 6),
+        }
+
     rep = {
+        "schema": REPORT_SCHEMA,
         "corpus": os.path.basename(root),
         "avg_kib": avg_kib,
         "misses": tot.misses,
@@ -486,15 +603,9 @@ def _report(root, avg_kib, engines, tot: Totals, rows, wall) -> dict:
         if tot.misses else None,
         "exact_chunk_hits": tot.exact_chunk_hits,
         "residual_chunks": tot.residual_chunks,
-        "bytes_mb": {
-            "raw": mb(tot.raw),
-            "zstd": mb(tot.zstd),
-            "cdc": mb(tot.cdc),
-            "cdc+zstd": mb(tot.cdc_zstd),
-            **{f"blobdelta/{e}": mb(v) for e, v in tot.blobdelta.items()
-               if e in engines},
-            **{f"deltacdc/{k}": mb(v) for k, v in tot.deltacdc.items()},
-        },
+        "bytes": byte_counts,
+        "bytes_mb": {plan: mb(value)
+                     for plan, value in byte_counts.items()},
         # The oracle runs on a random sample of residual chunks, so its
         # totals cover a different, much smaller set than every other scheme.
         # Reporting them in the same table would invite a comparison that the
@@ -508,7 +619,7 @@ def _report(root, avg_kib, engines, tot: Totals, rows, wall) -> dict:
             + [(f"blobdelta/{e}", tot.blobdelta[e]) for e in engines]
             if tot.cdc_zstd
         },
-        "cpu_s": {k: round(v, 2) for k, v in sorted(tot.cpu.items())},
+        "cpu_s_by_plan": cpu_by_plan,
         "fallbacks": tot.fallbacks,
         "selector_base_found": tot.sel_found,
         "selector_no_base": tot.sel_none,
@@ -533,6 +644,9 @@ def _report(root, avg_kib, engines, tot: Totals, rows, wall) -> dict:
                     "median_oracle_over_pos": round(
                         statistics.median(ratios), 3) if ratios else None,
                 }
+    rep["cost_model"] = (
+        comparison_from_report(rep) if "zstd" in engines else None
+    )
     return rep
 
 

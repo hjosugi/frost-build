@@ -60,10 +60,14 @@ and other generated state. Review the manifest before running it.
 
 ## Deliberate limits
 
-The importer does not import `build`, `dev`, or every discovered script by
-default. A package script can be interactive, start a persistent process, or
-write a variable output tree; treating any of those as a cached test would be
-incorrect.
+The importer refuses the conventional output-producing or persistent script
+names `build`, `dev`, `start`, `serve`, `watch`, and `preview`, even when they
+are passed explicitly. A custom script name can still be interactive, start a
+persistent process, or write a variable output tree, so it must be reviewed
+before import; treating any of those behaviors as a cached test would be
+incorrect. A build gate needs a hand-written `command` target with a declared
+stable file or archive output. Persistent development processes stay outside
+the cached test graph.
 
 In particular, Vite `dist/` remains npm/Vite-owned. Frost command outputs are
 declared files with digest-verified ownership, so an npm/Vite build still needs

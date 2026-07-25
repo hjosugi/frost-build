@@ -21,19 +21,21 @@ history, specific hardware, a release tag, or an external service.
 | #52–#54 | platform/language decisions and authoritative Rust/reference Python/historical Zig roles |
 | #57–#61 | profiles, C++, hermetic globs, multi-package labels and cached test runner |
 | #62 | deterministic double-run mode and macro/output diagnosis E2E |
-| #64 | RE execution gaps, Merkle/output-tree requirements and executor experiment plan. Gate: external v2 experiment |
+| #64 | Local action-key schema v3 includes declared output paths, restoration defensively requires the recorded output set to match exactly, and E2E changes the declared set without changing argv. RE execution gaps, Merkle/output-tree translation and the external Buildbarn/BuildGrid executor experiment remain open |
 | #81 | Completed in v0.3.0. The mutex-contention hypothesis was falsified by counters; the real linear-chain costs were thundering-herd wakeups and per-action checking. Targeted wakeups plus a checksummed whole-closure no-op certificate avoid that work, with corruption/change fallback tests and a published 10k standalone median 15.620 ms versus Ninja 42.419 ms |
-| #82 | Local DeltaCDC core: previous-version positional overlap selector, zstd level 19 + long-distance mode, retain-only-if-smaller-than-level-3-full policy, patch/chunk/blob triple verification and exact→chunk→delta→miss fallback. One-bit residual reconstruction and corrupt/missing/wrong-base failure injection pass. A checked 64 MiB interleaved A/B measured verified delta restore at 40.196 ms parallel vs 75.647 ms serial and retained seven patches in 518 bytes; remote CPU/bandwidth and protocol evidence remain open |
+| #82 | Local DeltaCDC core: previous-version positional overlap selector, zstd level 19 + long-distance mode, retain-only-if-smaller-than-level-3-full policy, patch/chunk/blob triple verification and exact→chunk→delta→miss fallback. Corpus reports now use schema v2 with exact bytes, per-plan chunk/select/encode/decode-verify CPU and computed network break-even; legacy aggregate reports cannot be used for the threshold. A representative corpus rerun, remote CPU/bandwidth calibration and protocol evidence remain open |
 | #83 | Completed in v0.3.0. Bazel-bit-compatible FastCDC 2020 boundaries/defaults, >2 MiB threshold, SHA-256 chunk store, versioned blob manifests, verified chunk splice fallback and persistent `cache stats` reuse ratios. E2E restores without the whole blob, retains >75% of chunks after one byte changes, and bounded parallel chunk work measured 1.41x faster cold publication / 1.89x faster restore in the checked 64 MiB A/B |
 | #84 | Completed in v0.3.0. The `UnverifiedBytes`/`VerifiedBlob` publication boundary plus a required published CI job inject bit flips, missing/wrong/truncated/single chunks, ordering changes, parameter mismatch, delta failures and the Bazel #29544 final-path scenario |
-| #87 | direct-argv `command` and `test` targets, named/fingerprinted tools, explicit environment, platform overrides, real Rust/Go/Java/Python/Node E2E and native TypeScript single/solution plus standards-compliant Python wheel harnesses remove the generic execution blocker. `preserve_outputs`, generic `watch`, target-aware `run`/`dev`, GDB/LLDB/jdb/Node/pdb launch and non-overwriting VS Code configs ship. Keep open for npm/PEP 517 discovery, dynamic output trees, comparative affected-pytest evidence, persistent compiler/browser HMR and richer DAP/source-map UX |
+| #87 | direct-argv `command` and `test` targets, named/fingerprinted tools, explicit environment, platform overrides, real Rust/Go/Java/Python/Node E2E and native TypeScript single/solution plus standards-compliant Python wheel harnesses remove the generic execution blocker. `import-npm` now discovers both npm workspace forms and selected validation gates; a read-only `iroha-pdf` trial passed 7/7 gates and returned all 7 from cache on rerun. Known output-producing/persistent script names are refused rather than cached as tests. Keep open for Vite/dynamic output ownership, persistent compiler/browser HMR, hermetic `node_modules`, richer DAP/source-map UX and adopted production-build evidence |
 
 The v0.3.0 release and its Linux/macOS/Windows archives provide the publication
 gate for #81, #83 and #84. The remaining cache-v2 research is deliberately
 open: #82 still needs remote CPU/bandwidth/protocol calibration, and #64
-requires an external REAPI executor experiment. #87 retains npm/Vite discovery,
-persistent compiler/browser HMR and real-monorepo adoption evidence. Local
-command adapters or synthetic no-op wins do not imply those remaining gates.
+requires an external REAPI executor experiment. #87 retains Vite/dynamic
+output ownership, persistent compiler/browser HMR, hermetic `node_modules`,
+richer source-map/DAP UX and production-build adoption. Local command adapters,
+validation-gate discovery or synthetic no-op wins do not imply those remaining
+gates.
 
 Long-running CI-noise records, historical ML replay and a remote executor
 experiment are not represented as completed; they require external evidence

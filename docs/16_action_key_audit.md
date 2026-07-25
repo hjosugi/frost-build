@@ -25,6 +25,7 @@ a stated argument; rows marked **gap** are known holes with no defence.
 | `CPATH`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `SDKROOT`, `MACOSX_DEPLOYMENT_TARGET`, `SystemRoot` | yes | These choose which headers and libraries a compiler finds with an identical command line. |
 | Working directory | yes | Recorded relative to the workspace root. |
 | Locale | n/a | Forced to `LC_ALL=C` and `LANG=C` for every action, so it cannot vary. |
+| Declared output paths | yes | Ordered paths are part of the v3 canonical payload. A changed output set cannot reuse an action result produced for the old set. |
 | Output contents | yes, separately | Checked against the journal after the key matches; a modified output re-runs or restores. |
 | `PATH` | **out** | Its effect on the compiler is already covered by hashing the resolved drivers. Keying on it would rebuild everything whenever a shell, direnv or CI step exports a different one. |
 | `HOME`, `TMPDIR`, `TMP`, `TEMP` | **out** | Scratch locations. An action whose output depends on where its scratch space lives is not hermetic, which is what `--sandbox` and `--check-determinism` exist to surface. |
@@ -67,6 +68,11 @@ only through the environment, an identical command line, and frost handing
 back the binary built against the other one. Tests now cover each; they are
 named in `crates/frostbuild-cli/tests/e2e.rs` and each one fails against the
 engine that preceded its fix.
+
+Declared output paths were also once absent from the key. An unchanged command
+could therefore reuse a journal record after the manifest added an output.
+Action-key schema v3 keys the declared set, and restoration additionally
+requires the recorded output paths to match exactly.
 
 The remaining gaps have no test, because a test would assert the wrong
 behaviour. They are written down instead so that the next person to look does

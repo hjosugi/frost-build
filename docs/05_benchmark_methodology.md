@@ -413,6 +413,22 @@ benchmark (`fsync` is outside the current local CAS contract), a remote-transfer
 measurement, or evidence that DeltaCDC beats whole-blob compression on every
 corpus.
 
+The Python corpus harness emits `frost-deltacdc-v2` reports with exact byte
+counts and per-plan CPU seconds split into chunking, base selection, encode and
+decode/verification. For a full-transfer plan `f` and a delta plan `d`, the
+reported network break-even value is:
+
+```text
+break_even_bytes_per_second =
+    (f.bytes - d.bytes) / (d.cpu_seconds - f.cpu_seconds)
+```
+
+The value is absent when the delta saves no bytes or consumes no additional
+CPU. Reports from the older aggregate-CPU schema cannot support this comparison
+and must be rerun rather than retrofitted. A representative multi-corpus run,
+remote bandwidth/CPU calibration and protocol measurements remain required for
+issue #82.
+
 ## Warm daemon no-op harness
 
 The Rust harness separates three latencies that must not be conflated:

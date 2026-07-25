@@ -277,9 +277,10 @@ so package managers that traverse a module cache normally use `sandbox = false`.
 ## Incrementality and diagnostics
 
 The BLAKE3 action key covers canonical argv/cwd, environment whitelist,
-toolchain closure, declared and discovered content. The binary journal is
-append-only and ignores incomplete crash tails. The CAS restores missing output
-without execution; byte-identical output cuts off downstream work.
+toolchain closure, declared output paths, and declared and discovered input
+content. The binary journal is append-only and ignores incomplete crash tails.
+The CAS restores missing output without execution; byte-identical output cuts
+off downstream work.
 
 `frost plan`, `build --explain`, `explain TARGET`, `graph --dot`, `compdb`, and
 `build --trace FILE` expose planning and execution. `--sandbox` hides undeclared

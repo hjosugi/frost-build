@@ -446,7 +446,7 @@ enum Cmd {
     },
     /// Import non-interactive npm workspace scripts as cached test gates
     ImportNpm {
-        /// Package script to import; repeat or comma-separate
+        /// Non-interactive validation script to import; repeat or comma-separate
         #[arg(long = "script", value_delimiter = ',')]
         scripts: Vec<String>,
         /// npm executable recorded as a fingerprinted named tool

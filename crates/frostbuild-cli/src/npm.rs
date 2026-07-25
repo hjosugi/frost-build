@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 const DEFAULT_SCRIPTS: [&str; 2] = ["test", "typecheck"];
+const NON_GATE_SCRIPTS: [&str; 6] = ["build", "dev", "start", "serve", "watch", "preview"];
 const ROOT_INPUTS: [&str; 5] = [
     "package.json",
     "package-lock.json",
@@ -131,6 +132,16 @@ fn normalized_scripts(requested: &[String]) -> Result<Vec<String>> {
         scripts.iter().all(|script| !script.is_empty()),
         "--script values must not be empty"
     );
+    if let Some(script) = scripts
+        .iter()
+        .find(|script| NON_GATE_SCRIPTS.contains(&script.as_str()))
+    {
+        anyhow::bail!(
+            "npm script {script:?} cannot be imported as a cached test gate; use a hand-written \
+             command target with declared outputs for builds, and run persistent development \
+             processes outside the cached test graph"
+        );
+    }
     scripts.sort();
     scripts.dedup();
     Ok(scripts)
@@ -647,6 +658,19 @@ mod tests {
         assert!(plan.manifest.contains("[target.module-a-lint]"));
         assert!(!plan.manifest.contains("vite build"));
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_output_and_persistent_scripts_as_test_gates() {
+        for script in NON_GATE_SCRIPTS {
+            let error = normalized_scripts(&[script.to_string()]).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("cannot be imported as a cached test gate"),
+                "{script}: {error:#}"
+            );
+        }
     }
 
     #[test]

@@ -9,11 +9,19 @@ path/digest map must become a Merkle `Directory`; directory/symlink outputs need
 explicit representation.
 
 V1 requirements now enforced are immutable digest objects separated from action
-results, canonical relative paths/env, toolchain identity, declared outputs,
-atomic publication, crash-safe records and sandbox diagnostics. RE requires
-hermetic toolchains and sandbox correctness.
+results, canonical relative paths/env, toolchain identity, declared outputs in
+the v3 action key, exact recorded-output-set validation, atomic publication,
+crash-safe records and sandbox diagnostics. RE requires hermetic toolchains and
+sandbox correctness.
+
+| Boundary | Status |
+|---|---|
+| Local action identity and output-set validation | enforced |
+| Flat local input/output metadata → REAPI Merkle trees | adapter required |
+| External executor interoperability | unverified |
 
 A v2 experiment should execute one synthetic graph on Buildbarn and BuildGrid
 and compare digest translation, platform properties, missing-blob recovery and
-output trees. Frost may retain local BLAKE3 while producing the wire digest
-(normally SHA-256) in the adapter.
+output trees. Issue #64 remains open until that external experiment passes.
+Frost may retain local BLAKE3 while producing the wire digest (normally
+SHA-256) in the adapter.

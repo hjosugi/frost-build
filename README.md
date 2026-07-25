@@ -387,9 +387,14 @@ every sample. With independently swept checker counts, Frost measured
 project boundary (16.7x); direct `tsc` remains faster whenever the compiler
 runs. In the eight-project-reference report Frost also wins no-op (3.200 vs
 6.556 ms), but native `tsc --build` remains faster clean and after one project
-change. Generic `frost watch`/process restart now ships; persistent TypeScript
-watching, browser HMR, bundling and monorepo runners remain open. See
-[docs/21_typescript_tsc_comparison.md](docs/21_typescript_tsc_comparison.md).
+change. `frost import-npm` discovers npm workspaces and selected validation
+gates, while refusing conventional build and persistent script names that
+cannot safely be cached as tests. Generic `frost watch`/process restart now
+ships; Vite output ownership, persistent TypeScript/browser HMR, hermetic
+`node_modules`, richer source-map debugging and production monorepo adoption
+remain open. See
+[docs/21_typescript_tsc_comparison.md](docs/21_typescript_tsc_comparison.md)
+and [docs/25_npm_workspace_import.md](docs/25_npm_workspace_import.md).
 
 The checked Python packaging comparison builds the same 101-source pure wheel
 through Frost's standards-compliant packer, `python -m build` and `uv build`.

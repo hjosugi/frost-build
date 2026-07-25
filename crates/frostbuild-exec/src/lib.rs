@@ -1128,7 +1128,7 @@ impl<'a> Engine<'a> {
         }
 
         if let Some(prev) = &previous {
-            if prev.key == key {
+            if prev.key == key && self.recorded_outputs_match(action, prev) {
                 match self.outputs_intact(prev) {
                     Ok(None) => return Outcome::Cached,
                     Ok(Some(bad)) => {
@@ -1446,14 +1446,32 @@ impl<'a> Engine<'a> {
         let environment = action_environment.as_ref().unwrap_or(&self.key_env);
         let argv = action_key_argv(action);
         streamed_action_key(
-            "frost-engine-v1",
-            &action.id,
-            argv.as_ref(),
-            ".",
-            &self.toolchain_hash,
+            StreamedActionDescriptor {
+                builder: "frost-engine-v1",
+                target: &action.id,
+                argv: argv.as_ref(),
+                cwd: ".",
+                toolchain_hash: &self.toolchain_hash,
+            },
             environment,
             inputs,
+            action
+                .outputs
+                .iter()
+                .map(|&file| self.graph.files[file].path.as_str()),
         )
+    }
+
+    fn recorded_outputs_match(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        previous: &JournalEntry,
+    ) -> bool {
+        action.outputs.len() == previous.outputs.len()
+            && action
+                .outputs
+                .iter()
+                .all(|&file| previous.outputs.contains_key(&self.graph.files[file].path))
     }
 
     fn digest_all(&self, paths: &[String]) -> Result<BTreeMap<String, String>> {
@@ -1914,22 +1932,27 @@ fn shell_join(argv: &[String]) -> String {
 /// Hash the same length-prefixed payload as `ActionKey::digest`, but feed it
 /// directly to BLAKE3. This avoids cloning argv/input maps and allocating a
 /// complete canonical string for every cache check.
-fn streamed_action_key(
-    builder: &str,
-    target: &str,
-    argv: &[String],
-    cwd: &str,
-    toolchain_hash: &str,
+struct StreamedActionDescriptor<'a> {
+    builder: &'a str,
+    target: &'a str,
+    argv: &'a [String],
+    cwd: &'a str,
+    toolchain_hash: &'a str,
+}
+
+fn streamed_action_key<'a>(
+    descriptor: StreamedActionDescriptor<'_>,
     env: &BTreeMap<String, String>,
     inputs: &BTreeMap<String, String>,
+    outputs: impl IntoIterator<Item = &'a str>,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_key_field(&mut hasher, "schema", "frost-action-key-v2");
-    update_key_field(&mut hasher, "builder", builder);
-    update_key_field(&mut hasher, "target", target);
-    update_key_field(&mut hasher, "cwd", cwd);
-    update_key_field(&mut hasher, "toolchain", toolchain_hash);
-    for arg in argv {
+    update_key_field(&mut hasher, "schema", "frost-action-key-v3");
+    update_key_field(&mut hasher, "builder", descriptor.builder);
+    update_key_field(&mut hasher, "target", descriptor.target);
+    update_key_field(&mut hasher, "cwd", descriptor.cwd);
+    update_key_field(&mut hasher, "toolchain", descriptor.toolchain_hash);
+    for arg in descriptor.argv {
         update_key_field(&mut hasher, "argv", arg);
     }
     for (key, value) in env {
@@ -1939,6 +1962,9 @@ fn streamed_action_key(
     for (path, digest) in inputs {
         update_key_field(&mut hasher, "input", path);
         update_key_field(&mut hasher, "input", digest);
+    }
+    for path in outputs {
+        update_key_field(&mut hasher, "output", path);
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -2149,6 +2175,7 @@ mod tests {
             ("include/a.h".to_string(), "abc".to_string()),
             ("src/main.c".to_string(), "def".to_string()),
         ]);
+        let outputs = vec!["out/main".to_string(), "out/main.map".to_string()];
         let mut canonical = frostbuild_core::ActionKey::new(
             "frost-engine-v1",
             "compile:main",
@@ -2162,15 +2189,21 @@ mod tests {
         for (path, digest) in &inputs {
             canonical = canonical.with_input(path, digest);
         }
+        for path in &outputs {
+            canonical = canonical.with_output(path);
+        }
         assert_eq!(
             streamed_action_key(
-                "frost-engine-v1",
-                "compile:main",
-                &argv,
-                ".",
-                "toolchain",
+                StreamedActionDescriptor {
+                    builder: "frost-engine-v1",
+                    target: "compile:main",
+                    argv: &argv,
+                    cwd: ".",
+                    toolchain_hash: "toolchain",
+                },
                 &env,
                 &inputs,
+                outputs.iter().map(String::as_str),
             ),
             canonical.digest(root)
         );
@@ -2203,13 +2236,16 @@ mod tests {
         }
         let digest = |action: &frostbuild_core::graph::ActionNode| {
             streamed_action_key(
-                "frost-engine-v1",
-                &action.id,
-                action_key_argv(action).as_ref(),
-                ".",
-                "toolchain",
+                StreamedActionDescriptor {
+                    builder: "frost-engine-v1",
+                    target: &action.id,
+                    argv: action_key_argv(action).as_ref(),
+                    cwd: ".",
+                    toolchain_hash: "toolchain",
+                },
                 &BTreeMap::new(),
                 &BTreeMap::new(),
+                std::iter::empty(),
             )
         };
 

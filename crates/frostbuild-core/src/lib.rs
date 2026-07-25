@@ -19,6 +19,7 @@ pub struct ActionKey {
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
     pub inputs: BTreeMap<String, String>,
+    pub outputs: Vec<String>,
     pub toolchain_hash: String,
 }
 
@@ -37,6 +38,7 @@ impl ActionKey {
             cwd: cwd.into(),
             env: BTreeMap::new(),
             inputs: BTreeMap::new(),
+            outputs: Vec::new(),
             toolchain_hash: toolchain_hash.into(),
         }
     }
@@ -48,6 +50,11 @@ impl ActionKey {
 
     pub fn with_input(mut self, path: impl Into<String>, digest: impl Into<String>) -> Self {
         self.inputs.insert(path.into(), digest.into());
+        self
+    }
+
+    pub fn with_output(mut self, path: impl Into<String>) -> Self {
+        self.outputs.push(path.into());
         self
     }
 
@@ -82,9 +89,10 @@ impl ActionKey {
                 .inputs
                 .iter()
                 .map(|(p, d)| p.len() + d.len() + 32)
-                .sum::<usize>();
+                .sum::<usize>()
+            + self.outputs.iter().map(|p| p.len() + 16).sum::<usize>();
         let mut payload = String::with_capacity(capacity);
-        write_field(&mut payload, "schema", "frost-action-key-v2");
+        write_field(&mut payload, "schema", "frost-action-key-v3");
         write_field(&mut payload, "builder", &self.builder);
         write_field(&mut payload, "target", &self.target);
         write_field(&mut payload, "cwd", &cwd);
@@ -100,6 +108,9 @@ impl ActionKey {
             write_field(&mut payload, "input", path);
             write_field(&mut payload, "input", digest);
         }
+        for path in &self.outputs {
+            write_field(&mut payload, "output", path);
+        }
         payload
     }
 
@@ -109,8 +120,8 @@ impl ActionKey {
     }
 
     /// Full-strength content digest of the canonical payload. This is the
-    /// action cache key: any change to command, environment, toolchain, or
-    /// input digests changes this value.
+    /// action cache key: any change to command, environment, toolchain, input
+    /// digests, or declared outputs changes this value.
     pub fn digest(&self, workspace_root: &Path) -> String {
         let payload = self.canonical_payload(workspace_root);
         blake3::hash(payload.as_bytes()).to_hex().to_string()
@@ -184,6 +195,18 @@ mod tests {
         let b =
             ActionKey::new("builder", "app", ["cc"], "/repo", "tool").with_input("src/a.c", "bbb");
         assert_ne!(a.digest(root), b.digest(root));
+    }
+
+    #[test]
+    fn declared_outputs_change_action_key() {
+        let root = Path::new("/repo");
+        let one = ActionKey::new("builder", "app", ["cc"], "/repo", "tool").with_output("out/app");
+        let two = ActionKey::new("builder", "app", ["cc"], "/repo", "tool")
+            .with_output("out/app")
+            .with_output("out/app.map");
+
+        assert_ne!(one.stable_id(root), two.stable_id(root));
+        assert_ne!(one.digest(root), two.digest(root));
     }
 
     proptest! {
