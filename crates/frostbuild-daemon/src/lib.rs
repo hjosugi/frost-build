@@ -12,7 +12,15 @@ use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Bumped whenever a request carries information the previous daemon would
+/// ignore. Version 2 added the client environment: a daemon that silently
+/// dropped it would build against its own environment instead.
+pub const PROTOCOL_VERSION: u32 = 2;
+
+/// Diagnostic a daemon returns for a request it cannot interpret, so a client
+/// can recognise a resident daemon from another frost version and recover
+/// instead of failing the build.
+pub const PROTOCOL_MISMATCH: &str = "protocol version mismatch";
 
 struct DaemonState {
     dirty: BTreeSet<PathBuf>,
@@ -52,6 +60,17 @@ pub enum Request {
         version: u32,
         program: PathBuf,
         args: Vec<String>,
+        /// Environment of the invoking client, applied verbatim to the child
+        /// build.
+        ///
+        /// A daemon outlives the shells that talk to it, so a child that
+        /// inherited the daemon's environment compiled against whatever
+        /// `CPATH`, `PATH` or `pass_env` value happened to be exported when
+        /// the daemon started: `CPATH=a frost build --daemon` produced the
+        /// `CPATH=b` binary, reported success, and then reported "up to date"
+        /// for a binary matching neither. The certificate check already used
+        /// the client's key-affecting environment; the build itself did not.
+        env: Vec<(String, String)>,
         /// Optional proof-only path for a plain default-target build. Older
         /// clients omit it; older daemons ignore it and retain the child path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -420,13 +439,17 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
         | Request::Run { version, .. }
         | Request::Shutdown { version } => *version,
     };
-    if version != PROTOCOL_VERSION {
+    // Shutdown is honoured at any version. A resident daemon that refuses to
+    // stop until the matching binary is found again is a trap: upgrading frost
+    // would leave a daemon nothing but `kill` could remove.
+    let shutdown_request = matches!(request, Request::Shutdown { .. });
+    if version != PROTOCOL_VERSION && !shutdown_request {
         return (
             Response {
                 version: PROTOCOL_VERSION,
                 code: 2,
                 stdout: String::new(),
-                stderr: "protocol version mismatch".into(),
+                stderr: PROTOCOL_MISMATCH.into(),
             },
             false,
         );
@@ -456,6 +479,7 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
         Request::Run {
             program,
             args,
+            env,
             fast_noop,
             ..
         } => {
@@ -483,6 +507,10 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
             match std::process::Command::new(program)
                 .args(&args)
                 .current_dir(root)
+                // Exactly the client's environment, so `--daemon` builds the
+                // same bytes as the same command without it.
+                .env_clear()
+                .envs(env.iter().map(|(key, value)| (key, value)))
                 .output()
             {
                 Ok(output) => {

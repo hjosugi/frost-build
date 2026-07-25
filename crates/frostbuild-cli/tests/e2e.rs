@@ -1651,6 +1651,7 @@ fn daemon_build_status_and_stop() {
             version: frostbuild_daemon::PROTOCOL_VERSION,
             program: ws.dir.join("definitely-missing-frost"),
             args: Vec::new(),
+            env: Vec::new(),
             fast_noop: Some(frostbuild_daemon::FastNoopRequest {
                 profile: "debug".into(),
                 platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
@@ -1677,6 +1678,7 @@ fn daemon_build_status_and_stop() {
             version: frostbuild_daemon::PROTOCOL_VERSION,
             program: ws.dir.join("definitely-missing-frost"),
             args: Vec::new(),
+            env: Vec::new(),
             fast_noop: Some(frostbuild_daemon::FastNoopRequest {
                 profile: "debug".into(),
                 platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
@@ -2373,6 +2375,65 @@ fn include_path_environment_selects_a_different_header_and_is_keyed() {
 
     let (_, back) = run_with(&one);
     assert_eq!(back, "frost: 43\n", "switching back is equally observable");
+}
+
+#[test]
+#[cfg(unix)]
+fn daemon_builds_with_the_client_environment_not_the_daemons() {
+    // A daemon outlives the shells that talk to it. It used to spawn the child
+    // build with its own inherited environment, so a daemon started without
+    // CPATH answered `CPATH=<dir> frost build --daemon` with a binary built
+    // against the daemon's headers, reported it as built, and then reported
+    // "up to date" for a binary matching neither request. The certificate
+    // check already used the client's environment; the build did not.
+    let ws = Workspace::new("daemon-env");
+    let one = ws.dir.join("inc-one");
+    let two = ws.dir.join("inc-two");
+    std::fs::create_dir_all(&one).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    std::fs::write(one.join("tuning.h"), "#define TUNING 1\n").unwrap();
+    std::fs::write(two.join("tuning.h"), "#define TUNING 99\n").unwrap();
+
+    let util = std::fs::read_to_string(ws.dir.join("src/util.c")).unwrap();
+    ws.write(
+        "src/util.c",
+        &format!(
+            "#include <tuning.h>\n{}",
+            util.replace(
+                "return a + b + FROST_INTERNAL_BIAS;",
+                "return a + b + FROST_INTERNAL_BIAS + TUNING;"
+            )
+        ),
+    );
+
+    // The daemon deliberately inherits the header directory the client will
+    // not ask for.
+    let (ok, out) = ws.frost_env(&["daemon", "start"], &[("CPATH", one.to_str().unwrap())]);
+    assert!(ok, "{out}");
+
+    let build_with = |dir: &std::path::Path| {
+        let (ok, out) = ws.frost_env(&["build", "--daemon"], &[("CPATH", dir.to_str().unwrap())]);
+        assert!(ok, "daemon build failed:\n{out}");
+        (out, ws.run_app())
+    };
+
+    let (out, first) = build_with(&two);
+    assert_eq!(
+        first, "frost: 141\n",
+        "the daemon must build what the client asked for:\n{out}"
+    );
+    let (out, warm) = build_with(&two);
+    assert!(out.contains("up to date"), "{out}");
+    assert_eq!(warm, "frost: 141\n", "a cached hit must keep that binary");
+
+    let (out, switched) = build_with(&one);
+    assert_eq!(
+        switched, "frost: 43\n",
+        "switching the client environment must invalidate through the daemon:\n{out}"
+    );
+
+    let (ok, out) = ws.frost(&["daemon", "stop"]);
+    assert!(ok && out.contains("stopped"), "{out}");
 }
 
 #[test]

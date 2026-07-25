@@ -5,6 +5,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- A daemon build now runs with the invoking client's environment instead of the
+  environment the daemon inherited when it started. `CPATH=a frost build
+  --daemon` against a daemon started with `CPATH=b` built, and then reported as
+  cached, a binary matching neither request; only the no-op certificate check
+  had used the client's environment.
+- A resident daemon honours a shutdown request regardless of protocol version,
+  and a client that meets a daemon from another frost version replaces it and
+  retries, or builds in-process, rather than failing the build.
+
 ## [0.3.3] - 2026-07-25
 
 ### Added

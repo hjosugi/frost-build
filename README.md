@@ -147,8 +147,10 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 - `simulate`: deterministic scheduler comparison from journal durations, and
   `build --stats` to calibrate it against a real run
 - per-workspace daemon (Unix socket or Windows loopback endpoint) with an
-  in-process verified no-op path, plus `watch`: recursive native filesystem
-  events, debounce, self-write filtering and success-only process restart
+  in-process verified no-op path; a daemon build applies the invoking client's
+  environment, so `--daemon` produces the same bytes as the same command
+  without it, plus `watch`: recursive native filesystem events, debounce,
+  self-write filtering and success-only process restart
 - `dev`: the same success-only restart loop with target artifact/runtime
   inference, so native/JAR/JavaScript/Python paths do not have to be repeated
 - `bazel-dev`: native Bazel incremental build + success-only `bazel run`
