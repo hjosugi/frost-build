@@ -469,6 +469,9 @@ mod tests {
     }
 
     #[test]
+    // Only a host that has the bit can carry it. `hash_file` reports every file
+    // as non-executable elsewhere, so there is no mode to recover there.
+    #[cfg(unix)]
     fn executable_mode_is_recovered_from_the_digest() {
         let root = temp_dir("mode");
         let cache =
