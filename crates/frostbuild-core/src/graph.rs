@@ -82,9 +82,12 @@ pub struct ActionNode {
     /// file names cannot be written down in advance is still cacheable.
     #[serde(default)]
     pub output_dirs: Vec<String>,
-    /// Workspace-relative path of the Makefile-style depfile this action
-    /// writes (compile actions only).
+    /// Workspace-relative path of the depfile this action writes. Absent when
+    /// the dependency report is read from captured output instead.
     pub depfile: Option<String>,
+    /// Format of that report; see `depfile::Format`.
+    #[serde(default)]
+    pub depfile_format: crate::depfile::Format,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -236,6 +239,7 @@ impl BuildGraph {
                         outputs: outputs.clone(),
                         output_dirs: Vec::new(),
                         depfile: None,
+                        depfile_format: crate::depfile::Format::Make,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = outputs;
@@ -335,6 +339,7 @@ impl BuildGraph {
                         outputs: vec![stamp_id],
                         output_dirs: Vec::new(),
                         depfile: None,
+                        depfile_format: crate::depfile::Format::Make,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![stamp_id];
@@ -485,6 +490,7 @@ impl BuildGraph {
                         outputs: output_ids.clone(),
                         output_dirs,
                         depfile,
+                        depfile_format: target.depfile_format,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = output_ids;
@@ -545,6 +551,7 @@ impl BuildGraph {
                         outputs: vec![bin_id, emitted_c_id],
                         output_dirs: Vec::new(),
                         depfile: None,
+                        depfile_format: crate::depfile::Format::Make,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![bin_id];
@@ -613,6 +620,7 @@ impl BuildGraph {
                             outputs: vec![obj_id],
                             output_dirs: Vec::new(),
                             depfile: Some(depfile),
+                            depfile_format: crate::depfile::Format::Make,
                         })?;
                         target_node.actions.push(action);
                         objs.push(obj);
@@ -644,6 +652,7 @@ impl BuildGraph {
                                 outputs: vec![lib_id],
                                 output_dirs: Vec::new(),
                                 depfile: None,
+                                depfile_format: crate::depfile::Format::Make,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![lib_id];
@@ -688,6 +697,7 @@ impl BuildGraph {
                                 outputs: vec![bin_id],
                                 output_dirs: Vec::new(),
                                 depfile: None,
+                                depfile_format: crate::depfile::Format::Make,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![bin_id];
@@ -715,6 +725,7 @@ impl BuildGraph {
                                     outputs: vec![stamp_id],
                                     output_dirs: Vec::new(),
                                     depfile: None,
+                                    depfile_format: crate::depfile::Format::Make,
                                 })?;
                                 target_node.actions.push(test);
                                 target_node.outputs = vec![stamp_id];

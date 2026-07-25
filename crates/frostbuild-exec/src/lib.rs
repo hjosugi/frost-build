@@ -1254,18 +1254,32 @@ impl<'a> Engine<'a> {
             }
         }
         let duration_ms = started.elapsed().as_millis() as u64;
-        let captured = batch.captured;
+        let mut captured = batch.captured;
 
-        // Ingest the depfile: replace previous discovered deps with fresh
-        // ones and fold their digests into the recorded key.
+        // Ingest the dependency report: replace previous discovered deps with
+        // fresh ones and fold their digests into the recorded key. Most tools
+        // write a file; MSVC writes its includes to stdout, so that report is
+        // taken from the captured output and removed from the build log, which
+        // would otherwise carry the whole include tree on every rebuild.
         let mut discovered = Vec::new();
-        if let Some(dep_rel) = &action.depfile {
-            let dep_path = self.root.join(dep_rel);
-            if let Ok(text) = std::fs::read_to_string(&dep_path) {
-                match depfile::parse(&text, self.root) {
+        let report = if action.depfile_format.reads_captured_output() {
+            let text = captured.clone();
+            captured = depfile::strip_showincludes(&captured);
+            Some((action.depfile_format.as_str().to_string(), Some(text)))
+        } else {
+            action.depfile.as_ref().map(|dep_rel| {
+                (
+                    dep_rel.clone(),
+                    std::fs::read_to_string(self.root.join(dep_rel)).ok(),
+                )
+            })
+        };
+        if let Some((source, text)) = report {
+            if let Some(text) = text {
+                match depfile::parse_format(action.depfile_format, &text, self.root) {
                     Ok(deps) => discovered = deps,
                     Err(err) => {
-                        let detail = format!("failed to parse depfile {dep_rel}: {err:#}");
+                        let detail = format!("failed to parse depfile {source}: {err:#}");
                         return Outcome::Failed { reason, detail };
                     }
                 }
@@ -2443,6 +2457,7 @@ mod tests {
                 outputs: Vec::new(),
                 output_dirs: Vec::new(),
                 depfile: None,
+                depfile_format: frostbuild_core::depfile::Format::Make,
             }
         }
         let digest = |action: &frostbuild_core::graph::ActionNode| {

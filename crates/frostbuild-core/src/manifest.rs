@@ -170,8 +170,10 @@ struct RawTarget {
     /// Keep declared outputs in place while rerunning an incremental compiler.
     #[serde(default)]
     preserve_outputs: bool,
-    /// Optional Makefile-format dynamic dependency file.
+    /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
+    /// Format of the dynamic dependency report; see `depfile::Format`.
+    depfile_format: Option<String>,
     #[serde(default)]
     inputs: Vec<String>,
     #[serde(default)]
@@ -265,6 +267,9 @@ pub struct Target {
     pub clean_dirs: Vec<String>,
     pub preserve_outputs: bool,
     pub depfile: Option<String>,
+    /// How this action reports the inputs it read. `showincludes` is read from
+    /// captured output, so it comes without a `depfile` path.
+    pub depfile_format: crate::depfile::Format,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
     /// Command target only: directories Frost owns entirely. Every file under
@@ -545,6 +550,26 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         .map(validate_rel_path)
         .transpose()
         .context("depfile")?;
+    let depfile_format = match spec.depfile_format.as_deref() {
+        None | Some("make") => crate::depfile::Format::Make,
+        Some("lines") => crate::depfile::Format::Lines,
+        Some("showincludes") => crate::depfile::Format::ShowIncludes,
+        Some(other) => {
+            bail!("unknown depfile_format {other:?} (supported: make, lines, showincludes)")
+        }
+    };
+    // `showincludes` is read from captured output, because that is where MSVC
+    // writes it; every other format names a file.
+    if depfile_format.reads_captured_output() {
+        if depfile.is_some() {
+            bail!("depfile_format = \"showincludes\" reads captured output and takes no depfile");
+        }
+    } else if spec.depfile_format.is_some() && depfile.is_none() {
+        bail!(
+            "depfile_format = {:?} requires a depfile path",
+            depfile_format.as_str()
+        );
+    }
     let has_command_fields = spec.tool.is_some()
         || !spec.args.is_empty()
         || !spec.env.is_empty()
@@ -553,6 +578,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         || !clean_dirs.is_empty()
         || spec.preserve_outputs
         || depfile.is_some()
+        || spec.depfile_format.is_some()
         || !output_dirs.is_empty();
 
     match spec.kind {
@@ -759,6 +785,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         clean_dirs,
         preserve_outputs: spec.preserve_outputs,
         depfile,
+        depfile_format,
         inputs,
         outputs,
         output_dirs,
@@ -1421,6 +1448,54 @@ mod tests {
             assert!(
                 Manifest::parse_str(&invalid).is_err(),
                 "invalid command target was accepted:\n{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn depfile_format_selects_where_the_dependency_report_comes_from() {
+        let manifest = |extra: &str| {
+            format!(
+                r#"
+                [toolchain.tools]
+                cl = "cl.exe"
+
+                [target.obj]
+                kind = "command"
+                tool = "cl"
+                args = ["/c", "${{in}}"]
+                inputs = ["src/main.c"]
+                outputs = [".frost/out/${{config}}/main.obj"]
+                {extra}
+                "#
+            )
+        };
+        let make = Manifest::parse_str(&manifest(
+            "depfile = \".frost/out/${config}/main.d\"\ndepfile_format = \"make\"",
+        ))
+        .unwrap();
+        assert_eq!(
+            make.targets["obj"].depfile_format,
+            crate::depfile::Format::Make
+        );
+
+        // MSVC writes its includes to stdout, so this format takes no path.
+        let showincludes =
+            Manifest::parse_str(&manifest("depfile_format = \"showincludes\"")).unwrap();
+        assert_eq!(
+            showincludes.targets["obj"].depfile_format,
+            crate::depfile::Format::ShowIncludes
+        );
+        assert!(showincludes.targets["obj"].depfile.is_none());
+
+        for invalid in [
+            "depfile_format = \"clang-scan-deps\"",
+            "depfile_format = \"showincludes\"\ndepfile = \".frost/out/${config}/main.d\"",
+            "depfile_format = \"lines\"",
+        ] {
+            assert!(
+                Manifest::parse_str(&manifest(invalid)).is_err(),
+                "invalid depfile_format was accepted: {invalid}"
             );
         }
     }

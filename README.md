@@ -116,7 +116,9 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 - debug/release/custom profiles with independent output/cache identities
 - `[platform.*]` cross/device toolchains with per-platform trees and caches,
   plus one-command host-and-device builds via `--all-platforms`
-- dynamic GCC/Clang depfile ingestion and generated-file order-only edges
+- dynamic GCC/Clang depfile ingestion and generated-file order-only edges;
+  `depfile_format` also accepts a plain path list or `cl.exe /showIncludes`
+  notes read from captured output
 - `output_dirs`: a command target may own whole directories when the tool names
   its outputs after their content (bundlers, `tsc --outDir`). The tree is
   scanned after execution, recorded and published like any output, restored

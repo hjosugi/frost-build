@@ -312,8 +312,25 @@ Every entry must contain `${config}`.
 An ecosystem command whose tree Frost should not own can still expose one stable
 boundary artifact (for example a jar), pack the tree deterministically with a
 small adapter, or remain wholly owned by Cargo/npm/Gradle/Maven.
-The optional depfile is Makefile-format; tools using another dependency format
-need an adapter. `--sandbox` also requires every workspace input to be declared,
+
+### Dependency report formats
+
+`depfile_format` selects how an action reports the inputs it actually read:
+
+| Value | Source | Shape |
+|---|---|---|
+| `make` (default) | the declared `depfile` path | `gcc -MD -MF` output |
+| `lines` | the declared `depfile` path | one path per line; blank lines and `#` comments ignored |
+| `showincludes` | the action's captured output | `cl.exe /showIncludes` notes |
+
+`showincludes` takes no `depfile` path, because MSVC has no `-MF` and writes its
+includes to stdout; the notes are removed from the build log so a rebuild does
+not print the whole include tree. The path is read after the last `: ` on the
+line, which keeps it correct on a localized toolchain. `lines` exists so a
+wrapper around a tool with some other dependency protocol can report what it
+read without reproducing Makefile escaping. Reported paths under the workspace
+root are recorded workspace-relative, and the recorded list is sorted, so it does
+not depend on which spelling the tool printed. `--sandbox` also requires every workspace input to be declared,
 so package managers that traverse a module cache normally use `sandbox = false`.
 
 ## Incrementality and diagnostics

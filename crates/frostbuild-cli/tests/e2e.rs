@@ -332,6 +332,61 @@ outputs = [".frost/out/${config}/report.txt"]
     );
 }
 
+#[test]
+// A shell wrapper stands in for a tool whose dependency protocol is not
+// Makefile-shaped; `cmd.exe` adds nothing to what is tested here. The MSVC
+// `showincludes` path is covered by unit tests until Windows CI runs the E2E
+// suite (#110); see docs/09_platform_support.md.
+#[cfg(unix)]
+fn a_plain_path_list_depfile_tracks_undeclared_inputs() {
+    let ws = Workspace::empty("depfile-lines");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["render"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.render]
+kind = "command"
+tool = "sh"
+args = ["-c", "cat src/page.txt src/partial.txt > ${out}; printf 'src/page.txt\nsrc/partial.txt\n' > ${depfile}"]
+inputs = ["src/page.txt"]
+outputs = [".frost/out/${config}/page.html"]
+depfile = ".frost/out/${config}/page.deps"
+depfile_format = "lines"
+"#,
+    );
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/page.txt", "page\n");
+    ws.write("src/partial.txt", "one\n");
+    let page = ws.dir.join(".frost/out/debug/page.html");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "lines depfile build failed:\n{out}");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\none\n");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // src/partial.txt is not declared anywhere. Only the reported dependency
+    // list can make this rebuild.
+    ws.write("src/partial.txt", "two\n");
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("input changed: src/partial.txt"),
+        "the reported dependency must be tracked:\n{out}"
+    );
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\ntwo\n");
+}
+
 #[cfg(unix)]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())

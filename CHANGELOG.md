@@ -7,6 +7,11 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `depfile_format` selects the dependency report an action produces: `make`
+  (default), `lines` for a wrapper-friendly path list, or `showincludes` for
+  `cl.exe`, which is read from captured output because MSVC has no `-MF`. The
+  notes are stripped from the build log, and the path is taken after the last
+  `: ` so a localized toolchain still parses.
 - `command` targets may declare `output_dirs`: directories Frost owns entirely,
   for tools whose output file names cannot be written down in advance. The tree
   is scanned after execution, digested, journalled and published to the CAS;
