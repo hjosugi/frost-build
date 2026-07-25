@@ -28,8 +28,13 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo fmt --all -- --check
 
+  # Releases ship macOS and Windows archives, so these hosts run the real
+  # suite rather than one smoke test. Platform-specific exclusions are declared
+  # in the tests themselves (`cfg(unix)`, `cfg(target_os = "linux")`) and listed
+  # in docs/09_platform_support.md, so what does not run is visible in the code
+  # rather than hidden in a flag list here.
   host-portability:
-    name: Host smoke (${{ matrix.os }})
+    name: Host tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,8 +46,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --workspace --lib --bins --locked
-      - run: cargo test -p frostbuild-cli --test e2e host_portable_command_target_builds_and_caches --locked
+      - run: cargo test --workspace --locked
 
   python:
     name: Python prototype tests

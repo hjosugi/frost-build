@@ -10,6 +10,7 @@ inputs, early cutoff and content-addressed output restoration.
 The normative architecture is [DESIGN.md](DESIGN.md); the manifest specification
 is [docs/06_manifest_spec.md](docs/06_manifest_spec.md), and the per-language
 definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win_matrix.md).
+[docs/README.md](docs/README.md) indexes every document by what it is for.
 
 ## Quick start
 

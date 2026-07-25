@@ -428,6 +428,72 @@ mod tests {
     }
 
     #[test]
+    fn arbitrarily_corrupted_certificates_always_miss() {
+        // Failure injection covers the ways a certificate is expected to be
+        // wrong. This covers the ones nobody thought of: a certificate that is
+        // not byte-exact must never be able to declare a build finished, and
+        // no input may panic on the way to that decision.
+        let root = std::env::temp_dir().join(format!(
+            "frost-fast-noop-corrupt-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".frost")).unwrap();
+        let certificate = Certificate {
+            profile: "debug".into(),
+            platform: HOST_PLATFORM.into(),
+            graph_fingerprint: [7; 32],
+            closure_actions: 3,
+            graph_actions: 4,
+            toolchain: Toolchain::default(),
+            toolchain_hash: "toolchain".into(),
+            key_env: BTreeMap::new(),
+            dynamic_env: BTreeMap::new(),
+            files: Vec::new(),
+        };
+        let payload = postcard::to_allocvec(&certificate).unwrap();
+        let mut valid = Vec::new();
+        valid.extend_from_slice(MAGIC);
+        valid.extend_from_slice(blake3::hash(&payload).as_bytes());
+        valid.extend_from_slice(&payload);
+
+        let path = certificate_path(&root, "debug", HOST_PLATFORM);
+        let mut cases: Vec<Vec<u8>> = vec![
+            Vec::new(),
+            MAGIC.to_vec(),
+            valid[..valid.len() - 1].to_vec(),
+            [valid.clone(), vec![0xff; 8]].concat(),
+        ];
+        // Every single-byte flip, at a stride that still reaches the magic,
+        // the recorded digest and the payload.
+        for index in (0..valid.len()).step_by(3) {
+            let mut corrupt = valid.clone();
+            corrupt[index] ^= 0x40;
+            cases.push(corrupt);
+        }
+        // Arbitrary bytes that never went through `save` at all.
+        for length in [1usize, 39, 40, 41, 64, 4096] {
+            cases.push(
+                (0..length)
+                    .map(|index| (index as u8).wrapping_mul(31).wrapping_add(7))
+                    .collect(),
+            );
+        }
+
+        for case in cases {
+            std::fs::write(&path, &case).unwrap();
+            let hit = check(&root, "debug", HOST_PLATFORM, &BTreeMap::new(), false);
+            assert!(
+                matches!(hit, Ok(None) | Err(_)),
+                "a corrupted certificate of {} bytes was accepted",
+                case.len()
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn watcher_proofs_cover_only_normal_files_inside_the_workspace() {
         let root =
             std::env::temp_dir().join(format!("frost-fast-noop-watchable-{}", std::process::id()));

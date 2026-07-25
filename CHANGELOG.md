@@ -23,6 +23,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 - Action-key schema v4 adds the declared owned-directory set, so changing it
   does not reuse an earlier result. Existing journals rebuild once.
+- macOS and Windows CI runs the whole workspace test suite instead of one smoke
+  test, since releases ship archives for both. Host exclusions are declared in
+  the tests and tabulated in `docs/09_platform_support.md`.
+
+### Documentation
+
+- `docs/README.md` indexes every document by purpose and records why the
+  duplicated numeric prefixes are not renamed.
+
+### Security
+
+- Arbitrarily corrupted no-op certificates and CAS chunk manifests are gated by
+  property tests, not only by the designed failure injections: a manifest or
+  certificate that is not byte-exact can never publish bytes or declare a build
+  finished.
 
 ### Fixed
 

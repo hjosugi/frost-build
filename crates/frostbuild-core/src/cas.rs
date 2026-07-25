@@ -1069,6 +1069,55 @@ mod tests {
     }
 
     #[test]
+    fn arbitrarily_corrupted_chunk_manifests_never_publish_bytes() {
+        // The injected faults above are the ways a manifest is expected to be
+        // wrong. This is the complement: a manifest nobody designed, from a
+        // truncated write or a damaged disk, must fail rather than publish
+        // anything to the final path — and must not panic on the way.
+        let (root, cas, _source, digest, manifest) = chunked_fixture("corrupt-manifest");
+        std::fs::remove_file(cas.object(&digest)).unwrap();
+        let encoded = postcard::to_allocvec(&manifest).unwrap();
+        let manifest_path = cas.manifest(&digest);
+
+        let mut cases: Vec<Vec<u8>> = vec![Vec::new(), vec![0], vec![0xff; 64]];
+        for length in [
+            1usize,
+            encoded.len() / 3,
+            encoded.len() / 2,
+            encoded.len() - 1,
+        ] {
+            cases.push(encoded[..length].to_vec());
+        }
+        for index in (0..encoded.len()).step_by(7) {
+            let mut corrupt = encoded.clone();
+            corrupt[index] ^= 0x5a;
+            cases.push(corrupt);
+        }
+        for length in [8usize, 128, 1024] {
+            cases.push(pseudo_random_bytes(length));
+        }
+
+        let destination = root.join("published-output");
+        for case in cases {
+            std::fs::write(&manifest_path, &case).unwrap();
+            std::fs::write(&destination, b"last known good").unwrap();
+            let restored = cas.materialize(&digest, &destination);
+            assert!(
+                !matches!(restored, Ok(true)),
+                "a corrupted manifest of {} bytes was accepted",
+                case.len()
+            );
+            assert_eq!(
+                std::fs::read(&destination).unwrap(),
+                b"last known good",
+                "a corrupted manifest of {} bytes touched the final path",
+                case.len()
+            );
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn materialization_failure_injection_never_publishes_unverified_bytes() {
         #[derive(Clone, Copy, Debug)]
         enum Fault {

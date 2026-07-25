@@ -55,7 +55,10 @@ impl Workspace {
         )
     }
 
-    #[cfg(unix)]
+    // `script -q -e -c` is util-linux syntax. macOS ships the BSD tool, whose
+    // arguments differ, so the pseudo-terminal cases run on Linux; every other
+    // test runs on every host. See docs/09_platform_support.md.
+    #[cfg(target_os = "linux")]
     fn frost_pty(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
         let command_line = pty_command_line(&self.dir, args);
         let mut command = Command::new("script");
@@ -387,7 +390,7 @@ depfile_format = "lines"
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\ntwo\n");
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())
         .chain(std::iter::once("-C".to_string()))
@@ -401,7 +404,7 @@ fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     format!("exec {command}")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -448,7 +451,8 @@ fn piped_build_uses_stable_plain_progress() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn tty_build_shows_live_slots_cache_critical_path_and_logs() {
     let ws = Workspace::new("tui-progress");
     let (ok, out) = ws.frost_pty(&["build"], &[]);
@@ -471,7 +475,8 @@ fn tty_build_shows_live_slots_cache_critical_path_and_logs() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn no_tui_and_ci_force_plain_output_even_on_a_tty() {
     for (name, args, env) in [
         ("no-tui", vec!["build", "--no-tui"], vec![]),
@@ -492,7 +497,8 @@ fn no_tui_and_ci_force_plain_output_even_on_a_tty() {
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn tty_failure_is_rendered_before_the_summary() {
     let ws = Workspace::empty("tui-failure");
     ws.write(
@@ -519,7 +525,8 @@ outputs = ["broken.txt"]
 }
 
 #[test]
-#[cfg(unix)]
+// Drives a real pseudo-terminal through util-linux `script`.
+#[cfg(target_os = "linux")]
 fn ctrl_c_in_raw_tui_mode_still_cancels_the_build() {
     use std::io::{Read, Write};
     use std::process::Stdio;
