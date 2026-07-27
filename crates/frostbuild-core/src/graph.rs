@@ -514,7 +514,7 @@ impl BuildGraph {
                     }
 
                     let source = &target.srcs[0];
-                    let bin = format!("{BIN_DIR}/{tree}/{}", path_key(name));
+                    let bin = binary_path(&tree, name);
                     let emitted_c = format!("{OBJ_DIR}/{tree}/{}/kofun.c", path_key(name));
                     let mut inputs = vec![graph.file(source)];
                     for dep in &target.deps {
@@ -662,7 +662,7 @@ impl BuildGraph {
                             );
                         }
                         TargetKind::CcBinary | TargetKind::CcTest => {
-                            let bin = format!("{BIN_DIR}/{tree}/{}", path_key(name));
+                            let bin = binary_path(&tree, name);
                             let link_driver = if target.srcs.iter().any(|s| is_cxx_source(s)) {
                                 &tc.cxx
                             } else {
@@ -945,6 +945,17 @@ fn path_key(label: &str) -> String {
     label.trim_start_matches("//").replace([':', '/'], "_")
 }
 
+/// Native binary outputs carry the executable suffix expected by the host
+/// driver Frost invokes. Platform overlays currently describe toolchains, not
+/// a target operating system, so they retain the host driver's naming rule.
+fn binary_path(tree: &str, label: &str) -> String {
+    format!(
+        "{BIN_DIR}/{tree}/{}{}",
+        path_key(label),
+        std::env::consts::EXE_SUFFIX
+    )
+}
+
 fn is_cxx_source(path: &str) -> bool {
     matches!(
         PathExt::extension(path),
@@ -1062,10 +1073,12 @@ fn expand_genrule_cmd(cmd: &str, inputs: &[String], outputs: &[String]) -> Resul
     let expanded = cmd
         .replace("${in}", &inputs.join(" "))
         .replace("${outs}", &outputs.join(" "))
-        .replace("${out}", &outputs[0]);
+        .replace("${out}", &outputs[0])
+        .replace("${pathsep}", std::path::MAIN_SEPARATOR_STR);
     if expanded.contains("${") {
         bail!(
-            "genrule cmd has unknown variable: {cmd:?} (supported: ${{in}}, ${{out}}, ${{outs}})"
+            "genrule cmd has unknown variable: {cmd:?} \
+             (supported: ${{in}}, ${{out}}, ${{outs}}, ${{pathsep}})"
         );
     }
     Ok(expanded)
@@ -1244,6 +1257,32 @@ mod tests {
     }
 
     #[test]
+    fn genrule_path_separator_matches_the_host_shell() {
+        let expanded =
+            expand_genrule_cmd("tools${pathsep}generate ${out}", &[], &["out".into()]).unwrap();
+        assert_eq!(
+            expanded,
+            format!("tools{}generate out", std::path::MAIN_SEPARATOR)
+        );
+    }
+
+    #[test]
+    fn host_binaries_use_the_host_executable_suffix() {
+        let graph = BuildGraph::from_manifest(&demo_manifest()).unwrap();
+        let link = graph.actions.iter().find(|a| a.id == "link:app").unwrap();
+        let expected = format!("{BIN_DIR}/debug/app{}", std::env::consts::EXE_SUFFIX);
+        assert!(link.argv.contains(&expected), "argv: {:?}", link.argv);
+        assert_eq!(
+            graph.targets["app"]
+                .outputs
+                .iter()
+                .map(|&id| graph.files[id].path.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected.as_str()]
+        );
+    }
+
+    #[test]
     fn kofun_binary_is_one_cacheable_action_with_declared_artifacts() {
         let manifest = Manifest::parse_str(
             r#"
@@ -1265,17 +1304,18 @@ mod tests {
         .unwrap();
         let graph = BuildGraph::from_manifest(&manifest).unwrap();
         let action = graph.actions.iter().find(|a| a.id == "kofun:app").unwrap();
+        let host_bin = format!(".frost/bin/debug/app{}", std::env::consts::EXE_SUFFIX);
         assert_eq!(action.kind, ActionKind::KofunCompile);
         assert_eq!(
             action.argv,
             vec![
-                "tools/kofun",
-                "build",
-                "src/main.kofun",
-                "-o",
-                ".frost/bin/debug/app",
-                "--emit-c",
-                ".frost/obj/debug/app/kofun.c",
+                "tools/kofun".to_string(),
+                "build".to_string(),
+                "src/main.kofun".to_string(),
+                "-o".to_string(),
+                host_bin.clone(),
+                "--emit-c".to_string(),
+                ".frost/obj/debug/app/kofun.c".to_string(),
             ]
         );
         assert_eq!(action.depfile, None);
@@ -1292,7 +1332,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             outputs,
-            vec![".frost/bin/debug/app", ".frost/obj/debug/app/kofun.c"]
+            vec![host_bin.as_str(), ".frost/obj/debug/app/kofun.c"]
         );
         assert_eq!(
             graph.targets["app"]
@@ -1300,7 +1340,7 @@ mod tests {
                 .iter()
                 .map(|&id| graph.files[id].path.as_str())
                 .collect::<Vec<_>>(),
-            vec![".frost/bin/debug/app"]
+            vec![host_bin.as_str()]
         );
         assert!(
             graph.to_dot().contains("\"app\" [shape=box]"),
@@ -1653,12 +1693,18 @@ mod tests {
             .contains(&format!("{LIB_DIR}/cross/debug/libutil.a")));
 
         let link = graph.actions.iter().find(|a| a.id == "link:app").unwrap();
-        assert!(link.argv.contains(&format!("{BIN_DIR}/cross/debug/app")));
+        assert!(link.argv.contains(&format!(
+            "{BIN_DIR}/cross/debug/app{}",
+            std::env::consts::EXE_SUFFIX
+        )));
 
         // The host graph keeps historical platform-free paths.
         let host = BuildGraph::from_manifest_with_profile(&manifest, "debug").unwrap();
         let host_link = host.actions.iter().find(|a| a.id == "link:app").unwrap();
-        assert!(host_link.argv.contains(&format!("{BIN_DIR}/debug/app")));
+        assert!(host_link.argv.contains(&format!(
+            "{BIN_DIR}/debug/app{}",
+            std::env::consts::EXE_SUFFIX
+        )));
     }
 
     #[test]
@@ -1680,9 +1726,10 @@ mod tests {
         let graph = BuildGraph::from_manifest_configured(&manifest, "release", "device").unwrap();
         let action = graph.actions.iter().find(|a| a.id == "kofun:app").unwrap();
         assert_eq!(action.argv[0], "device-kofun");
-        assert!(action
-            .argv
-            .contains(&format!("{BIN_DIR}/device/release/app")));
+        assert!(action.argv.contains(&format!(
+            "{BIN_DIR}/device/release/app{}",
+            std::env::consts::EXE_SUFFIX
+        )));
         assert!(action
             .argv
             .contains(&format!("{OBJ_DIR}/device/release/app/kofun.c")));

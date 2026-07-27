@@ -43,12 +43,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
 
-  # Windows runs the unit tests plus the E2E cases its image can actually reach.
-  # The image ships MinGW and `gcc`/`g++` are the host default driver names, so
-  # tool resolution and the command adapter work; the bundled sample's genrule is
-  # POSIX shell text, and `daemon_build_status_and_stop` hangs there rather than
-  # failing. Both are open in #110 with the evidence, instead of being hidden
-  # behind a longer timeout.
+  # Releases ship a Windows archive, so Windows also runs every host-reachable
+  # E2E. POSIX/signal and Linux-PTY cases declare their cfg gates in the test;
+  # the sample itself has paired POSIX/cmd launchers and native output names use
+  # the host executable suffix.
   windows:
     name: Host tests (windows-latest)
     runs-on: windows-latest
@@ -65,16 +63,10 @@ jobs:
       - name: Show the C toolchain the tests will use
         run: gcc --version && ar --version
       - run: cargo test --workspace --lib --bins --locked
-      - run: >
-          cargo test -p frostbuild-cli --test e2e --locked --
-          --test-threads 1
-          host_portable_command_target_builds_and_caches
-          changing_declared_output_set_invalidates_cache
-          completion_scripts_and_fzf_selection_are_available
-          unknown_platform_fails_with_diagnostic
-          init_mixed_workspace_requires_an_explicit_language
-          init_refuses_a_directory_it_cannot_describe
-          doctor_separates_missing_required_tools_from_optional_integrations
+      - name: Guard the Windows daemon against inherited-handle hangs
+        timeout-minutes: 2
+        run: cargo test -p frostbuild-cli --test e2e daemon_build_status_and_stop --locked -- --nocapture
+      - run: cargo test -p frostbuild-cli --test e2e --locked -- --test-threads 1 --nocapture
 
   python:
     name: Python prototype tests

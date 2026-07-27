@@ -1547,6 +1547,106 @@ fn sanitize_target(path: &str) -> String {
         .collect()
 }
 
+#[cfg(not(windows))]
+fn spawn_daemon(executable: &Path, root: &Path) -> Result<()> {
+    std::process::Command::new(executable)
+        .arg("-C")
+        .arg(root)
+        .args(["daemon", "serve"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_daemon(executable: &Path, root: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
+        PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    // CreateProcessW accepts one mutable command-line buffer. Always quoting
+    // each argument keeps whitespace, trailing backslashes and embedded quotes
+    // round-trippable through the Windows C argv parser.
+    let mut command_line = Vec::<u16>::new();
+    for argument in [
+        executable.as_os_str(),
+        OsStr::new("-C"),
+        root.as_os_str(),
+        OsStr::new("daemon"),
+        OsStr::new("serve"),
+    ] {
+        if !command_line.is_empty() {
+            command_line.push(b' ' as u16);
+        }
+        command_line.push(b'"' as u16);
+        let mut backslashes = 0;
+        for unit in argument.encode_wide() {
+            if unit == b'\\' as u16 {
+                backslashes += 1;
+            } else if unit == b'"' as u16 {
+                command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2 + 1));
+                command_line.push(unit);
+                backslashes = 0;
+            } else {
+                command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes));
+                command_line.push(unit);
+                backslashes = 0;
+            }
+        }
+        command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2));
+        command_line.push(b'"' as u16);
+    }
+    command_line.push(0);
+
+    let application: Vec<u16> = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let current_dir: Vec<u16> = root
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: both structures are plain Win32 output records whose all-zero
+    // state is documented initialization. `cb` is set before CreateProcessW.
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: all pointers reference live, NUL-terminated buffers for the
+    // duration of the call. Security/environment pointers are null by design.
+    // Most importantly, bInheritHandles is FALSE: the resident daemon cannot
+    // keep a caller's captured stdout/stderr pipes alive.
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            command_line.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
+            std::ptr::null(),
+            current_dir.as_ptr(),
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to start frostd");
+    }
+    // SAFETY: CreateProcessW succeeded and returned two owned kernel handles.
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+    Ok(())
+}
+
 fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
     use frostbuild_daemon::{Request, PROTOCOL_VERSION};
     match command {
@@ -1575,14 +1675,7 @@ fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
                 Err(_) => {}
             }
             let executable = std::env::current_exe()?;
-            std::process::Command::new(executable)
-                .arg("-C")
-                .arg(root)
-                .args(["daemon", "serve"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()?;
+            spawn_daemon(&executable, root)?;
             for _ in 0..50 {
                 if frostbuild_daemon::request(
                     root,
@@ -2054,19 +2147,58 @@ fn select_debugger(root: &Path, requested: &str) -> Result<PathBuf> {
     resolve_program(root, selected, "debugger")
 }
 
+fn command_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+        const VERBATIM_PREFIX: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+        const VERBATIM_UNC_PREFIX: &[u16] = &[
+            b'\\' as u16,
+            b'\\' as u16,
+            b'?' as u16,
+            b'\\' as u16,
+            b'U' as u16,
+            b'N' as u16,
+            b'C' as u16,
+            b'\\' as u16,
+        ];
+
+        let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        let normalized = if let Some(suffix) = wide.strip_prefix(VERBATIM_UNC_PREFIX) {
+            let mut normalized = vec![b'\\' as u16, b'\\' as u16];
+            normalized.extend_from_slice(suffix);
+            normalized
+        } else if let Some(suffix) = wide.strip_prefix(VERBATIM_PREFIX) {
+            suffix.to_vec()
+        } else {
+            wide
+        };
+        return OsString::from_wide(&normalized)
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.display().to_string()
+    }
+}
+
 fn debugger_argv(debugger: &Path, binary: &Path, program_args: &[String]) -> Vec<String> {
     let name = debugger
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let mut argv = vec![debugger.display().to_string()];
+    let mut argv = vec![command_path(debugger)];
     if name.contains("lldb") {
         argv.push("--".into());
     } else {
         argv.push("--args".into());
     }
-    argv.push(binary.display().to_string());
+    argv.push(command_path(binary));
     argv.extend(program_args.iter().cloned());
     argv
 }
@@ -2155,9 +2287,9 @@ fn language_debug_argv(
             let debugger = select_language_debugger(root, requested, "JDB_BIN", &["jdb"])?;
             let main_class = jar_main_class(output)?;
             let mut argv = vec![
-                debugger.display().to_string(),
+                command_path(&debugger),
                 "-classpath".into(),
-                output.display().to_string(),
+                command_path(output),
                 main_class,
             ];
             argv.extend(program_args.iter().cloned());
@@ -2166,9 +2298,9 @@ fn language_debug_argv(
         "js" | "mjs" | "cjs" => {
             let debugger = select_language_debugger(root, requested, "NODE_BIN", &["node"])?;
             let mut argv = vec![
-                debugger.display().to_string(),
+                command_path(&debugger),
                 "inspect".into(),
-                output.display().to_string(),
+                command_path(output),
             ];
             argv.extend(program_args.iter().cloned());
             Ok((debugger, argv, "JavaScript/Node inspector"))
@@ -2177,10 +2309,10 @@ fn language_debug_argv(
             let debugger =
                 select_language_debugger(root, requested, "PYTHON_BIN", &["python3", "python"])?;
             let mut argv = vec![
-                debugger.display().to_string(),
+                command_path(&debugger),
                 "-m".into(),
                 "pdb".into(),
-                output.display().to_string(),
+                command_path(output),
             ];
             argv.extend(program_args.iter().cloned());
             Ok((debugger, argv, "Python/pdb"))
@@ -2211,7 +2343,7 @@ fn runtime_argv(
 ) -> Result<(Vec<String>, &'static str)> {
     if let Some(runner) = runner {
         let runner = resolve_program(root, runner.to_path_buf(), "runner")?;
-        let mut argv = vec![runner.display().to_string(), output.display().to_string()];
+        let mut argv = vec![command_path(&runner), command_path(output)];
         argv.extend(program_args.iter().cloned());
         return Ok((argv, "explicit runner"));
     }
@@ -2225,9 +2357,9 @@ fn runtime_argv(
             let java = select_runtime(root, "JAVA_BIN", &["java"])?;
             (
                 vec![
-                    java.display().to_string(),
+                    command_path(&java),
                     "-jar".into(),
-                    output.display().to_string(),
+                    command_path(output),
                 ],
                 "Java",
             )
@@ -2235,14 +2367,14 @@ fn runtime_argv(
         "js" | "mjs" | "cjs" => {
             let node = select_runtime(root, "NODE_BIN", &["node"])?;
             (
-                vec![node.display().to_string(), output.display().to_string()],
+                vec![command_path(&node), command_path(output)],
                 "JavaScript",
             )
         }
         "py" | "pyw" => {
             let python = select_runtime(root, "PYTHON_BIN", &["python3", "python"])?;
             (
-                vec![python.display().to_string(), output.display().to_string()],
+                vec![command_path(&python), command_path(output)],
                 "Python",
             )
         }
@@ -2260,7 +2392,7 @@ fn runtime_argv(
                     output.display()
                 );
             }
-            (vec![output.display().to_string()], "native")
+            (vec![command_path(output)], "native")
         }
     };
     argv.extend(program_args.iter().cloned());
@@ -3664,10 +3796,25 @@ mod summary_tests {
 
     use clap::Parser;
 
+    #[cfg(windows)]
+    use super::command_path;
     use super::{
         jar, language_debug_argv, relevant_watch_path, summarize, watch_event_changes_files, Cli,
         Cmd, WatchExclusions,
     };
+
+    #[cfg(windows)]
+    #[test]
+    fn child_process_paths_drop_windows_verbatim_prefixes() {
+        assert_eq!(
+            command_path(Path::new(r"\\?\C:\workspace\app.jar")),
+            r"C:\workspace\app.jar"
+        );
+        assert_eq!(
+            command_path(Path::new(r"\\?\UNC\server\share\app.jar")),
+            r"\\server\share\app.jar"
+        );
+    }
 
     #[test]
     fn says_what_happened_and_omits_what_did_not() {

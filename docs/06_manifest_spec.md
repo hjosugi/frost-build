@@ -180,7 +180,10 @@ pass_env = ["PYTHONPATH"]
 sandbox = false
 ```
 
-Genrule substitutions are `${in}`, `${out}`, `${outs}` and execute through the
+Genrule substitutions are `${in}`, `${out}`, `${outs}` and `${pathsep}`. The
+last expands to the host path separator, so an extension-neutral launcher such
+as `tools${pathsep}generate` can select `tools/generate` on POSIX and
+`tools\generate.cmd` through `PATHEXT` on Windows. Genrules execute through the
 host command shell (`/bin/sh -c` on Unix, `cmd.exe /C` on Windows) at the
 workspace root. Authors must quote for that host shell intentionally.
 All genrule outputs must exist after success and output ownership is unique.
