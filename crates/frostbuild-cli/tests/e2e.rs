@@ -42,6 +42,29 @@ fn java_toolchain_is_consistent() -> bool {
     ok
 }
 
+/// Can this host's `rustc` complete a link with the current PATH?
+///
+/// Windows images can expose both MSVC rustc and a GNU `link.exe`; a version
+/// probe succeeds in that state, but the linker selected by rustc cannot.
+fn rust_toolchain_is_consistent() -> bool {
+    let dir = std::env::temp_dir().join(format!("frost-rust-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let source = dir.join("probe.rs");
+    let output = executable_path(dir.join("probe"));
+    let ok = std::fs::write(&source, "fn main() {}\n").is_ok()
+        && Command::new("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .is_ok_and(|result| result.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+    ok
+}
+
 fn frost_bin() -> &'static str {
     env!("CARGO_BIN_EXE_frost")
 }
@@ -1086,7 +1109,7 @@ fn command_adapter_builds_real_rust_go_java_python_and_typescript_tools() {
     let mut targets = Vec::new();
     let mut defaults = Vec::new();
 
-    if available("rustc") {
+    if available("rustc") && rust_toolchain_is_consistent() {
         ws.write("src/main.rs", "fn main() { println!(\"rust-ok\"); }\n");
         tools.push("rustc = \"rustc\"".to_string());
         targets.push(
@@ -1939,20 +1962,14 @@ fn determinism_check_names_macro_and_output() {
 #[test]
 fn daemon_build_status_and_stop() {
     let ws = Workspace::new("daemon");
-    #[cfg(windows)]
-    eprintln!("daemon e2e: first build");
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(ok, "{out}");
-    #[cfg(windows)]
-    eprintln!("daemon e2e: cached build");
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(ok && out.contains("up to date"), "{out}");
 
     // A valid certificate must be answered inside frostd. The deliberately
     // nonexistent fallback program proves that no second frost process was
     // needed for this hit.
-    #[cfg(windows)]
-    eprintln!("daemon e2e: direct cached proof");
     let in_process = frostbuild_daemon::request(
         &ws.dir,
         &frostbuild_daemon::Request::Run {
@@ -1975,15 +1992,11 @@ fn daemon_build_status_and_stop() {
     // cached proof can be accepted. Deleting an artifact immediately before
     // the request must take the full path and restore it from CAS.
     std::fs::remove_file(ws.binary(".frost/bin/debug/app")).unwrap();
-    #[cfg(windows)]
-    eprintln!("daemon e2e: restore deleted output");
     let (ok, out) = ws.frost(&["build", "--daemon", "--explain"]);
     assert!(ok && out.contains("up to date"), "{out}");
     assert_eq!(ws.run_app(), "frost: 42\n");
 
     ws.append("src/util.c", "\n/* daemon watcher change */\n");
-    #[cfg(windows)]
-    eprintln!("daemon e2e: reject stale proof");
     let miss = frostbuild_daemon::request(
         &ws.dir,
         &frostbuild_daemon::Request::Run {

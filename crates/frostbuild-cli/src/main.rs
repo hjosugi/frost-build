@@ -1575,14 +1575,25 @@ fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Result<i32> {
                 Err(_) => {}
             }
             let executable = std::env::current_exe()?;
-            std::process::Command::new(executable)
+            let mut daemon = std::process::Command::new(executable);
+            daemon
                 .arg("-C")
                 .arg(root)
                 .args(["daemon", "serve"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()?;
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt as _;
+                // A daemon must not retain the launching client's console or
+                // captured output lifetime. This also gives it an independent
+                // control group, matching the Unix background-process shape.
+                const DETACHED_PROCESS: u32 = 0x0000_0008;
+                const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+                daemon.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            }
+            daemon.spawn()?;
             for _ in 0..50 {
                 if frostbuild_daemon::request(
                     root,

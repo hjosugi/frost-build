@@ -48,7 +48,16 @@ static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
 /// the *resolved* cc/cxx/ar binaries. What it does not capture is a genrule
 /// invoking some other tool found on PATH — the same blind spot as any
 /// undeclared input.
-const ENV_PASSTHROUGH: &[&str] = &["PATH", "HOME", "TMPDIR", "TMP", "TEMP"];
+const ENV_PASSTHROUGH: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    // Go uses this as its default cache root on Windows. It is operational
+    // scratch state, like TMP, rather than an input that changes built bytes.
+    "LOCALAPPDATA",
+];
 
 /// Environment that changes what a compiler produces, so it belongs in the
 /// action key. `CPATH=/a` and `CPATH=/b` select different headers with an
@@ -2010,7 +2019,7 @@ impl<'a> Engine<'a> {
         let mut command = if self.opts.sandbox && action.sandbox {
             sandbox_command(self.root, self.graph, action, inputs, argv)?
         } else {
-            let mut command = Command::new(&argv[0]);
+            let mut command = Command::new(resolve_action_program(self.root, &argv[0]));
             command.args(&argv[1..]).current_dir(self.root);
             command
         };
@@ -2037,6 +2046,18 @@ impl<'a> Engine<'a> {
 
     fn priority(&self, local: usize) -> u64 {
         self.priority[local]
+    }
+}
+
+/// Windows resolves a relative program name before applying `current_dir`.
+/// Make workspace-relative paths explicit while leaving bare tool names for
+/// PATH lookup on every host.
+fn resolve_action_program(root: &Path, program: &str) -> PathBuf {
+    let path = Path::new(program);
+    if path.is_relative() && path.components().count() > 1 {
+        root.join(path)
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -2549,6 +2570,16 @@ mod tests {
     fn shell_join_quotes_specials() {
         let argv = vec!["cc".to_string(), "a b".to_string(), "plain".to_string()];
         assert_eq!(shell_join(&argv), "cc 'a b' plain");
+    }
+
+    #[test]
+    fn action_program_paths_are_resolved_but_bare_tools_still_use_path() {
+        let root = Path::new("/workspace");
+        assert_eq!(
+            resolve_action_program(root, ".frost/bin/debug/test"),
+            root.join(".frost/bin/debug/test")
+        );
+        assert_eq!(resolve_action_program(root, "cc"), PathBuf::from("cc"));
     }
 
     #[test]

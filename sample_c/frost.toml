@@ -11,9 +11,9 @@ cflags = ["-O2", "-Wall"]
 
 [target.gen_config]
 kind = "genrule"
-# The extension-neutral command resolves to tools/gen_config on POSIX and
-# tools/gen_config.cmd through PATHEXT on Windows.
-cmd = "tools/gen_config ${out}"
+# The host separator plus extension-neutral name resolves to tools/gen_config
+# on POSIX and tools\gen_config.cmd through PATHEXT on Windows.
+cmd = "tools${pathsep}gen_config ${out}"
 inputs = ["tools/gen_config", "tools/gen_config.cmd"]
 outputs = ["gen/config.h"]
 includes = ["gen"]

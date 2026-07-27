@@ -1073,10 +1073,12 @@ fn expand_genrule_cmd(cmd: &str, inputs: &[String], outputs: &[String]) -> Resul
     let expanded = cmd
         .replace("${in}", &inputs.join(" "))
         .replace("${outs}", &outputs.join(" "))
-        .replace("${out}", &outputs[0]);
+        .replace("${out}", &outputs[0])
+        .replace("${pathsep}", std::path::MAIN_SEPARATOR_STR);
     if expanded.contains("${") {
         bail!(
-            "genrule cmd has unknown variable: {cmd:?} (supported: ${{in}}, ${{out}}, ${{outs}})"
+            "genrule cmd has unknown variable: {cmd:?} \
+             (supported: ${{in}}, ${{out}}, ${{outs}}, ${{pathsep}})"
         );
     }
     Ok(expanded)
@@ -1252,6 +1254,16 @@ mod tests {
         assert!(ids.contains(&"archive:util"));
         assert!(ids.contains(&"compile:app:src/main.c"));
         assert!(ids.contains(&"link:app"));
+    }
+
+    #[test]
+    fn genrule_path_separator_matches_the_host_shell() {
+        let expanded =
+            expand_genrule_cmd("tools${pathsep}generate ${out}", &[], &["out".into()]).unwrap();
+        assert_eq!(
+            expanded,
+            format!("tools{}generate out", std::path::MAIN_SEPARATOR)
+        );
     }
 
     #[test]
