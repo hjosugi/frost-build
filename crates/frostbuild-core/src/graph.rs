@@ -1714,9 +1714,10 @@ mod tests {
         let graph = BuildGraph::from_manifest_configured(&manifest, "release", "device").unwrap();
         let action = graph.actions.iter().find(|a| a.id == "kofun:app").unwrap();
         assert_eq!(action.argv[0], "device-kofun");
-        assert!(action
-            .argv
-            .contains(&format!("{BIN_DIR}/device/release/app")));
+        assert!(action.argv.contains(&format!(
+            "{BIN_DIR}/device/release/app{}",
+            std::env::consts::EXE_SUFFIX
+        )));
         assert!(action
             .argv
             .contains(&format!("{OBJ_DIR}/device/release/app/kofun.c")));
