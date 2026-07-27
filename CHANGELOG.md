@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-27
+
 ### Added
 
 - Genrules can use `${pathsep}` for the host path separator, allowing one
