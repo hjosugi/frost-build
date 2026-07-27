@@ -33,25 +33,15 @@ Optional-tool E2E cases (Rust, Go, Java, Python, Node, `zig cc`, `fzf`, Kofun)
 skip when the tool is missing rather than failing, so a host without them still
 reports a meaningful result. The Java cases also skip when `javac` is newer than
 `java` on the host, because a class compiled there cannot be run at all — the
-macOS runner image is in that state.
+macOS runner image is in that state. Rust similarly uses a compile-and-link
+probe; the Windows job omits that optional adapter because putting MinGW first
+for native-rule coverage shadows the MSVC `link.exe` required by its Rust
+toolchain.
 
-Windows runs the unit tests plus the E2E cases its image can reach: the command
-adapter, declared-output-set cache identity, the shared cache, completions, and
-the platform/`init`/`doctor` diagnostics. Two things stop the rest, both open in
-#110 with evidence from a full-suite run:
-
-- the bundled sample's genrule is POSIX shell text, so every case built from it
-  fails on `cmd.exe`. A host-portable sample would fix this for ~25 cases
-- `daemon_build_status_and_stop` hangs rather than failing. The full-suite run
-  named it: every case before it completed in seconds, and it was still running
-  25 minutes later
-- native binaries are declared without a name extension. With the toolchain
-  resolving, compilation and archiving now succeed on Windows and the link step
-  fails with `declared output .frost/bin/debug/app was not created`, because the
-  driver writes `app.exe`. Declared artifact names need the host executable
-  suffix, which reaches `run`, `dev`, `debug`, `ide` and the test runner as well
-
-Three Windows-only defects were found and fixed by running those cases:
+Windows runs the unit tests plus every host-reachable E2E, one at a time with
+unbuffered output. The current suite reaches 42 cases there; the difference from
+Linux is the explicit gates in the table above rather than a CI-maintained name
+list. The full run exposed and now covers these Windows-specific defects:
 
 - tool resolution never appended a name extension, so `gcc` was reported "not
   found in PATH" while `gcc --version` worked in the same shell. `PATH` search
@@ -63,6 +53,24 @@ Three Windows-only defects were found and fixed by running those cases:
   `if not exist dir mkdir dir & echo x>dir\f` skipped everything once frost had
   created the output's parent. frost creates that parent, so the guard is never
   needed
+- built-in binary outputs omitted `.exe`, so MinGW successfully linked a file
+  Frost did not consider declared. Native binary graph paths now include the
+  host suffix, and the serialized graph version prevents stale suffix-free
+  paths from surviving an upgrade
+- the bundled sample's generator was a POSIX-only shell command. Genrules now
+  expose `${pathsep}`, and the sample declares paired extension-neutral POSIX
+  and `cmd.exe` launchers as inputs
+- Windows resolves a relative program before applying `current_dir`, so a
+  linked `.frost/bin/.../test.exe` could not be started. Direct actions now
+  resolve workspace-relative program paths explicitly while bare tool names
+  still use `PATH`
+- a background daemon inherited the launching client's captured-output
+  handles, making the first `build --daemon` wait indefinitely. Windows daemon
+  startup now calls `CreateProcessW` detached with handle inheritance disabled
+- action environment clearing also removed `LOCALAPPDATA`, which left Go
+  without a cache root. Frost passes it through as operational scratch state,
+  alongside `TEMP`, without treating its location as output-affecting key
+  material
 
 The Windows C/C++ adapter still emits GCC/Clang-style depfile and link flags;
 it is suitable for a GNU-like or explicitly wrapped toolchain, not yet a

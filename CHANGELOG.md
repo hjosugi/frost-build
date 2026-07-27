@@ -5,6 +5,33 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Genrules can use `${pathsep}` for the host path separator, allowing one
+  manifest to invoke paired extension-neutral POSIX and Windows launchers.
+
+### Changed
+
+- Windows CI runs every host-reachable E2E serially instead of a named subset.
+  Host exclusions remain declared beside the tests and documented in the
+  platform-support matrix.
+
+### Fixed
+
+- Built-in C, C++ and Kofun binary targets declare the host executable suffix,
+  so Windows linkers, the CAS, `run`, `dev`, `debug`, IDE configuration and
+  native tests all agree on `.exe` output names. Serialized graphs rebuild once
+  under the new output-path schema.
+- Direct actions resolve workspace-relative executable paths against their
+  working directory before spawning, which lets Windows run freshly linked test
+  binaries rather than searching the parent process's directory.
+- A Windows daemon is created detached with handle inheritance disabled, so it
+  cannot keep a launching client's captured output alive and hang
+  `build --daemon`.
+- Action environments pass through Windows `LOCALAPPDATA`, allowing tools such
+  as Go to use their ordinary host cache without making its scratch path
+  action-key material.
+
 ## [0.5.0] - 2026-07-25
 
 ### Added
@@ -25,8 +52,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   Unix and `gcc`/`g++` on Windows, where the POSIX names generally do not exist.
   A scaffolded workspace and the bundled sample now compile on Windows without
   an explicit `[toolchain]` driver.
-- Windows CI runs the whole workspace suite, one test at a time with unbuffered
-  output, using the image's MinGW toolchain.
+- Windows CI runs a named host-portable E2E subset using the image's MinGW
+  toolchain.
 
 ### Fixed
 

@@ -183,7 +183,7 @@ impl Workspace {
             .output()
             .expect("run built app");
         assert!(out.status.success(), "built app should run");
-        String::from_utf8_lossy(&out.stdout).to_string()
+        String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n")
     }
 }
 
@@ -1109,7 +1109,7 @@ fn command_adapter_builds_real_rust_go_java_python_and_typescript_tools() {
     let mut targets = Vec::new();
     let mut defaults = Vec::new();
 
-    if available("rustc") && rust_toolchain_is_consistent() {
+    if !cfg!(windows) && available("rustc") && rust_toolchain_is_consistent() {
         ws.write("src/main.rs", "fn main() { println!(\"rust-ok\"); }\n");
         tools.push("rustc = \"rustc\"".to_string());
         targets.push(

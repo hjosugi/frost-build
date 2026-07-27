@@ -23,7 +23,7 @@ frost init --language java
 
 cargo build --release --locked
 ./target/release/frost -C sample_c build
-./sample_c/.frost/bin/debug/app                 # frost: 42
+./sample_c/.frost/bin/debug/app                 # frost: 42 (.exe on Windows)
 ./target/release/frost -C sample_c build        # frost: up to date
 ./target/release/frost -C sample_c build --explain
 ./target/release/frost -C sample_c plan
@@ -56,7 +56,7 @@ frost -C myrepo build --stats -j 16          # then calibrate against a real run
 frost -C myrepo build --no-tui
 
 # Rebuild on edits; restart a direct-argv dev process only after success
-frost -C myrepo watch app --run .frost/bin/debug/app
+frost -C myrepo watch app --run .frost/bin/debug/app  # append .exe on Windows
 
 # Or infer that artifact automatically
 frost -C myrepo dev app -- --example-argument

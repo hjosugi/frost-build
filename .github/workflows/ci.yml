@@ -63,6 +63,9 @@ jobs:
       - name: Show the C toolchain the tests will use
         run: gcc --version && ar --version
       - run: cargo test --workspace --lib --bins --locked
+      - name: Guard the Windows daemon against inherited-handle hangs
+        timeout-minutes: 2
+        run: cargo test -p frostbuild-cli --test e2e daemon_build_status_and_stop --locked -- --nocapture
       - run: cargo test -p frostbuild-cli --test e2e --locked -- --test-threads 1 --nocapture
 
   python:
