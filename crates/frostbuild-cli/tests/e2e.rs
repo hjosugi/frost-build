@@ -46,6 +46,12 @@ fn frost_bin() -> &'static str {
     env!("CARGO_BIN_EXE_frost")
 }
 
+fn executable_path(path: impl AsRef<Path>) -> PathBuf {
+    let mut native = path.as_ref().as_os_str().to_os_string();
+    native.push(std::env::consts::EXE_SUFFIX);
+    native.into()
+}
+
 struct Workspace {
     dir: PathBuf,
 }
@@ -137,8 +143,20 @@ impl Workspace {
         std::fs::write(&path, text).unwrap();
     }
 
+    fn generator_script(&self) -> &'static str {
+        if cfg!(windows) {
+            "tools/gen_config.cmd"
+        } else {
+            "tools/gen_config"
+        }
+    }
+
+    fn binary(&self, relative_without_suffix: &str) -> PathBuf {
+        executable_path(self.dir.join(relative_without_suffix))
+    }
+
     fn run_app(&self) -> String {
-        let out = Command::new(self.dir.join(".frost/bin/debug/app"))
+        let out = Command::new(self.binary(".frost/bin/debug/app"))
             .output()
             .expect("run built app");
         assert!(out.status.success(), "built app should run");
@@ -773,7 +791,7 @@ chmod +x "$output"
     assert!(initial.contains("2 built"), "{initial}");
     for target in ["alpha", "beta"] {
         assert!(
-            ws.dir.join(format!(".frost/bin/debug/{target}")).is_file(),
+            ws.binary(&format!(".frost/bin/debug/{target}")).is_file(),
             "{target} binary was not produced"
         );
         assert!(
@@ -838,7 +856,7 @@ chmod +x "$output"
         1
     );
 
-    let alpha = Command::new(ws.dir.join(".frost/bin/debug/alpha"))
+    let alpha = Command::new(ws.binary(".frost/bin/debug/alpha"))
         .output()
         .expect("run Kofun shim output");
     assert!(alpha.status.success());
@@ -867,11 +885,11 @@ fn platforms_isolate_outputs_and_caches() {
         "platform build must not reuse host action results:\n{out}"
     );
     assert!(
-        ws.dir.join(".frost/bin/devsim/debug/app").exists(),
+        ws.binary(".frost/bin/devsim/debug/app").exists(),
         "platform binary lives in a platform-segmented tree"
     );
     assert!(
-        ws.dir.join(".frost/bin/debug/app").exists(),
+        ws.binary(".frost/bin/debug/app").exists(),
         "host binary keeps its historical path"
     );
 
@@ -1342,7 +1360,7 @@ fn cross_compile_aarch64_device_build() {
     let (ok, out) = ws.frost(&["build", "--platform", "aarch64", "--explain"]);
     assert!(ok, "cross build failed:\n{out}");
 
-    let bin = std::fs::read(ws.dir.join(".frost/bin/aarch64/debug/app")).unwrap();
+    let bin = std::fs::read(ws.binary(".frost/bin/aarch64/debug/app")).unwrap();
     assert_eq!(&bin[..4], b"\x7fELF", "output must be an ELF binary");
     let machine = u16::from_le_bytes([bin[18], bin[19]]);
     assert_eq!(machine, 183, "e_machine must be EM_AARCH64 (183)");
@@ -1614,7 +1632,7 @@ fn genrule_rerun_with_identical_output_cuts_off_downstream() {
 
     // Touching the script changes the genrule's key, but the regenerated
     // header is byte-identical, so downstream compiles must stay cached.
-    ws.append("tools/gen_config.sh", "# harmless tweak\n");
+    ws.append(ws.generator_script(), "# harmless tweak\n");
 
     let (ok, out) = ws.build_explain();
     assert!(ok, "incremental build failed:\n{out}");
@@ -1658,7 +1676,7 @@ fn deleted_output_is_rebuilt() {
     let (ok, out) = ws.build_explain();
     assert!(ok, "clean build failed:\n{out}");
 
-    std::fs::remove_file(ws.dir.join(".frost/bin/debug/app")).unwrap();
+    std::fs::remove_file(ws.binary(".frost/bin/debug/app")).unwrap();
 
     let (ok, out) = ws.build_explain();
     assert!(ok, "rebuild failed:\n{out}");
@@ -1715,7 +1733,7 @@ fn clean_removes_outputs_and_full_rebuild_works() {
 
     let (ok, out) = ws.frost(&["clean"]);
     assert!(ok, "clean failed:\n{out}");
-    assert!(!ws.dir.join(".frost/bin/debug/app").exists());
+    assert!(!ws.binary(".frost/bin/debug/app").exists());
     assert!(!ws.dir.join("gen/config.h").exists());
 
     let (ok, out) = ws.build_explain();
@@ -1747,8 +1765,8 @@ fn profiles_coexist_and_switch_back_is_cached() {
     assert!(ok, "{out}");
     let (ok, out) = ws.frost(&["build", "--profile", "release"]);
     assert!(ok, "{out}");
-    assert!(ws.dir.join(".frost/bin/debug/app").exists());
-    assert!(ws.dir.join(".frost/bin/release/app").exists());
+    assert!(ws.binary(".frost/bin/debug/app").exists());
+    assert!(ws.binary(".frost/bin/release/app").exists());
     let (ok, out) = ws.frost(&["build", "--profile", "debug"]);
     assert!(ok && out.contains("up to date"), "{out}");
 }
@@ -1874,7 +1892,7 @@ fn multi_package_labels_build_across_packages() {
     );
     let (ok, out) = ws.frost(&["build"]);
     assert!(ok, "{out}");
-    let status = Command::new(ws.dir.join(".frost/bin/debug/app_app"))
+    let status = Command::new(ws.binary(".frost/bin/debug/app_app"))
         .status()
         .unwrap();
     assert!(status.success());
@@ -1885,8 +1903,8 @@ fn generated_header_is_order_only_for_unrelated_translation_units() {
     let ws = Workspace::new("order-only");
     let (ok, out) = ws.build_explain();
     assert!(ok, "{out}");
-    let script = std::fs::read_to_string(ws.dir.join("tools/gen_config.sh")).unwrap();
-    ws.write("tools/gen_config.sh", &script.replace("frost:", "ice:"));
+    let script = std::fs::read_to_string(ws.dir.join(ws.generator_script())).unwrap();
+    ws.write(ws.generator_script(), &script.replace("frost:", "ice:"));
     let (ok, out) = ws.build_explain();
     assert!(ok, "{out}");
     assert!(out.contains("ran compile:app:src/main.c"), "{out}");
@@ -1921,14 +1939,20 @@ fn determinism_check_names_macro_and_output() {
 #[test]
 fn daemon_build_status_and_stop() {
     let ws = Workspace::new("daemon");
+    #[cfg(windows)]
+    eprintln!("daemon e2e: first build");
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(ok, "{out}");
+    #[cfg(windows)]
+    eprintln!("daemon e2e: cached build");
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(ok && out.contains("up to date"), "{out}");
 
     // A valid certificate must be answered inside frostd. The deliberately
     // nonexistent fallback program proves that no second frost process was
     // needed for this hit.
+    #[cfg(windows)]
+    eprintln!("daemon e2e: direct cached proof");
     let in_process = frostbuild_daemon::request(
         &ws.dir,
         &frostbuild_daemon::Request::Run {
@@ -1950,12 +1974,16 @@ fn daemon_build_status_and_stop() {
     // A watcher barrier must observe output changes under .frost before a
     // cached proof can be accepted. Deleting an artifact immediately before
     // the request must take the full path and restore it from CAS.
-    std::fs::remove_file(ws.dir.join(".frost/bin/debug/app")).unwrap();
+    std::fs::remove_file(ws.binary(".frost/bin/debug/app")).unwrap();
+    #[cfg(windows)]
+    eprintln!("daemon e2e: restore deleted output");
     let (ok, out) = ws.frost(&["build", "--daemon", "--explain"]);
     assert!(ok && out.contains("up to date"), "{out}");
     assert_eq!(ws.run_app(), "frost: 42\n");
 
     ws.append("src/util.c", "\n/* daemon watcher change */\n");
+    #[cfg(windows)]
+    eprintln!("daemon e2e: reject stale proof");
     let miss = frostbuild_daemon::request(
         &ws.dir,
         &frostbuild_daemon::Request::Run {
@@ -1973,11 +2001,15 @@ fn daemon_build_status_and_stop() {
     .unwrap();
     assert_ne!(miss.code, 0, "a changed input must reject the certificate");
     std::thread::sleep(std::time::Duration::from_millis(100));
+    #[cfg(windows)]
+    eprintln!("daemon e2e: rebuild changed input");
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(
         ok && out.contains("1 built"),
         "source change missed:\n{out}"
     );
+    #[cfg(windows)]
+    eprintln!("daemon e2e: status and stop");
     let (ok, out) = ws.frost(&["daemon", "status"]);
     assert!(ok && out.contains("running"), "{out}");
     let (ok, out) = ws.frost(&["daemon", "stop"]);
@@ -2541,14 +2573,19 @@ fn a_path_is_stat_checked_once_per_build() {
 
     // The saving must not cost correctness: a change between builds is still
     // seen, because each build starts from a fresh cache.
-    ws.write(
-        "tools/gen_config.sh",
-        "#!/bin/sh\nset -eu\ncat > \"$1\" <<'EOF'\n\
-         #ifndef FROST_SAMPLE_CONFIG_H\n\
-         #define FROST_SAMPLE_CONFIG_H\n\
-         #define FROST_GREETING \"frosty:\"\n\
-         #endif\nEOF\n",
-    );
+    #[cfg(unix)]
+    let changed_generator = "#!/bin/sh\nset -eu\ncat > \"$1\" <<'EOF'\n\
+                             #ifndef FROST_SAMPLE_CONFIG_H\n\
+                             #define FROST_SAMPLE_CONFIG_H\n\
+                             #define FROST_GREETING \"frosty:\"\n\
+                             #endif\nEOF\n";
+    #[cfg(windows)]
+    let changed_generator = "@echo off\n\
+                             > \"%~1\" echo #ifndef FROST_SAMPLE_CONFIG_H\n\
+                             >> \"%~1\" echo #define FROST_SAMPLE_CONFIG_H\n\
+                             >> \"%~1\" echo #define FROST_GREETING \"frosty:\"\n\
+                             >> \"%~1\" echo #endif\n";
+    ws.write(ws.generator_script(), changed_generator);
     let (ok, out) = ws.build_explain();
     assert!(ok, "{out}");
     assert!(out.contains("ran genrule:gen_config"), "{out}");
@@ -2631,7 +2668,7 @@ fn include_path_environment_selects_a_different_header_and_is_keyed() {
     let run_with = |dir: &std::path::Path| {
         let (ok, out) = ws.frost_env(&["build"], &[("CPATH", dir.to_str().unwrap())]);
         assert!(ok, "build failed:\n{out}");
-        let app = Command::new(ws.dir.join(".frost/bin/debug/app"))
+        let app = Command::new(ws.binary(".frost/bin/debug/app"))
             .output()
             .expect("run built app");
         (out, String::from_utf8_lossy(&app.stdout).to_string())
@@ -2811,9 +2848,11 @@ fn init_writes_a_manifest_that_actually_builds() {
 
     let (ok, out) = frost(&["build"]);
     assert!(ok, "the scaffold must build as written:\n{out}");
-    let run = Command::new(dir.join(".frost/bin/debug").join(dir.file_name().unwrap()))
-        .output()
-        .expect("run built binary");
+    let run = Command::new(executable_path(
+        dir.join(".frost/bin/debug").join(dir.file_name().unwrap()),
+    ))
+    .output()
+    .expect("run built binary");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
 
     let target = dir.file_name().unwrap().to_str().unwrap();
@@ -3121,7 +3160,7 @@ fn a_mode_change_invalidates_and_a_restored_output_keeps_its_mode() {
     // or the next action that runs it fails.
     let (ok, out) = ws.frost(&["build"]);
     assert!(ok, "{out}");
-    let app = ws.dir.join(".frost/bin/debug/app");
+    let app = ws.binary(".frost/bin/debug/app");
     let before = std::fs::metadata(&app).unwrap().permissions().mode();
     assert!(before & 0o111 != 0, "the built binary is executable");
     std::fs::remove_file(&app).unwrap();
@@ -3183,7 +3222,7 @@ fn a_corrupt_cas_object_is_rebuilt_rather_than_handed_back() {
     let ws = Workspace::new("cas-corrupt");
     let (ok, out) = ws.build_explain();
     assert!(ok, "{out}");
-    let app = ws.dir.join(".frost/bin/debug/app");
+    let app = ws.binary(".frost/bin/debug/app");
     let correct = std::fs::read(&app).unwrap();
 
     // Find the object backing the built binary and flip one byte, keeping the

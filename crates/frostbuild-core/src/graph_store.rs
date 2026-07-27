@@ -11,7 +11,8 @@ use crate::graph::BuildGraph;
 use crate::manifest::{Manifest, HOST_PLATFORM};
 
 const MAGIC: &[u8; 8] = b"FRSTGR01";
-const VERSION: u32 = 6;
+// Version 7 adds the host executable suffix to native binary graph paths.
+const VERSION: u32 = 7;
 
 /// Evidence that the manifest inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
