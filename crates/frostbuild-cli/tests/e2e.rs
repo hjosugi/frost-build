@@ -6,6 +6,10 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 
+fn normalized_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n")
+}
+
 /// Can a class `javac` produces be run by `java` on this host?
 ///
 /// A host can have a newer compiler than runtime on `PATH` — the macOS CI image
@@ -101,8 +105,7 @@ impl Workspace {
             .args(args)
             .output()
             .expect("spawn frost");
-        let text = String::from_utf8_lossy(&out.stdout).to_string()
-            + &String::from_utf8_lossy(&out.stderr);
+        let text = normalized_output(&out.stdout) + &normalized_output(&out.stderr);
         (out.status.success(), text)
     }
 
@@ -115,8 +118,7 @@ impl Workspace {
         let out = command.output().expect("spawn frost");
         (
             out.status.success(),
-            String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr),
+            normalized_output(&out.stdout) + &normalized_output(&out.stderr),
         )
     }
 
@@ -146,8 +148,7 @@ impl Workspace {
         let out = command.output().expect("spawn frost in a pseudo-terminal");
         (
             out.status.success(),
-            String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr),
+            normalized_output(&out.stdout) + &normalized_output(&out.stderr),
         )
     }
 
@@ -183,7 +184,7 @@ impl Workspace {
             .output()
             .expect("run built app");
         assert!(out.status.success(), "built app should run");
-        String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n")
+        normalized_output(&out.stdout)
     }
 }
 
@@ -883,7 +884,7 @@ chmod +x "$output"
         .output()
         .expect("run Kofun shim output");
     assert!(alpha.status.success());
-    assert_eq!(String::from_utf8_lossy(&alpha.stdout), "alpha-v2\n");
+    assert_eq!(normalized_output(&alpha.stdout), "alpha-v2\n");
 
     let (ok, final_noop) = ws.build_explain();
     assert!(ok && final_noop.contains("up to date"), "{final_noop}");
@@ -1284,7 +1285,7 @@ sandbox = false
                 .output()
                 .expect("run Frost-packed Java archive");
             assert!(output.status.success(), "{output:?}");
-            assert_eq!(String::from_utf8_lossy(&output.stdout), "java-ok\n");
+            assert_eq!(normalized_output(&output.stdout), "java-ok\n");
         }
         #[cfg(unix)]
         {
@@ -1336,7 +1337,7 @@ sandbox = false
             .output()
             .expect("run Frost-packed Python wheel");
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "python-ok\n");
+        assert_eq!(normalized_output(&output.stdout), "python-ok\n");
     }
     if defaults.contains(&"typescript") {
         assert_eq!(
@@ -1655,7 +1656,12 @@ fn genrule_rerun_with_identical_output_cuts_off_downstream() {
 
     // Touching the script changes the genrule's key, but the regenerated
     // header is byte-identical, so downstream compiles must stay cached.
-    ws.append(ws.generator_script(), "# harmless tweak\n");
+    let harmless_tweak = if cfg!(windows) {
+        "rem harmless tweak\r\n"
+    } else {
+        "# harmless tweak\n"
+    };
+    ws.append(ws.generator_script(), harmless_tweak);
 
     let (ok, out) = ws.build_explain();
     assert!(ok, "incremental build failed:\n{out}");
@@ -2635,8 +2641,7 @@ fn daemon_works_from_a_deeply_nested_workspace() {
             .expect("spawn frost");
         (
             out.status.success(),
-            String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr),
+            normalized_output(&out.stdout) + &normalized_output(&out.stderr),
         )
     };
 
@@ -2683,7 +2688,7 @@ fn include_path_environment_selects_a_different_header_and_is_keyed() {
         let app = Command::new(ws.binary(".frost/bin/debug/app"))
             .output()
             .expect("run built app");
-        (out, String::from_utf8_lossy(&app.stdout).to_string())
+        (out, normalized_output(&app.stdout))
     };
 
     let (_, first) = run_with(&one);
@@ -2833,8 +2838,7 @@ fn init_writes_a_manifest_that_actually_builds() {
             .expect("spawn frost");
         (
             out.status.success(),
-            String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr),
+            normalized_output(&out.stdout) + &normalized_output(&out.stderr),
         )
     };
 
@@ -2865,7 +2869,7 @@ fn init_writes_a_manifest_that_actually_builds() {
     ))
     .output()
     .expect("run built binary");
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+    assert_eq!(normalized_output(&run.stdout), "42\n");
 
     let target = dir.file_name().unwrap().to_str().unwrap();
     let (ok, out) = frost(&["run", target]);
@@ -2976,8 +2980,7 @@ fn init_java_writes_a_runnable_deterministic_jar_manifest() {
             .expect("spawn frost");
         (
             output.status.success(),
-            String::from_utf8_lossy(&output.stdout).to_string()
-                + &String::from_utf8_lossy(&output.stderr),
+            normalized_output(&output.stdout) + &normalized_output(&output.stderr),
         )
     };
 
@@ -3014,7 +3017,7 @@ fn init_java_writes_a_runnable_deterministic_jar_manifest() {
         .output()
         .expect("run generated Java JAR");
     assert!(direct.status.success(), "{direct:?}");
-    assert_eq!(String::from_utf8_lossy(&direct.stdout), "java-init-ok\n");
+    assert_eq!(normalized_output(&direct.stdout), "java-init-ok\n");
 
     let (ok, out) = frost(&["run", target]);
     assert!(ok, "frost run rejected generated Java target:\n{out}");
