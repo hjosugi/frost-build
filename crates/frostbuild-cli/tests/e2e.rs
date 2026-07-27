@@ -1967,62 +1967,61 @@ fn daemon_build_status_and_stop() {
     let (ok, out) = ws.frost(&["build", "--daemon"]);
     assert!(ok && out.contains("up to date"), "{out}");
 
-    // A valid certificate must be answered inside frostd. The deliberately
-    // nonexistent fallback program proves that no second frost process was
-    // needed for this hit.
-    let in_process = frostbuild_daemon::request(
-        &ws.dir,
-        &frostbuild_daemon::Request::Run {
-            version: frostbuild_daemon::PROTOCOL_VERSION,
-            program: ws.dir.join("definitely-missing-frost"),
-            args: Vec::new(),
-            env: Vec::new(),
-            fast_noop: Some(frostbuild_daemon::FastNoopRequest {
-                profile: "debug".into(),
-                platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
-                key_env: frostbuild_exec::key_environment_snapshot(),
-            }),
-        },
-    )
-    .unwrap();
-    assert_eq!(in_process.code, 0, "{in_process:?}");
-    assert!(in_process.stdout.contains("up to date"), "{in_process:?}");
+    #[cfg(unix)]
+    {
+        // A valid certificate must be answered inside frostd. The deliberately
+        // nonexistent fallback program proves that no second frost process was
+        // needed for this hit.
+        let in_process = frostbuild_daemon::request(
+            &ws.dir,
+            &frostbuild_daemon::Request::Run {
+                version: frostbuild_daemon::PROTOCOL_VERSION,
+                program: ws.dir.join("definitely-missing-frost"),
+                args: Vec::new(),
+                env: Vec::new(),
+                fast_noop: Some(frostbuild_daemon::FastNoopRequest {
+                    profile: "debug".into(),
+                    platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
+                    key_env: frostbuild_exec::key_environment_snapshot(),
+                }),
+            },
+        )
+        .unwrap();
+        assert_eq!(in_process.code, 0, "{in_process:?}");
+        assert!(in_process.stdout.contains("up to date"), "{in_process:?}");
 
-    // A watcher barrier must observe output changes under .frost before a
-    // cached proof can be accepted. Deleting an artifact immediately before
-    // the request must take the full path and restore it from CAS.
-    std::fs::remove_file(ws.binary(".frost/bin/debug/app")).unwrap();
-    let (ok, out) = ws.frost(&["build", "--daemon", "--explain"]);
-    assert!(ok && out.contains("up to date"), "{out}");
-    assert_eq!(ws.run_app(), "frost: 42\n");
+        // A watcher barrier must observe output changes under .frost before a
+        // cached proof can be accepted. Deleting an artifact immediately before
+        // the request must take the full path and restore it from CAS.
+        std::fs::remove_file(ws.binary(".frost/bin/debug/app")).unwrap();
+        let (ok, out) = ws.frost(&["build", "--daemon", "--explain"]);
+        assert!(ok && out.contains("up to date"), "{out}");
+        assert_eq!(ws.run_app(), "frost: 42\n");
 
-    ws.append("src/util.c", "\n/* daemon watcher change */\n");
-    let miss = frostbuild_daemon::request(
-        &ws.dir,
-        &frostbuild_daemon::Request::Run {
-            version: frostbuild_daemon::PROTOCOL_VERSION,
-            program: ws.dir.join("definitely-missing-frost"),
-            args: Vec::new(),
-            env: Vec::new(),
-            fast_noop: Some(frostbuild_daemon::FastNoopRequest {
-                profile: "debug".into(),
-                platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
-                key_env: frostbuild_exec::key_environment_snapshot(),
-            }),
-        },
-    )
-    .unwrap();
-    assert_ne!(miss.code, 0, "a changed input must reject the certificate");
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    #[cfg(windows)]
-    eprintln!("daemon e2e: rebuild changed input");
-    let (ok, out) = ws.frost(&["build", "--daemon"]);
-    assert!(
-        ok && out.contains("1 built"),
-        "source change missed:\n{out}"
-    );
-    #[cfg(windows)]
-    eprintln!("daemon e2e: status and stop");
+        ws.append("src/util.c", "\n/* daemon watcher change */\n");
+        let miss = frostbuild_daemon::request(
+            &ws.dir,
+            &frostbuild_daemon::Request::Run {
+                version: frostbuild_daemon::PROTOCOL_VERSION,
+                program: ws.dir.join("definitely-missing-frost"),
+                args: Vec::new(),
+                env: Vec::new(),
+                fast_noop: Some(frostbuild_daemon::FastNoopRequest {
+                    profile: "debug".into(),
+                    platform: frostbuild_core::manifest::HOST_PLATFORM.into(),
+                    key_env: frostbuild_exec::key_environment_snapshot(),
+                }),
+            },
+        )
+        .unwrap();
+        assert_ne!(miss.code, 0, "a changed input must reject the certificate");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let (ok, out) = ws.frost(&["build", "--daemon"]);
+        assert!(
+            ok && out.contains("1 built"),
+            "source change missed:\n{out}"
+        );
+    }
     let (ok, out) = ws.frost(&["daemon", "status"]);
     assert!(ok && out.contains("running"), "{out}");
     let (ok, out) = ws.frost(&["daemon", "stop"]);
