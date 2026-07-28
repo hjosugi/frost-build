@@ -693,7 +693,18 @@ impl LocalCas {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // `digest` 0.11 returns a `hybrid_array::Array`, which does not implement
+    // `LowerHex`, so the wire encoding is spelled out here. It must stay
+    // lowercase: existing CAS manifests and remote-cache keys hold these
+    // strings verbatim.
+    use std::fmt::Write as _;
+
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 #[cfg(unix)]
@@ -917,6 +928,21 @@ mod tests {
                 .unwrap();
         assert!(manifest.chunks.len() > 4);
         (root, cas, source, digest, manifest)
+    }
+
+    #[test]
+    fn sha256_stays_lowercase_hex() {
+        // Chunk, delta and manifest records hold these strings verbatim, so a
+        // changed encoding silently invalidates every CAS entry already on
+        // disk. Pin it against future digest-crate churn.
+        assert_eq!(
+            sha256(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256(b"frost"),
+            "d7bf0c9ea6ea590ff1a44ef444aa38d0db5491e29fab83efbbbe882ac9314e84"
+        );
     }
 
     #[test]
