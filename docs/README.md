@@ -38,9 +38,11 @@ cite the existing file names.
 | [08_predictive_selection.md](08_predictive_selection.md) | predictive action selection |
 | [09_learned_scheduling.md](09_learned_scheduling.md) | learned duration estimates and scheduling |
 | [10_language_adapters.md](10_language_adapters.md) | Rust / TypeScript / Go adapter design |
-| [11_remote_execution_study.md](11_remote_execution_study.md) | REAPI execution gap analysis |
+| [11_remote_execution_study.md](11_remote_execution_study.md) | external BuildGrid/BuildBox REAPI certificate and v2 adapter gaps |
 | [23_bazel_migration.md](23_bazel_migration.md) | conservative Bazel import path |
-| [25_npm_workspace_import.md](25_npm_workspace_import.md) | npm workspace and package-script discovery |
+| [25_npm_workspace_import.md](25_npm_workspace_import.md) | npm workspace gates and explicit Vite build discovery |
+| [26_deltacdc_remote_calibration.md](26_deltacdc_remote_calibration.md) | fresh corpus, RPC and CPU/bandwidth decision for remote DeltaCDC |
+| [27_npm_production_adoption.md](27_npm_production_adoption.md) | real npm/Vite production adoption certificate and boundary policy |
 
 ## Comparisons and measurement
 

@@ -425,9 +425,24 @@ break_even_bytes_per_second =
 
 The value is absent when the delta saves no bytes or consumes no additional
 CPU. Reports from the older aggregate-CPU schema cannot support this comparison
-and must be rerun rather than retrofitted. A representative multi-corpus run,
-remote bandwidth/CPU calibration and protocol measurements remain required for
-issue #82.
+and must be rerun rather than retrofitted.
+
+The representative rerun and remote calibration are now checked:
+
+```bash
+python build-cache-delta/pkg/harness/calibrate_remote.py \
+  build-cache-delta/pkg/results/deltacdc/2026-07-28-lua-O2-v2.json \
+  build-cache-delta/pkg/results/deltacdc/2026-07-28-rg-debug-v2.json \
+  --reapi-proof bench/baselines/2026-07-28-buildgrid-reapi-poc.json \
+  --out bench/baselines/2026-07-28-deltacdc-remote.json
+```
+
+The model evaluates 1/10/100/1000 Mbit/s with the observed 23.877 ms BuildGrid
+Action Cache latency applied equally to both plans. Lua breaks even at
+23.787799 Mbit/s and ripgrep at 4.668801 Mbit/s. This is enough to reject
+default remote DeltaCDC on the tested CPU/protocol; it is not a WAN latency
+measurement or a universal corpus result. See
+[26_deltacdc_remote_calibration.md](26_deltacdc_remote_calibration.md).
 
 ## Warm daemon no-op harness
 

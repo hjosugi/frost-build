@@ -1,0 +1,81 @@
+{
+  "schema": "frost-reapi-poc-certificate-v1",
+  "captured_on": "2026-07-28",
+  "environment": {
+    "host": {
+      "cpu": "AMD Ryzen 3 7330U with Radeon Graphics",
+      "logical_cpus": 8,
+      "os": "Linux 7.1.4-1-cachyos x86_64 GNU/Linux"
+    },
+    "orchestrator": {
+      "name": "Podman",
+      "version": "6.0.1"
+    },
+    "server": {
+      "name": "BuildGrid",
+      "version": "0.8.4",
+      "git_commit": "ed56c818e162ee5af82f470b09a9bff35816ec5d"
+    },
+    "worker": {
+      "name": "BuildBox",
+      "image": "registry.gitlab.com/buildgrid/buildgrid.hub.docker.com/buildbox:nightly",
+      "image_digest": "sha256:14d5c8129023a687d4f0093eb92d3d5ff03b76b84942910b66456549ab5cf295"
+    }
+  },
+  "fixture": "tests/fixtures/reapi",
+  "command": "python scripts/reapi_poc.py --remote http://controller:50051 --input-root tests/fixtures/reapi --timeout 45 --platform OSFamily=linux --platform ISA=x86-64",
+  "proof": {
+    "action_cache": {
+      "cached_result": true,
+      "exit_code": 0,
+      "ok": true,
+      "operation": "/7eaf6e59-bd38-459d-9fec-efef99b85c99",
+      "wall_ms": 23.877
+    },
+    "execution": {
+      "cached_result": false,
+      "exit_code": 0,
+      "ok": true,
+      "operation": "/c970bd2b-40ae-4ee5-9b43-982aeec11f9f",
+      "output_file": "431bb37433de36a287facc788d944fa4be48231cab9a0ba5b5be6b4889fadedf/32",
+      "output_text": "FROSTBUILD EXTERNAL REAPI PROOF\n",
+      "output_tree": "941ceefdb0ae77cd438aeeec3d4d1858cd953bb34485378187144bb2fc15d4ac/168",
+      "wall_ms": 1487.287
+    },
+    "missing_blob_probe": {
+      "message": "execute() threw: std::runtime_error exception thrown at [buildboxcommon_casclient.cpp:1150], errMsg = \"Error staging \"e42748d6cea09c72988126bb9f65395de680a925e8a5122d4e90ca3624689e9b/261\" into \"\": \"At least one blob is missing locally and remotely for staging directory with root digest \"e42748d6cea09c72988126bb9f65395de680a925e8a5122d4e90ca3624689e9b/261\": Could not fetch missing blob with digest \"6b8f6c9151955836f79484c43b770ef9fb183a7d8bbc76676420127a532af23e/38\": : \"\"",
+      "operation": "/55f6f669-7fd7-4046-b8c3-807fe24d9eb4",
+      "status_code": 13,
+      "wall_ms": 6608.172
+    },
+    "schema": "frost-reapi-poc-v1",
+    "server": {
+      "digest_functions": [
+        "SHA256"
+      ],
+      "execution_enabled": true,
+      "high_api_version": {
+        "major": 2,
+        "minor": 2,
+        "patch": 0
+      },
+      "low_api_version": {
+        "major": 2,
+        "minor": 0,
+        "patch": 0
+      },
+      "remote": "http://controller:50051"
+    },
+    "translation": {
+      "action": "c8596821f41a8de1c4934806436b6878ba36a1f4382dab314ceb0917b1fad030/177",
+      "command": "381561938f1d08b0afa84784ab875bbb27d83095881d6146735575ea52eadcba/58",
+      "declared_output_directory": "result",
+      "digest_function": "SHA256",
+      "input_root": "e42748d6cea09c72988126bb9f65395de680a925e8a5122d4e90ca3624689e9b/261",
+      "platform": {
+        "ISA": "x86-64",
+        "OSFamily": "linux"
+      }
+    }
+  }
+}
