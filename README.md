@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="site/assets/frostbuild-mark-512.png" width="150" alt="FrostBuild dependency crystal">
+</p>
+
 # FrostBuild
+
+**Official site:** [hjosugi.github.io/frost-build](https://hjosugi.github.io/frost-build/)
 
 FrostBuild is a production-oriented Rust build engine for correct, low-latency
 incremental builds in large monorepos. C/C++ has native translation-unit rules;
@@ -186,8 +192,10 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 - Ninja importer, conservative Bazel-query native C/C++ migration importer,
   and reproducible Ninja/Make/Frost/Bazel benchmark harness
 
-Remote cache/execution remain v2 protocol work; the local model is deliberately
-REAPI-translatable. See [remote cache](docs/07_remote_cache_study.md) and
+Remote execution remains v2 adapter work; the local model is deliberately
+REAPI-translatable and has passed an external BuildGrid/BuildBox certificate
+covering Merkle inputs, platform properties, missing blobs, output trees and
+Action Cache reuse. See [remote cache](docs/07_remote_cache_study.md) and
 [remote execution](docs/11_remote_execution_study.md).
 
 ## Repository layout
@@ -408,13 +416,14 @@ project boundary (16.7x); direct `tsc` remains faster whenever the compiler
 runs. In the eight-project-reference report Frost also wins no-op (3.200 vs
 6.556 ms), but native `tsc --build` remains faster clean and after one project
 change. `frost import-npm` discovers npm workspaces and selected validation
-gates, while refusing conventional build and persistent script names that
-cannot safely be cached as tests. Generic `frost watch`/process restart now
-ships; Vite output ownership, persistent TypeScript/browser HMR, hermetic
-`node_modules`, richer source-map debugging and production monorepo adoption
-remain open. See
+gates; `--vite-builds` adds only conservatively recognized production builds
+with profile-specific owned output trees. Generic `frost watch`/process restart
+ships, while browser HMR remains framework-owned and `node_modules` remains an
+explicit npm-owned non-hermetic boundary. A read-only `iroha-pdf` production
+trial passed seven validation gates, built a 6.26 MB Vite tree, returned a 0 ms
+no-op and restored the byte-identical tree from CAS in 10 ms. See
 [docs/21_typescript_tsc_comparison.md](docs/21_typescript_tsc_comparison.md)
-and [docs/25_npm_workspace_import.md](docs/25_npm_workspace_import.md).
+and [docs/27_npm_production_adoption.md](docs/27_npm_production_adoption.md).
 
 The checked Python packaging comparison builds the same 101-source pure wheel
 through Frost's standards-compliant packer, `python -m build` and `uv build`.

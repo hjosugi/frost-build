@@ -1,0 +1,113 @@
+{
+ "schema": "frost-deltacdc-v2",
+ "corpus": "rg-debug",
+ "avg_kib": 512,
+ "misses": 7,
+ "exact_blob_hits": 1,
+ "one_chunk_miss_rate": 0.0,
+ "exact_chunk_hits": 219,
+ "residual_chunks": 300,
+ "bytes": {
+  "raw": 316638608,
+  "zstd": 79369775,
+  "cdc": 184227193,
+  "cdc+zstd": 51117310,
+  "blobdelta/zstd": 67756357,
+  "deltacdc/pos/zstd": 25167626,
+  "deltacdc/sk/zstd": 39730040,
+  "deltacdc/hy/zstd": 25339413
+ },
+ "bytes_mb": {
+  "raw": 316.639,
+  "zstd": 79.37,
+  "cdc": 184.227,
+  "cdc+zstd": 51.117,
+  "blobdelta/zstd": 67.756,
+  "deltacdc/pos/zstd": 25.168,
+  "deltacdc/sk/zstd": 39.73,
+  "deltacdc/hy/zstd": 25.339
+ },
+ "oracle_totals_are_sampled_only": true,
+ "vs_cdc_zstd_pct": {
+  "deltacdc/pos/zstd": 49.2,
+  "deltacdc/sk/zstd": 77.7,
+  "deltacdc/hy/zstd": 49.6,
+  "blobdelta/zstd": 132.6
+ },
+ "cpu_s_by_plan": {
+  "blobdelta/zstd": {
+   "phases": {
+    "decode_verify": 0.377153,
+    "encode": 100.448861
+   },
+   "total": 100.826014
+  },
+  "cdc+zstd": {
+   "phases": {
+    "chunking": 55.576442,
+    "decode_verify": 0.2624,
+    "encode": 0.640152
+   },
+   "total": 56.478994
+  },
+  "deltacdc/hy/zstd": {
+   "phases": {
+    "chunking": 55.576442,
+    "decode_verify": 0.26359,
+    "encode": 45.12516,
+    "select": 56.473861
+   },
+   "total": 157.439053
+  },
+  "deltacdc/pos/zstd": {
+   "phases": {
+    "chunking": 55.576442,
+    "decode_verify": 0.262582,
+    "encode": 45.100337,
+    "select": 0.004467
+   },
+   "total": 100.943828
+  },
+  "deltacdc/sk/zstd": {
+   "phases": {
+    "chunking": 55.576442,
+    "decode_verify": 0.247799,
+    "encode": 9.484462,
+    "select": 56.470817
+   },
+   "total": 121.77952
+  },
+  "zstd": {
+   "phases": {
+    "decode_verify": 0.47266,
+    "encode": 1.070578
+   },
+   "total": 1.543238
+  }
+ },
+ "fallbacks": {
+  "pos/zstd": 77,
+  "sk/zstd": 223,
+  "hy/zstd": 77
+ },
+ "selector_base_found": {
+  "pos": 223,
+  "sk": 77,
+  "hy": 223
+ },
+ "selector_no_base": {
+  "pos": 77,
+  "sk": 223,
+  "hy": 77
+ },
+ "verify_failures": 0,
+ "wall_s": 280.4,
+ "cost_model": {
+  "baseline_plan": "cdc+zstd",
+  "candidate_plan": "deltacdc/pos/zstd",
+  "bytes_saved": 25949684,
+  "incremental_cpu_s": 44.464834,
+  "break_even_bandwidth_bytes_per_s": 583600.155,
+  "break_even_bandwidth_mbit_s": 4.668801
+ }
+}

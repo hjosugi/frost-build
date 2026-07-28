@@ -5,6 +5,24 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `frost import-npm --vite-builds` conservatively imports recognized
+  non-watch `vite build` scripts as command targets with profile-specific
+  owned `dist` trees. Custom output-directory contracts remain explicit.
+- An official FrostBuild dependency-crystal mark and dependency-free project
+  site, deployed through SHA-pinned GitHub Pages automation.
+- Reproducible external BuildGrid/BuildBox REAPI, multi-corpus DeltaCDC remote
+  calibration, and real npm/Vite production-adoption certificates.
+
+### Changed
+
+- Remote DeltaCDC is a measured defer decision: it remains off by default
+  until encoding CPU, negotiated protocol support and production bandwidth
+  cross the checked gates.
+- Persistent browser HMR remains framework-owned and imported `node_modules`
+  remains an explicit npm-owned, non-hermetic boundary.
+
 ## [0.6.1] - 2026-07-28
 
 ### Changed

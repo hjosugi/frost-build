@@ -1,0 +1,66 @@
+{
+  "schema": "frost-npm-adoption-certificate-v1",
+  "captured_on": "2026-07-28",
+  "repository": {
+    "url": "https://github.com/hjosugi/iroha-pdf",
+    "commit": "10bf0acb10d18f374f6d33d4f69fcf847afe1c4b",
+    "access": "read-only clone; no remote writes"
+  },
+  "environment": {
+    "frost": "0.6.1",
+    "node": "26.5.0",
+    "npm": "11.17.0",
+    "typescript": "6.0.3",
+    "vite": "8.1.4",
+    "host": "Linux 7.1.4-1-cachyos x86_64; AMD Ryzen 3 7330U; 8 logical CPUs"
+  },
+  "dependency_install": {
+    "command": "npm ci --ignore-scripts",
+    "installed_packages": 885
+  },
+  "validation_graph": {
+    "command": "frost test --all --no-tui",
+    "targets_passed": 7,
+    "targets_failed": 0,
+    "javascript_typescript_tests_passed": 51,
+    "wall_ms": 6569
+  },
+  "production_build": {
+    "target": "desktop-web",
+    "command": "frost build desktop-web --no-tui",
+    "tool_command": "npm --prefix apps/desktop run build -- --outDir dist/debug",
+    "cold_wall_ms": 2917,
+    "noop_wall_ms": 0,
+    "restore_after_output_tree_removal_wall_ms": 10,
+    "restored_without_execution": true,
+    "output_tree": {
+      "path": "apps/desktop/dist/debug",
+      "files": 7,
+      "bytes": 6260425,
+      "normalized_file_manifest_sha256": "88b3753c4fd734847cb8321e2f58c1bb6b6907ea7fdf5de04afb35462b3b719b",
+      "before_after_sha256_equal": true
+    }
+  },
+  "importer": {
+    "command": "frost import-npm --vite-builds --dry-run",
+    "generated_target": "iroha-pdf-desktop-build",
+    "generated_args": [
+      "--prefix",
+      "apps/desktop",
+      "run",
+      "build",
+      "--",
+      "--outDir",
+      "dist/${config}"
+    ],
+    "generated_output_dirs": [
+      "apps/desktop/dist/${config}"
+    ]
+  },
+  "decision": {
+    "production_adoption": "accepted",
+    "persistent_hmr": "framework-owned and outside the cached graph",
+    "node_modules": "npm-owned; lockfile and Node/npm toolchain are fingerprinted; sandbox disabled",
+    "source_maps": "producer-declared; Frost VS Code handoff enables Node sourceMaps only when .map is in the action closure"
+  }
+}

@@ -1,10 +1,9 @@
-# npm workspace gate import
+# npm workspace gate and Vite build import
 
 `frost import-npm` discovers npm workspaces from the root `package.json` and
-turns selected non-interactive package scripts into Frost `test` targets.
-This is the first bounded step toward issue #87: package/script discovery and
-cacheable validation gates, without pretending that Frost can already own a
-Vite or other dynamic output tree.
+turns selected non-interactive package scripts into Frost `test` targets. With
+an explicit option, it also creates owned output-tree targets for conservatively
+recognized Vite production builds.
 
 Preview the generated root manifest:
 
@@ -22,6 +21,22 @@ frost -C my-monorepo import-npm \
   --node /absolute/path/to/node
 frost -C my-monorepo test --all
 ```
+
+Import validation gates plus recognized `vite build` scripts:
+
+```bash
+frost -C my-monorepo import-npm --vite-builds --dry-run
+frost -C my-monorepo import-npm --vite-builds
+frost -C my-monorepo test --all
+frost -C my-monorepo build
+```
+
+The build option recognizes `vite build` as adjacent command tokens, including
+a preceding step such as `tsc -b && vite build`. It emits
+`npm --prefix PACKAGE run build -- --outDir dist/${config}` and owns
+`PACKAGE/dist/${config}` through `output_dirs`. Builds that already provide a
+custom `--outDir` or `--watch` are not inferred; overriding either would be an
+unsafe guess.
 
 `lint` is opt-in because some framework-provided lint scripts bootstrap or
 rewrite project configuration on their first run. Import it only after the
@@ -65,17 +80,17 @@ names `build`, `dev`, `start`, `serve`, `watch`, and `preview`, even when they
 are passed explicitly. A custom script name can still be interactive, start a
 persistent process, or write a variable output tree, so it must be reviewed
 before import; treating any of those behaviors as a cached test would be
-incorrect. A build gate needs a hand-written `command` target with a declared
-stable file or archive output. Persistent development processes stay outside
-the cached test graph.
+incorrect. `--vite-builds` creates `kind = "command"` targets and does not
+relax that test-gate rule. Other frameworks and custom Vite output contracts
+still need hand-written command targets.
 
-In particular, Vite `dist/` remains npm/Vite-owned. Frost command outputs are
-declared files with digest-verified ownership, so an npm/Vite build still needs
-an explicit stable artifact boundary or future dynamic output-tree support.
-The importer never guesses `dist/index.html`, never treats a directory as a
-file output, and never overwrites an existing `frost.toml`.
+Persistent development processes stay outside the cached graph. Vite, Expo or
+Tauri owns browser HMR and state; Frost can provide success-only generic
+restart but does not synthesize module updates. `node_modules` remains
+npm-owned, excluded from inputs and outside the sandbox. The lockfile and
+Node/npm executables are fingerprinted, making this an explicit non-hermetic
+boundary rather than an implied one.
 
-This scope improves real monorepo validation and affected-gate pruning, but it
-does not by itself complete issue #87. Persistent compiler/browser HMR,
-hermetic `node_modules`, source-map debugging, dynamic output ownership, and
-an adopted production-repository build remain separate work.
+The importer never overwrites an existing `frost.toml`. The full real-repository
+production build, no-op and byte-identical output-tree restoration proof is in
+[27_npm_production_adoption.md](27_npm_production_adoption.md).

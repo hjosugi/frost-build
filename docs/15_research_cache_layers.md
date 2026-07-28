@@ -33,7 +33,7 @@ digest before reuse.
 |---|---|---|
 | 1 — exact digest | Action keys (BLAKE3 over argv + toolchain closure + input digests), blob CAS, Bazel-compatible FastCDC 2020 chunk CAS for blobs over 2 MiB, journal, early cutoff, determinism-check mode | Every chunk is SHA-256 verified and the reconstructed blob is BLAKE3+mode verified before final-path publication. `UnverifiedBytes` cannot enter the publish boundary. |
 | 2 — dimension hashes | Partial: depfile narrowing (used-headers only), order-only inputs (generated headers out of the key), platform/profile as explicit key axes | Missing: semantic dimensions *within* a file (API hash vs impl hash — the ijar/Rust-fingerprint analog for C/C++). |
-| 3 — distance / policy | `--estimator {heuristic,journal,static,learned}`, `--predictive`, plus positional previous-artifact zstd residual deltas for local missing chunks | Remote transfer/cost negotiation, prefetch and learned eviction remain open. A selector miss changes cost only; two digest gates still decide reuse. |
+| 3 — distance / policy | `--estimator {heuristic,journal,static,learned}`, `--predictive`, plus positional previous-artifact zstd residual deltas for local missing chunks | Remote DeltaCDC is calibrated and deliberately off by default: the fresh corpora break even at 23.787799 and 4.668801 Mbit/s and the tested REAPI 2.2 server has no negotiated chunk-delta surface. Prefetch and learned eviction remain open. A selector miss changes cost only; two digest gates still decide reuse. |
 
 Independent chunk digest/publication and verified positioned writes into the
 private restore file now use the bounded Rayon pool. The final path remains
@@ -60,7 +60,10 @@ The result establishes a local parallelism win, not remote-cache economics.
    version of the same graph artifact as a zstd dictionary, then verify the
    chunk and final blob digests. The measured corpus showed this positional
    selector beating the more complex sketch index; similarity never gates
-   correctness. Remote CPU/bandwidth calibration remains the shipping gate.
+   correctness. The fresh multi-corpus CPU/bandwidth calibration is recorded
+   in [26_deltacdc_remote_calibration.md](26_deltacdc_remote_calibration.md).
+   It says not to ship the remote protocol by default until CPU, negotiated
+   protocol support and production bandwidth traces cross explicit gates.
 3. **Algebraic root fingerprints (Layer 1 accelerator).** Homomorphic /
    lattice hashing (Bellare–Micciancio, LtHash) updates a workspace-root
    fingerprint in O(1) per file change — below even Merkle's O(log n) — a

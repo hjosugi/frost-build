@@ -1,0 +1,152 @@
+{
+  "corpora": [
+    {
+      "avg_kib": 512,
+      "baseline": {
+        "bytes": 3045583,
+        "cpu_s": 1.117048,
+        "plan": "cdc+zstd"
+      },
+      "candidate": {
+        "bytes": 600114,
+        "cpu_s": 1.939476,
+        "plan": "deltacdc/pos/zstd"
+      },
+      "corpus": "lua-O2",
+      "cost_model": {
+        "baseline_plan": "cdc+zstd",
+        "break_even_bandwidth_bytes_per_s": 2973474.882,
+        "break_even_bandwidth_mbit_s": 23.787799,
+        "bytes_saved": 2445469,
+        "candidate_plan": "deltacdc/pos/zstd",
+        "incremental_cpu_s": 0.822428
+      },
+      "scenarios": [
+        {
+          "bandwidth_mbit_s": 1.0,
+          "baseline_ms": 25505.589,
+          "candidate_delta_ms": -18741.324,
+          "candidate_ms": 6764.265,
+          "winner": "deltacdc/pos/zstd"
+        },
+        {
+          "bandwidth_mbit_s": 10.0,
+          "baseline_ms": 3577.391,
+          "candidate_delta_ms": -1133.947,
+          "candidate_ms": 2443.444,
+          "winner": "deltacdc/pos/zstd"
+        },
+        {
+          "bandwidth_mbit_s": 100.0,
+          "baseline_ms": 1384.572,
+          "candidate_delta_ms": 626.79,
+          "candidate_ms": 2011.362,
+          "winner": "cdc+zstd"
+        },
+        {
+          "bandwidth_mbit_s": 1000.0,
+          "baseline_ms": 1165.29,
+          "candidate_delta_ms": 802.864,
+          "candidate_ms": 1968.154,
+          "winner": "cdc+zstd"
+        }
+      ],
+      "verify_failures": 0
+    },
+    {
+      "avg_kib": 512,
+      "baseline": {
+        "bytes": 51117310,
+        "cpu_s": 56.478994,
+        "plan": "cdc+zstd"
+      },
+      "candidate": {
+        "bytes": 25167626,
+        "cpu_s": 100.943828,
+        "plan": "deltacdc/pos/zstd"
+      },
+      "corpus": "rg-debug",
+      "cost_model": {
+        "baseline_plan": "cdc+zstd",
+        "break_even_bandwidth_bytes_per_s": 583600.155,
+        "break_even_bandwidth_mbit_s": 4.668801,
+        "bytes_saved": 25949684,
+        "candidate_plan": "deltacdc/pos/zstd",
+        "incremental_cpu_s": 44.464834
+      },
+      "scenarios": [
+        {
+          "bandwidth_mbit_s": 1.0,
+          "baseline_ms": 465441.351,
+          "candidate_delta_ms": -163132.638,
+          "candidate_ms": 302308.713,
+          "winner": "deltacdc/pos/zstd"
+        },
+        {
+          "bandwidth_mbit_s": 10.0,
+          "baseline_ms": 97396.719,
+          "candidate_delta_ms": 23705.087,
+          "candidate_ms": 121101.806,
+          "winner": "cdc+zstd"
+        },
+        {
+          "bandwidth_mbit_s": 100.0,
+          "baseline_ms": 60592.256,
+          "candidate_delta_ms": 42388.859,
+          "candidate_ms": 102981.115,
+          "winner": "cdc+zstd"
+        },
+        {
+          "bandwidth_mbit_s": 1000.0,
+          "baseline_ms": 56911.809,
+          "candidate_delta_ms": 44257.237,
+          "candidate_ms": 101169.046,
+          "winner": "cdc+zstd"
+        }
+      ],
+      "verify_failures": 0
+    }
+  ],
+  "decision": {
+    "enable_remote_deltacdc_by_default": false,
+    "reason": "The candidate only wins below the measured corpus-specific break-even bandwidths, consumes more CPU, and lacks negotiated wire-protocol support on the tested REAPI 2.2 server.",
+    "revisit_when": [
+      "encoding CPU is materially reduced or offloaded",
+      "the deployed protocol negotiates chunk delta operations",
+      "production traces show bandwidth below the measured break-even"
+    ],
+    "status": "defer"
+  },
+  "model": {
+    "bandwidths_mbit_s": [
+      1.0,
+      10.0,
+      100.0,
+      1000.0
+    ],
+    "formula": "cpu_s * 1000 + bytes * 8 / (bandwidth_mbit_s * 1000) + rpc_overhead_ms",
+    "limitation": "CPU phases were measured locally; REAPI overhead is an observed constant. The server does not implement SplitBlob/SpliceBlob.",
+    "rpc_overhead_ms": 23.877
+  },
+  "reapi_evidence": {
+    "digest_functions": [
+      "SHA256"
+    ],
+    "execution_enabled": true,
+    "high_api_version": {
+      "major": 2,
+      "minor": 2,
+      "patch": 0
+    },
+    "low_api_version": {
+      "major": 2,
+      "minor": 0,
+      "patch": 0
+    },
+    "missing_blob_identified": true,
+    "missing_blob_status_code": 13,
+    "observed_cache_hit_ms": 23.877,
+    "observed_execute_ms": 1487.287
+  },
+  "schema": "frost-deltacdc-remote-calibration-v1"
+}

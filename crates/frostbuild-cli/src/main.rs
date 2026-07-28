@@ -478,11 +478,14 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Import non-interactive npm workspace scripts as cached test gates
+    /// Import npm workspace validation gates and explicit Vite build boundaries
     ImportNpm {
         /// Non-interactive validation script to import; repeat or comma-separate
         #[arg(long = "script", value_delimiter = ',')]
         scripts: Vec<String>,
+        /// Also import recognized `vite build` scripts with profile-specific dist trees
+        #[arg(long)]
+        vite_builds: bool,
         /// npm executable recorded as a fingerprinted named tool
         #[arg(long, default_value = "npm")]
         npm: PathBuf,
@@ -1404,10 +1407,11 @@ fn run(cli: Cli) -> Result<i32> {
         } => bazel::run_import(&root, &query, bazel.as_deref(), dry_run),
         Cmd::ImportNpm {
             scripts,
+            vite_builds,
             npm,
             node,
             dry_run,
-        } => npm::run_import(&root, &scripts, &npm, &node, dry_run),
+        } => npm::run_import(&root, &scripts, vite_builds, &npm, &node, dry_run),
         Cmd::BazelDev {
             target,
             bazel,
