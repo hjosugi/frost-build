@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-28
+
 ### Changed
 
 - `sha2` moved to 0.11 (`digest` 0.11). The CAS hex digest is now encoded
