@@ -5,6 +5,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-28
+
+### Changed
+
+- `sha2` moved to 0.11 (`digest` 0.11). The CAS hex digest is now encoded
+  explicitly rather than through `LowerHex`, which `digest` 0.11 no longer
+  implements for its output type; the emitted strings are byte-for-byte
+  unchanged and a regression test pins them, so existing CAS entries and
+  remote-cache keys stay valid.
+
 ## [0.6.0] - 2026-07-27
 
 ### Added
