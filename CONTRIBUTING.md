@@ -12,11 +12,40 @@ correctness boundary.
 Before a PR:
 
 ```bash
-cargo test --workspace --all-targets --locked
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo fmt --all -- --check
-python3 -m unittest discover -s tests
+scripts/check.sh
 ```
+
+That runs the whole gate — `cargo test --workspace --all-targets --locked`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo fmt --all -- --check` and `python3 -m unittest discover -s tests` — and
+reports every stage that failed rather than stopping at the first.
+
+## Releasing
+
+Releases are cut by CI, not from a terminal. Nothing here needs push access to
+a tag.
+
+```bash
+scripts/release.sh 0.7.1        # bump the workspace version, stamp the CHANGELOG, commit
+```
+
+Open a PR for that commit and merge it. Then publish, from the Actions tab or
+with:
+
+```bash
+gh workflow run release.yml -f version=0.7.1
+```
+
+The workflow refuses a version that does not match `Cargo.toml`, has no
+CHANGELOG section, or already has a tag; it builds the Linux/macOS/Windows
+archives, then creates the tag and the GitHub release together, so a failed
+build cannot leave a tag behind. Pushing a `vX.Y.Z` tag by hand still works and
+takes the same path.
+
+Merged branches are removed weekly by `.github/workflows/branch-cleanup.yml`,
+which only deletes branches whose every commit is already in the default
+branch. Run it early with `gh workflow run branch-cleanup.yml -f dry_run=false`,
+or use `scripts/cleanup-branches.sh` from a clone.
 
 Performance claims must include `frost-bench` JSON, host metadata, medians and
 dispersion. Do not use a one-off stopwatch result. Design changes update

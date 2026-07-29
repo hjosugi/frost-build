@@ -1,0 +1,136 @@
+name: Branch cleanup
+
+# Merged branches pile up on the branches page and there is no way to tell,
+# at a glance, which ones still hold work. This deletes only branches whose
+# every commit is already contained in the default branch, so nothing
+# unreachable is ever lost. Run it from the Actions UI/API, or let the weekly
+# schedule keep the list short.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be deleted."
+        type: boolean
+        default: true
+      also_delete:
+        description: "Space-separated branches to delete even if NOT merged. Their commits become unreachable — leave empty unless you mean it."
+        type: string
+        default: ""
+  schedule:
+    # Monday 03:00 UTC. Merged-only, so this needs no supervision.
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete branches already contained in the default branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # The schedule has no inputs; it always deletes, and it only ever
+          # considers merged branches.
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
+          ALSO_DELETE: ${{ inputs.also_delete }}
+        run: |
+          set -euo pipefail
+
+          default_branch="$(gh api "repos/${REPO}" --jq .default_branch)"
+          base_sha="$(gh api "repos/${REPO}/git/ref/heads/${default_branch}" --jq .object.sha)"
+          echo "Default branch: ${default_branch} (${base_sha})"
+          echo "Dry run: ${DRY_RUN}"
+
+          # A branch that still has an open PR is in use even when its commits
+          # happen to be contained in the base.
+          open_pr_heads="$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --jq '.[].head.ref')"
+
+          # Explicit unmerged deletions are opt-in per run.
+          declare -A force_delete=()
+          for branch in ${ALSO_DELETE:-}; do
+            force_delete["$branch"]=1
+          done
+
+          deleted=()
+          kept=()
+
+          while read -r branch sha protected; do
+            [ -n "$branch" ] || continue
+
+            if [ "$branch" = "$default_branch" ]; then
+              continue
+            fi
+            if [ "$protected" = "true" ]; then
+              kept+=("${branch} — protected")
+              continue
+            fi
+            if printf '%s\n' "$open_pr_heads" | grep -Fxq "$branch"; then
+              kept+=("${branch} — has an open pull request")
+              continue
+            fi
+
+            forced="${force_delete[$branch]:-}"
+            if [ -z "$forced" ]; then
+              # ahead_by counts commits on the branch that the base does not
+              # have. Zero means deleting the ref loses nothing.
+              ahead="$(gh api "repos/${REPO}/compare/${base_sha}...${sha}" --jq .ahead_by 2>/dev/null || echo unknown)"
+              if [ "$ahead" = "unknown" ]; then
+                kept+=("${branch} — unrelated history, cannot compare")
+                continue
+              fi
+              if [ "$ahead" != "0" ]; then
+                kept+=("${branch} — ${ahead} commit(s) not in ${default_branch}")
+                continue
+              fi
+            fi
+
+            reason="merged"
+            [ -n "$forced" ] && reason="FORCED, was not merged"
+
+            if [ "$DRY_RUN" = "true" ]; then
+              deleted+=("${branch} — would delete (${reason}), was ${sha}")
+              continue
+            fi
+
+            gh api -X DELETE "repos/${REPO}/git/refs/heads/${branch}"
+            deleted+=("${branch} — deleted (${reason}), was ${sha}")
+          done < <(gh api "repos/${REPO}/branches?per_page=100" --paginate \
+                     --jq '.[] | "\(.name) \(.commit.sha) \(.protected)"')
+
+          {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "## Branch cleanup (dry run)"
+              echo
+              echo "Nothing was deleted. Re-run with \`dry_run\` unchecked to apply."
+            else
+              echo "## Branch cleanup"
+            fi
+            echo
+            echo "### Removed (${#deleted[@]})"
+            echo
+            if [ "${#deleted[@]}" -eq 0 ]; then
+              echo "_none_"
+            else
+              printf -- '- %s\n' "${deleted[@]}"
+              echo
+              echo "Deleted refs stay recoverable from their recorded SHA until GitHub garbage-collects them."
+            fi
+            echo
+            echo "### Kept (${#kept[@]})"
+            echo
+            if [ "${#kept[@]}" -eq 0 ]; then
+              echo "_none_"
+            else
+              printf -- '- %s\n' "${kept[@]}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf -- '%s\n' "${deleted[@]:-(nothing)}"
