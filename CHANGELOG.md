@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-29
+
 ### Added
 
 - Releases and branch cleanup are CI operations rather than terminal ritual.
