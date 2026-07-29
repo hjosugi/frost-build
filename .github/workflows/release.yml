@@ -1,11 +1,86 @@
 name: Release
+
+# Two ways in, one code path:
+#   * push a `vX.Y.Z` tag, as before; or
+#   * run this workflow from the Actions UI/API with the version as input,
+#     which needs no local git at all. The tag is then created by the publish
+#     step, so a failed build never leaves a dangling tag behind.
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.7.1. Must already be the workspace version on the selected branch."
+        required: true
+        type: string
+
 permissions:
   contents: read
+
+# Two releases at once would race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # Fail before spending three runners on a version that does not agree with
+  # the tree, and give every downstream job one tag name to package with.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: resolve
+        shell: bash
+        env:
+          # Never interpolate an input straight into a shell script.
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$version' is not a X.Y.Z version." >&2
+            exit 1
+          fi
+          tag="v${version}"
+
+          declared="$(awk '
+            /^\[workspace\.package\]/ { in_section = 1; next }
+            /^\[/                     { in_section = 0 }
+            in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.toml)"
+          if [ "$declared" != "$version" ]; then
+            echo "::error::Cargo.toml declares $declared but the release asks for $version. Run scripts/release.sh $version and merge that first." >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## \[${version}\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${version}] - <date>' section." >&2
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] \
+            && git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::Tag ${tag} already exists. Releases are not re-cut; bump the version instead." >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${tag} from ${GITHUB_SHA}."
+
   linux-musl:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -17,8 +92,10 @@ jobs:
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p frostbuild-cli -p frostbuild-daemon
       - name: Package static Linux archive
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          archive="frostbuild-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          archive="frostbuild-${RELEASE_TAG}-x86_64-unknown-linux-musl"
           mkdir -p "dist/${archive}"
           cp target/x86_64-unknown-linux-musl/release/frost "dist/${archive}/"
           cp target/x86_64-unknown-linux-musl/release/frostd "dist/${archive}/"
@@ -33,6 +110,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: resolve
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,9 +120,11 @@ jobs:
       - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
       - name: Package macOS archive
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           host="$(rustc -vV | sed -n 's/^host: //p')"
-          archive="frostbuild-${GITHUB_REF_NAME}-${host}"
+          archive="frostbuild-${RELEASE_TAG}-${host}"
           mkdir -p "dist/${archive}"
           cp target/release/frost target/release/frostd "dist/${archive}/"
           cp README.md LICENSE "dist/${archive}/"
@@ -58,6 +138,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: resolve
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,9 +148,11 @@ jobs:
       - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
       - name: Package Windows archive
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           $hostTriple = ((rustc -vV | Select-String '^host:').Line -replace '^host: ', '')
-          $archive = "frostbuild-$env:GITHUB_REF_NAME-$hostTriple"
+          $archive = "frostbuild-$env:RELEASE_TAG-$hostTriple"
           New-Item -ItemType Directory -Force -Path "dist/$archive" | Out-Null
           Copy-Item target/release/frost.exe,target/release/frostd.exe -Destination "dist/$archive/"
           Copy-Item README.md,LICENSE -Destination "dist/$archive/"
@@ -83,7 +166,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [linux-musl, macos, windows]
+    needs: [resolve, linux-musl, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -96,7 +179,12 @@ jobs:
       - name: Create checksums
         shell: bash
         run: (cd dist && sha256sum frostbuild-* > SHA256SUMS)
+      # On the dispatch path the tag does not exist yet; the action creates it
+      # at the commit this run checked out. On the tag-push path it already
+      # points there and this is a no-op.
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: dist/*

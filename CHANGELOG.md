@@ -5,6 +5,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Releases and branch cleanup are CI operations rather than terminal ritual.
+  `Release` accepts a `workflow_dispatch` version and validates it against
+  `Cargo.toml` and the CHANGELOG before spending three runners, then creates
+  the tag and the GitHub release together so a failed build cannot leave a
+  dangling tag; pushing a `vX.Y.Z` tag still takes the same path. A new
+  `Branch cleanup` workflow, weekly and on demand, deletes only branches whose
+  every commit is already contained in the default branch and never one with
+  an open pull request. `scripts/release.sh`, `scripts/cleanup-branches.sh`
+  and `scripts/check.sh` cover the same ground from a clone.
+
 ## [0.7.0] - 2026-07-28
 
 ### Added
