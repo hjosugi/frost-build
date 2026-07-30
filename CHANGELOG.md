@@ -7,6 +7,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- Actions can be stopped. A target may declare `timeout = <seconds>`,
+  `--timeout` imposes one on a whole invocation, and test actions carry a
+  300-second default because a hanging test otherwise holds a CI job open by
+  itself. Build actions stay unbounded unless asked: the watchdog costs a
+  thread per action, and a long link is not a hang. On expiry the process
+  group is terminated through the same path cancellation uses and escalated to
+  a kill if it is ignored, the output collected so far is still reported, and
+  the failure names the limit and which of the three places set it. A limit is
+  not action-key material and a timed-out action records nothing, so the next
+  build runs it again rather than replaying a verdict about the clock.
+
 - `docs/28_compatibility_contract.md` states which surfaces a release promises
   not to break — the `frost.toml` grammar, CLI subcommand and option names,
   exit codes, `--json` schemas, `frost info` keys and the artifact layout — and

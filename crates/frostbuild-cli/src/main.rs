@@ -112,6 +112,10 @@ enum Cmd {
         /// Execute each selected action twice and compare output digests
         #[arg(long, num_args = 0..=1, default_missing_value = "0", require_equals = true)]
         check_determinism: Option<Option<usize>>,
+        /// Stop any action still running after this many seconds. A target's
+        /// own `timeout` wins; tests carry a default limit without this flag
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
         /// Write a Chrome/Perfetto trace JSON
         #[arg(long, value_hint = ValueHint::FilePath)]
         trace: Option<PathBuf>,
@@ -322,6 +326,10 @@ enum Cmd {
         remote_timeout: u64,
         #[arg(long)]
         explain: bool,
+        /// Stop any test still running after this many seconds; overrides the
+        /// default limit and is itself overridden by a target's own `timeout`
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
         #[arg(
             long,
             default_value = "debug",
@@ -1098,6 +1106,7 @@ fn run(cli: Cli) -> Result<i32> {
             remote_timeout,
             sandbox,
             check_determinism,
+            timeout,
             trace,
             stats,
             no_tui,
@@ -1123,6 +1132,7 @@ fn run(cli: Cli) -> Result<i32> {
                 remote_upload,
                 remote_timeout,
                 no_tui,
+                timeout,
                 test_mode: false,
                 daemon,
                 affected: false,
@@ -1223,6 +1233,7 @@ fn run(cli: Cli) -> Result<i32> {
             targets,
             jobs,
             keep_going,
+            timeout,
             affected,
             predictive,
             all,
@@ -1258,6 +1269,7 @@ fn run(cli: Cli) -> Result<i32> {
                 remote_upload,
                 remote_timeout,
                 no_tui,
+                timeout,
                 test_mode: true,
                 daemon,
                 affected,
@@ -2008,6 +2020,8 @@ struct BuildRequest {
     remote_upload: bool,
     remote_timeout: u64,
     no_tui: bool,
+    /// Seconds an action may run when its target declares no limit.
+    timeout: Option<u64>,
     test_mode: bool,
     daemon: bool,
     affected: bool,
@@ -2057,6 +2071,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         remote_upload: false,
         remote_timeout: 10,
         no_tui: false,
+        timeout: None,
         test_mode: false,
         daemon: false,
         affected: false,
@@ -2698,6 +2713,7 @@ fn run_target(
             remote_upload: false,
             remote_timeout: 10,
             no_tui: false,
+            timeout: None,
             test_mode: false,
             daemon: false,
             affected: false,
@@ -2882,6 +2898,7 @@ fn run_ide(
             remote_upload: false,
             remote_timeout: 10,
             no_tui: false,
+            timeout: None,
             test_mode: false,
             daemon: false,
             affected: false,
@@ -3242,6 +3259,7 @@ fn run_debug(
             remote_upload: false,
             remote_timeout: 10,
             no_tui: false,
+            timeout: None,
             test_mode: false,
             daemon: false,
             affected: false,
@@ -3434,6 +3452,7 @@ fn run_pick(
             remote_upload: false,
             remote_timeout: 10,
             no_tui: false,
+            timeout: None,
             test_mode: tests,
             daemon: false,
             affected: false,
@@ -3741,6 +3760,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         },
         progress: Some(progress),
         remote: remote.clone(),
+        timeout: request.timeout.map(std::time::Duration::from_secs),
         ..BuildOptions::default()
     };
 
@@ -4370,7 +4390,10 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 25] = [
+    const FREE_TEXT: [&str; 27] = [
+        // Seconds.
+        "frost build::timeout",
+        "frost test::timeout",
         // Names another ecosystem owns and Frost cannot enumerate cheaply: a
         // Bazel label needs a Bazel query, and the wheel/JAR metadata is what
         // the author is deciding at that moment.

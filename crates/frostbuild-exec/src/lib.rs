@@ -17,7 +17,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::sync::{Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use frostbuild_core::cas::LocalCas;
@@ -169,6 +169,90 @@ fn terminate_process_tree(pid: u32) {
         .status();
 }
 
+/// Precedence for an action's limit, in one place because the order is the
+/// contract: the target's own declaration is the most specific statement about
+/// the work, the invocation speaks for the environment, and the default exists
+/// only so that a hanging test cannot hold a CI job open by itself.
+pub fn resolve_timeout(
+    declared_secs: Option<u64>,
+    requested: Option<Duration>,
+    kind: frostbuild_core::graph::ActionKind,
+) -> Option<Duration> {
+    if let Some(seconds) = declared_secs {
+        return Some(Duration::from_secs(seconds));
+    }
+    if let Some(limit) = requested {
+        return Some(limit);
+    }
+    if kind == frostbuild_core::graph::ActionKind::Test {
+        return Some(DEFAULT_TEST_TIMEOUT);
+    }
+    None
+}
+
+/// Wait for a child, optionally giving up.
+///
+/// The wait happens on a helper thread rather than by polling so that an
+/// action with no limit — the default for build actions — keeps exactly the
+/// wakeup behaviour it had before, and an action with one is not charged a
+/// poll interval of latency either. On expiry the process *group* is
+/// terminated, the same tree cancellation uses, and escalated if the group
+/// ignores it; the output collected up to that point is still returned so the
+/// failure report can show what the action managed to say.
+fn wait_for_child(
+    child: std::process::Child,
+    pid: u32,
+    limit: Option<Duration>,
+) -> std::io::Result<(std::process::Output, bool)> {
+    let Some(limit) = limit else {
+        return child.wait_with_output().map(|output| (output, false));
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    match receiver.recv_timeout(limit) {
+        Ok(output) => output.map(|output| (output, false)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            terminate_process_tree(pid);
+            // A process that ignores the polite signal still has to stop: the
+            // whole point of a limit is that it is not advisory.
+            let output = match receiver.recv_timeout(TIMEOUT_KILL_GRACE) {
+                Ok(output) => output,
+                Err(_) => {
+                    kill_process_tree(pid);
+                    receiver.recv().map_err(|_| {
+                        std::io::Error::other("the process being timed out never reported")
+                    })?
+                }
+            };
+            output.map(|output| (output, true))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::other(
+            "the thread waiting for this action disappeared",
+        )),
+    }
+}
+
+/// How long a timed-out process gets to exit after SIGTERM before it is killed
+/// outright. Long enough for a runner to flush a report, short enough that the
+/// build still returns.
+const TIMEOUT_KILL_GRACE: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+fn kill_process_tree(pid: u32) {
+    // SAFETY: as terminate_process_tree, with the signal that cannot be caught.
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_tree(pid: u32) {
+    // taskkill /F is already forceful, so the escalation is the same call.
+    terminate_process_tree(pid);
+}
+
 pub fn was_cancelled() -> bool {
     CANCELLED.load(Ordering::SeqCst)
 }
@@ -195,7 +279,16 @@ pub struct BuildOptions {
     /// only make a build faster: every response is verified and any failure
     /// falls back to executing the action.
     pub remote: Option<std::sync::Arc<frostbuild_core::remote::RemoteCache>>,
+    /// Seconds any action may run when its target declares no limit of its
+    /// own. `None` leaves build actions unbounded, which is the default: a
+    /// watchdog costs a thread per action, and the common hang is a test.
+    pub timeout: Option<Duration>,
 }
+
+/// A test that hangs blocks the whole CI job until its runner's own limit, if
+/// it has one. Tests are few and long-lived, so a default limit here costs
+/// nothing measurable and removes the most common way a build never returns.
+pub const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Ready-queue ordering. Both schedulers run the same actions and produce the
 /// same outputs; they differ only in the order independent work is started,
@@ -260,6 +353,7 @@ impl Default for BuildOptions {
             scheduler: Scheduler::CriticalPath,
             estimator: Estimator::Journal,
             progress: None,
+            timeout: None,
             remote: None,
         }
     }
@@ -1958,6 +2052,36 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// The limit for one action: what the target declared, else what the
+    /// invocation asked for, else the default that only tests carry.
+    fn timeout_for(&self, action: &frostbuild_core::graph::ActionNode) -> Option<Duration> {
+        resolve_timeout(
+            self.graph
+                .targets
+                .get(&action.target)
+                .and_then(|target| target.timeout_secs),
+            self.opts.timeout,
+            action.kind,
+        )
+    }
+
+    /// Naming the source is the difference between a limit a reader can change
+    /// and one they have to go looking for.
+    fn describe_timeout_source(&self, action: &frostbuild_core::graph::ActionNode) -> String {
+        if self
+            .graph
+            .targets
+            .get(&action.target)
+            .is_some_and(|target| target.timeout_secs.is_some())
+        {
+            return format!("timeout declared by target {}", action.target);
+        }
+        if self.opts.timeout.is_some() {
+            return "--timeout".to_string();
+        }
+        "the default test timeout; declare `timeout` on the target to change it".to_string()
+    }
+
     fn run_action_commands(
         &self,
         action: &frostbuild_core::graph::ActionNode,
@@ -1991,15 +2115,36 @@ impl<'a> Engine<'a> {
                     terminate_process_tree(pid);
                 }
             }
-            let output = child.wait_with_output();
+            let limit = self.timeout_for(action);
+            let waited = wait_for_child(child, pid, limit);
             RUNNING_PROCESS_GROUPS
                 .get()
                 .unwrap()
                 .lock()
                 .unwrap()
                 .remove(&pid);
-            let output =
-                output.map_err(|error| format!("failed waiting for {}: {error}", action.id))?;
+            let (output, timed_out) = match waited {
+                Ok(waited) => waited,
+                Err(error) => {
+                    return Err(format!("failed waiting for {}: {error}", action.id));
+                }
+            };
+            if timed_out {
+                let limit = limit.unwrap_or_default();
+                captured.push_str(&String::from_utf8_lossy(&output.stdout));
+                captured.push_str(&String::from_utf8_lossy(&output.stderr));
+                return Ok(CommandBatch {
+                    captured,
+                    failure: Some((
+                        argv.clone(),
+                        format!(
+                            "timed out after {}s ({})",
+                            limit.as_secs(),
+                            self.describe_timeout_source(action)
+                        ),
+                    )),
+                });
+            }
             captured.push_str(&String::from_utf8_lossy(&output.stdout));
             captured.push_str(&String::from_utf8_lossy(&output.stderr));
             if !output.status.success() {
@@ -2585,6 +2730,36 @@ mod tests {
             root.join(".frost/bin/debug/test")
         );
         assert_eq!(resolve_action_program(root, "cc"), PathBuf::from("cc"));
+    }
+
+    #[test]
+    fn a_limit_comes_from_the_most_specific_statement_about_the_work() {
+        use frostbuild_core::graph::ActionKind;
+
+        // The target speaks for the work, so it wins over the invocation.
+        assert_eq!(
+            resolve_timeout(Some(7), Some(Duration::from_secs(60)), ActionKind::Compile),
+            Some(Duration::from_secs(7))
+        );
+        // The invocation speaks for the environment, and covers every kind.
+        assert_eq!(
+            resolve_timeout(None, Some(Duration::from_secs(60)), ActionKind::Compile),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            resolve_timeout(None, Some(Duration::from_secs(60)), ActionKind::Test),
+            Some(Duration::from_secs(60))
+        );
+        // A hanging test would otherwise hold a CI job open on its own, so it
+        // is the one kind that carries a limit nobody asked for.
+        assert_eq!(
+            resolve_timeout(None, None, ActionKind::Test),
+            Some(DEFAULT_TEST_TIMEOUT)
+        );
+        // Build actions stay unbounded by default: the watchdog costs a thread
+        // per action, and a long link is not a hang.
+        assert_eq!(resolve_timeout(None, None, ActionKind::Compile), None);
+        assert_eq!(resolve_timeout(None, None, ActionKind::Link), None);
     }
 
     #[test]

@@ -3335,6 +3335,74 @@ fn completions_install_is_idempotent_and_never_clobbers_a_hand_written_hook() {
 }
 
 #[test]
+#[cfg(unix)]
+fn a_hanging_action_is_stopped_and_never_recorded_as_done() {
+    let ws = Workspace::empty("timeout");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["hang"]
+
+[toolchain.tools]
+sleeper = "sleep"
+
+[target.hang]
+kind = "command"
+tool = "sleeper"
+args = ["120"]
+inputs = []
+outputs = [".frost/out/${config}/hang.txt"]
+timeout = 2
+sandbox = false
+"#,
+    );
+
+    let started = std::time::Instant::now();
+    let (ok, out) = ws.frost(&["build"]);
+    let elapsed = started.elapsed();
+    assert!(!ok, "a timed-out action must fail the build:\n{out}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "the limit did not stop the action: {elapsed:?}"
+    );
+    // The message has to name the limit and where it came from, or the reader
+    // has to go looking for which of three places set it.
+    assert!(out.contains("timed out after 2s"), "{out}");
+    assert!(out.contains("target hang"), "{out}");
+
+    // A limit says nothing about the result, so nothing may be recorded: the
+    // next build must run the action again rather than replay a failure.
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("timed out after 2s"), "{out}");
+    assert!(!out.contains("cached"), "a timeout was cached:\n{out}");
+
+    // The invocation can impose a limit where the manifest declares none.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["hang"]
+
+[toolchain.tools]
+sleeper = "sleep"
+
+[target.hang]
+kind = "command"
+tool = "sleeper"
+args = ["120"]
+inputs = []
+outputs = [".frost/out/${config}/hang.txt"]
+sandbox = false
+"#,
+    );
+    let (ok, out) = ws.frost(&["build", "--timeout", "1"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("timed out after 1s (--timeout)"), "{out}");
+
+    let _ = std::fs::remove_dir_all(&ws.dir);
+}
+
+#[test]
 fn stale_on_disk_state_is_rebuilt_rather_than_misread() {
     // docs/28_compatibility_contract.md promises that `.frost/` written by
     // another version costs time, never correctness. This walks every stored

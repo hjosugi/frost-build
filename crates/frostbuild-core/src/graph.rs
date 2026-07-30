@@ -97,6 +97,12 @@ pub struct TargetNode {
     pub deps: Vec<String>,
     pub actions: Vec<ActionId>,
     pub outputs: Vec<FileId>,
+    /// Seconds any action of this target may run before it is stopped. Carried
+    /// on the target rather than the action because it is a property of the
+    /// work the author declared, and deliberately absent from the action key:
+    /// the same inputs still produce the same result under a different limit.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -202,6 +208,7 @@ impl BuildGraph {
                 deps: target.deps.clone(),
                 actions: Vec::new(),
                 outputs: Vec::new(),
+                timeout_secs: target.timeout_secs,
             };
 
             match target.kind {

@@ -264,6 +264,14 @@ equal or nested clean directories across actions, and rejects a clean directory
 that contains any declared graph input or output. Only undeclared intermediate
 files belong there; stable final artifacts remain in `outputs`.
 
+`timeout = <seconds>` stops any action of that target once it has run that
+long: the process group is terminated, escalated to a kill if it ignores that,
+and the action is reported as failed. Nothing is journaled, so the next build
+runs it again. A limit is not action-key material — the same inputs produce the
+same result whatever the clock says — and the precedence is deliberate: the
+target's own declaration wins over `--timeout`, which wins over the default
+that only test actions carry.
+
 By default Frost removes every declared output immediately before an action
 reruns. Set `preserve_outputs = true` on a `command` target only when the tool's
 incremental protocol reads or deliberately leaves prior outputs in place (for

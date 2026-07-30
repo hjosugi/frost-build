@@ -55,6 +55,10 @@ frost -C myrepo build --all-platforms --profile release
 frost -C myrepo test --affected --explain
 frost -C myrepo test --all --no-cache
 
+# Stop anything that hangs: tests carry a default limit, builds opt in
+frost -C myrepo build --timeout 600
+frost -C myrepo test --timeout 120
+
 # Optional workspace sandbox and determinism audit
 frost -C myrepo build --sandbox
 frost -C myrepo build --check-determinism

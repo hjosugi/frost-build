@@ -214,6 +214,9 @@ struct RawTarget {
     /// Keep declared outputs in place while rerunning an incremental compiler.
     #[serde(default)]
     preserve_outputs: bool,
+    /// Seconds this action may run before Frost stops it. Absent means the
+    /// invocation decides; see `BuildOptions::timeout`.
+    timeout: Option<u64>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -310,6 +313,10 @@ pub struct Target {
     pub steps: Vec<CommandStep>,
     pub clean_dirs: Vec<String>,
     pub preserve_outputs: bool,
+    /// Seconds this action may run before it is stopped. A limit is about the
+    /// environment, not the result, so it is deliberately not action-key
+    /// material (docs/16_action_key_audit.md).
+    pub timeout_secs: Option<u64>,
     pub depfile: Option<String>,
     /// How this action reports the inputs it read. `showincludes` is read from
     /// captured output, so it comes without a `depfile` path.
@@ -831,6 +838,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
             .collect(),
         clean_dirs,
         preserve_outputs: spec.preserve_outputs,
+        timeout_secs: spec.timeout,
         depfile,
         depfile_format,
         inputs,

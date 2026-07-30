@@ -1,6 +1,6 @@
 frost -C/--workspace=VALUE
 frost bazel-dev <target> <args...> --bazel-arg=VALUE --bazel=VALUE --debounce-ms=VALUE
-frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE --stats --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
+frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
 frost cache
 frost cache stats --json
 frost clean --cache --platform=VALUE --profile=VALUE
@@ -33,5 +33,5 @@ frost query rdeps <target> --json
 frost query somepath <from> <to> --json
 frost run <target> <program_args...> --platform=VALUE --print --profile=VALUE --runner=VALUE -j/--jobs=VALUE
 frost simulate <targets...> --jobs=VALUE --json --platform=VALUE --profile=VALUE
-frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE -j/--jobs=VALUE -k/--keep-going
+frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
 frost watch <targets...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --run=VALUE -j/--jobs=VALUE
