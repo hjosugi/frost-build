@@ -4502,14 +4502,17 @@ mod cli_surface_tests {
     #[test]
     fn the_command_surface_matches_the_checked_in_contract() {
         let current = current_surface();
-        if current != SNAPSHOT {
+        // A Windows checkout may hand `include_str!` CRLF regardless of what
+        // was committed, and the line ending is not what this test is about.
+        let snapshot = SNAPSHOT.replace("\r\n", "\n");
+        if current != snapshot {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/cli-surface.txt");
             if std::env::var_os("UPDATE_CLI_SURFACE").is_some() {
                 std::fs::write(path, &current).expect("write CLI surface snapshot");
                 return;
             }
             panic!(
-                "the CLI surface changed.\n\nexpected:\n{SNAPSHOT}\nactual:\n{current}\n\
+                "the CLI surface changed.\n\nexpected:\n{snapshot}\nactual:\n{current}\n\
                  Adding a subcommand or option is additive and only needs the snapshot \
                  refreshed with UPDATE_CLI_SURFACE=1. Renaming or removing one is a \
                  breaking change: follow docs/28_compatibility_contract.md first."

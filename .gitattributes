@@ -1,0 +1,3 @@
+# The CLI surface snapshot is compared byte for byte against a rendering that
+# always uses LF, so it must not be checked out with CRLF on Windows.
+crates/frostbuild-cli/tests/cli-surface.txt text eol=lf
