@@ -3598,10 +3598,14 @@ fn a_corrupt_cas_object_is_rebuilt_rather_than_handed_back() {
         !out.contains("up to date"),
         "a corrupt object must not be restored as if current:\n{out}"
     );
-    assert_eq!(
-        std::fs::read(&app).unwrap(),
-        correct,
-        "the action is re-run, so the output matches a correct build"
+    let rebuilt = std::fs::read(&app).unwrap();
+    assert_ne!(
+        rebuilt, bytes,
+        "the corrupt CAS bytes must never be materialized as the rebuilt output"
     );
+    // Re-execution is the correctness boundary here. Toolchains are allowed
+    // to produce semantically equivalent but byte-different artifacts (for
+    // example PE link timestamps), so do not turn this corruption test into
+    // an undeclared determinism test.
     assert_eq!(ws.run_app(), "frost: 42\n");
 }
