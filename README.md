@@ -487,6 +487,13 @@ versions. Build locally with Cargo, use `cargo install --path crates/frostbuild-
 or download a checksummed Linux, macOS or Windows archive from a tagged GitHub
 release. Each archive contains both `frost` and the optional `frostd` daemon.
 
+Which surfaces a release promises not to break — the manifest grammar, the CLI
+names and exit codes, the `--json` schemas — and which are explicitly
+implementation (everything under `.frost/`, the action key, the internal
+crates) is enumerated in
+[docs/28_compatibility_contract.md](docs/28_compatibility_contract.md). State
+written by another version is detected and rebuilt, never misread.
+
 Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Research decisions for
 predictive selection, learned scheduling, platform support and language adapters
 live in `docs/` and keep safe behavior as the default.

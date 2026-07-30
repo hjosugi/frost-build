@@ -4433,3 +4433,105 @@ mod completion_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod cli_surface_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    const SNAPSHOT: &str = include_str!("../tests/cli-surface.txt");
+
+    /// The rendered command tree: every subcommand with its flags and
+    /// positionals, in a stable order.
+    ///
+    /// `docs/28_compatibility_contract.md` makes this surface part of what a
+    /// release promises, so it is checked in rather than merely described. A
+    /// diff here is not a failure to fix by regenerating — it is the moment to
+    /// decide whether the change is additive, and if it is not, to follow the
+    /// deprecation procedure in that document.
+    fn render(command: &clap::Command, path: &str, out: &mut String) {
+        let mut flags: Vec<String> = Vec::new();
+        let mut positionals: Vec<String> = Vec::new();
+        for arg in command.get_arguments() {
+            if arg.is_positional() {
+                let repeated = arg
+                    .get_num_args()
+                    .is_some_and(|count| count.max_values() > 1);
+                positionals.push(format!(
+                    "<{}{}>",
+                    arg.get_id(),
+                    if repeated { "..." } else { "" }
+                ));
+                continue;
+            }
+            let mut spelling = String::new();
+            if let Some(short) = arg.get_short() {
+                spelling.push_str(&format!("-{short}/"));
+            }
+            spelling.push_str(&format!(
+                "--{}",
+                arg.get_long().unwrap_or(arg.get_id().as_str())
+            ));
+            if arg.get_action().takes_values() {
+                spelling.push_str("=VALUE");
+            }
+            flags.push(spelling);
+        }
+        flags.sort();
+        let mut line = path.to_string();
+        for item in positionals.iter().chain(flags.iter()) {
+            line.push(' ');
+            line.push_str(item);
+        }
+        out.push_str(&line);
+        out.push('\n');
+        let mut subcommands: Vec<&clap::Command> = command.get_subcommands().collect();
+        subcommands.sort_by_key(|sub| sub.get_name());
+        for sub in subcommands {
+            render(sub, &format!("{path} {}", sub.get_name()), out);
+        }
+    }
+
+    fn current_surface() -> String {
+        let command = Cli::command();
+        let mut out = String::new();
+        render(&command, "frost", &mut out);
+        out
+    }
+
+    #[test]
+    fn the_command_surface_matches_the_checked_in_contract() {
+        let current = current_surface();
+        if current != SNAPSHOT {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/cli-surface.txt");
+            if std::env::var_os("UPDATE_CLI_SURFACE").is_some() {
+                std::fs::write(path, &current).expect("write CLI surface snapshot");
+                return;
+            }
+            panic!(
+                "the CLI surface changed.\n\nexpected:\n{SNAPSHOT}\nactual:\n{current}\n\
+                 Adding a subcommand or option is additive and only needs the snapshot \
+                 refreshed with UPDATE_CLI_SURFACE=1. Renaming or removing one is a \
+                 breaking change: follow docs/28_compatibility_contract.md first."
+            );
+        }
+    }
+
+    /// The three outcomes a caller is allowed to distinguish. Scripts branch on
+    /// these, so they are contract, not implementation.
+    #[test]
+    fn exit_codes_keep_their_documented_meanings() {
+        let contract = [
+            (0, "the requested work completed"),
+            (1, "the work ran and did not succeed"),
+            (2, "frost could not run the work as asked"),
+        ];
+        let documented = include_str!("../../../docs/28_compatibility_contract.md");
+        for (code, meaning) in contract {
+            assert!(
+                documented.contains(&format!("| `{code}` |")),
+                "exit code {code} ({meaning}) is not in the contract document"
+            );
+        }
+    }
+}

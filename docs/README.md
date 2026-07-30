@@ -28,6 +28,7 @@ cite the existing file names.
 | [15_research_cache_layers.md](15_research_cache_layers.md) | separation of cache layers 1/2/3 |
 | [16_action_key_audit.md](16_action_key_audit.md) | what the action key covers and why each field is in it |
 | [22_developer_loop.md](22_developer_loop.md) | the edit/build/run loop Frost is optimizing |
+| [28_compatibility_contract.md](28_compatibility_contract.md) | what a release promises not to break, and what it explicitly does not |
 
 ## Research and design studies
 

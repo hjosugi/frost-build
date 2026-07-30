@@ -47,6 +47,12 @@ which only deletes branches whose every commit is already in the default
 branch. Run it early with `gh workflow run branch-cleanup.yml -f dry_run=false`,
 or use `scripts/cleanup-branches.sh` from a clone.
 
+Changing a CLI name, a manifest key, a JSON field or an exit code touches the
+compatibility contract in [docs/28_compatibility_contract.md](docs/28_compatibility_contract.md).
+Additive changes only need the CLI snapshot refreshed with
+`UPDATE_CLI_SURFACE=1 cargo test -p frostbuild-cli --bin frost`; renames and
+removals follow the deprecation procedure in that document.
+
 Performance claims must include `frost-bench` JSON, host metadata, medians and
 dispersion. Do not use a one-off stopwatch result. Design changes update
 `DESIGN.md`; manifest/storage changes add compatibility and corruption tests.

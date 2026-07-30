@@ -5,6 +5,29 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `docs/28_compatibility_contract.md` states which surfaces a release promises
+  not to break — the `frost.toml` grammar, CLI subcommand and option names,
+  exit codes, `--json` schemas, `frost info` keys and the artifact layout — and
+  which are explicitly implementation: everything under `.frost/`, the
+  action-key construction, the internal crates, human-facing text and the
+  daemon protocol. Each promise names the test that enforces it. The CLI
+  surface is checked in at `crates/frostbuild-cli/tests/cli-surface.txt` and
+  compared on every run, so an unintended rename fails rather than ships;
+  additive changes refresh it with `UPDATE_CLI_SURFACE=1`.
+
+### Fixed
+
+- A journal written by another version is replaced instead of appended to.
+  `record` decided to write the header by file length alone, so it appended
+  records behind a header this build could not read: every later load decoded
+  an empty journal and every build stayed cold, with no way back short of
+  deleting `.frost/`. An unrecognized journal now costs exactly one cold build.
+  Covered at the unit level and by an E2E that gives every stored format
+  (graph store, journal, hash cache, no-op certificate) a version this build
+  cannot claim, then requires a correct rebuild that converges to warm.
+
 ## [0.8.0] - 2026-07-30
 
 ### Added

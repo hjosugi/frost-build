@@ -370,6 +370,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_foreign_cache_version_starts_empty_instead_of_misreading_it() {
+        let dir =
+            std::env::temp_dir().join(format!("frost-hashcache-foreign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".frost")).unwrap();
+
+        // A cache written by another version is not data this version can
+        // interpret. Re-hashing costs time; believing it costs correctness.
+        let mut foreign = b"FRSTHC99".to_vec();
+        foreign.extend_from_slice(&[0xAB; 64]);
+        std::fs::write(dir.join(CACHE_REL_PATH), &foreign).unwrap();
+
+        let cache = HashCache::load(&dir);
+        assert!(cache.snapshot.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn missing_file_digests_as_missing() {
         let dir = std::env::temp_dir().join("frost-hashcache-test-missing");
         std::fs::create_dir_all(&dir).unwrap();

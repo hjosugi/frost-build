@@ -82,14 +82,27 @@ impl Journal {
             .as_ref()
             .is_some_and(|(writer_path, _)| writer_path == &path);
         if !reuse {
-            let new_file = !path.exists() || std::fs::metadata(&path)?.len() == 0;
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
-            if new_file {
+            // Append only behind a header this version can read. A journal
+            // left by another version holds no records this build can decode,
+            // so appending after it would make every future load see the same
+            // unreadable header and rebuild from scratch forever. Replacing it
+            // costs exactly one cold build. A torn final frame keeps its valid
+            // magic and is still appended to; the decoder drops the tear.
+            let appendable = std::fs::File::open(&path)
+                .ok()
+                .and_then(|mut file| {
+                    let mut header = [0u8; MAGIC.len()];
+                    file.read_exact(&mut header).ok()?;
+                    Some(&header == MAGIC)
+                })
+                .unwrap_or(false);
+            let file = if appendable {
+                std::fs::OpenOptions::new().append(true).open(&path)?
+            } else {
+                let mut file = std::fs::File::create(&path)?;
                 file.write_all(MAGIC)?;
-            }
+                file
+            };
             self.writer = Some((path.clone(), file));
         }
         let file = &mut self.writer.as_mut().unwrap().1;
@@ -217,6 +230,37 @@ mod tests {
         file.write_all(&100u32.to_le_bytes()).unwrap();
         file.write_all(b"partial").unwrap();
         assert!(Journal::load(&dir).actions.contains_key("a"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_foreign_journal_is_replaced_so_the_next_build_is_warm_again() {
+        let dir =
+            std::env::temp_dir().join(format!("frost-journal-foreign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".frost")).unwrap();
+        let mut foreign = b"FRSTJR99".to_vec();
+        foreign.extend_from_slice(&[0x11; 32]);
+        std::fs::write(dir.join(JOURNAL_REL_PATH), &foreign).unwrap();
+
+        let entry = JournalEntry {
+            key: "k".into(),
+            inputs: BTreeMap::new(),
+            discovered: Vec::new(),
+            outputs: BTreeMap::new(),
+            duration_ms: 1,
+            reason: "after a foreign journal".into(),
+        };
+        let mut journal = Journal::default();
+        journal.record(&dir, "a".into(), entry).unwrap();
+
+        // Appending behind a header this version cannot read would make every
+        // later load see the same unreadable header, so an unrecognized
+        // journal would cost a cold build forever instead of once.
+        assert!(
+            Journal::load(&dir).actions.contains_key("a"),
+            "a record written after a foreign journal was not readable back"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

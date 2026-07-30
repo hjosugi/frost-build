@@ -3335,6 +3335,72 @@ fn completions_install_is_idempotent_and_never_clobbers_a_hand_written_hook() {
 }
 
 #[test]
+fn stale_on_disk_state_is_rebuilt_rather_than_misread() {
+    // docs/28_compatibility_contract.md promises that `.frost/` written by
+    // another version costs time, never correctness. This walks every stored
+    // format at once: each keeps its structure and gets a version marker this
+    // build cannot claim, which is exactly what a downgrade or an upgrade
+    // across a format bump leaves behind.
+    let ws = Workspace::new("stale-state");
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "initial build failed:\n{out}");
+    assert_eq!(ws.run_app(), "frost: 42\n");
+
+    let mut stamped = Vec::new();
+    let mut stamp = |relative: &str, marker: &[u8]| {
+        let path = ws.dir.join(relative);
+        let Ok(mut bytes) = std::fs::read(&path) else {
+            return;
+        };
+        if bytes.len() < marker.len() {
+            return;
+        }
+        bytes[..marker.len()].copy_from_slice(marker);
+        std::fs::write(&path, &bytes).unwrap();
+        stamped.push(relative.to_string());
+    };
+    stamp(".frost/journal.bin", b"FRSTJR99");
+    stamp(".frost/hashcache.bin", b"FRSTHC99");
+    stamp(".frost/noop-debug.bin", b"FRSTNO99");
+    // The graph store keeps its magic and carries the version in the four
+    // bytes after it, so this is a version bump rather than a corrupt file.
+    let graph = ws.dir.join(".frost/graph-debug.bin");
+    if let Ok(mut bytes) = std::fs::read(&graph) {
+        if bytes.len() >= 12 {
+            bytes[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+            std::fs::write(&graph, &bytes).unwrap();
+            stamped.push(".frost/graph-debug.bin".to_string());
+        }
+    }
+    assert!(
+        stamped.len() >= 3,
+        "expected the build to leave several stored formats behind, saw {stamped:?}"
+    );
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "a foreign .frost/ must not fail the build:\n{out}");
+    assert_eq!(
+        ws.run_app(),
+        "frost: 42\n",
+        "rebuild produced a wrong binary"
+    );
+
+    // Rebuilding from the manifest is the whole point: the state that could
+    // not be read must not be reported as an up-to-date answer either.
+    assert!(
+        !out.contains("up to date"),
+        "unreadable state was treated as a warm cache:\n{out}"
+    );
+
+    // And the workspace converges: the next build is warm again.
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("up to date"), "state did not converge:\n{out}");
+
+    let _ = std::fs::remove_dir_all(&ws.dir);
+}
+
+#[test]
 fn info_answers_path_questions_without_a_graph() {
     // A fresh directory has no manifest and no graph. `info` still has to
     // answer, because that is when a wrapper needs the paths most.
