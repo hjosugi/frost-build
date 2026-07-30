@@ -14,6 +14,23 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   semantics that Frost cannot safely infer, while naming an explicit override
   or importer. Four real-tool E2E fixtures cover init, build, cache hits,
   source changes and deterministic Python wheel rebuilds.
+- `frost info [KEY] [--json]` reports the version, action-key schema,
+  workspace root, manifest path, configuration key, output/bin/obj/tmp trees,
+  CAS, journal, hash cache, graph store and daemon socket. A single key prints
+  its bare value for shell substitution; it answers without a manifest or a
+  graph, which is when a wrapper needs it most.
+- `frost completions --install` adds the dynamic completion hook to the
+  startup file of the shell detected from `$SHELL`, or of the shell named on
+  the command line. It is idempotent, `--dry-run` prints the exact lines
+  without touching the file, a hand-written hook is left alone rather than
+  duplicated, and PowerShell/Nushell — whose profile locations are not
+  reliably discoverable — get the snippet to paste instead of a guessed path.
+- Completion covers the rest of the CLI: `--remote-cache` offers the
+  `file://`/`http://`/`https://` schemes plus directories, `import-npm
+  --script` reads script names from `package.json`, `frost info` completes its
+  keys, and every path argument declares a file, directory or executable hint.
+  A test walks the command tree and fails when a value-taking argument
+  declares no candidates and is not on the explicit free-text list.
 
 ## [0.7.2] - 2026-07-30
 

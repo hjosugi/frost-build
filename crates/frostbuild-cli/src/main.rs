@@ -6,7 +6,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::engine::ValueCompleter;
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use frostbuild_core::graph::{ActionKind, BuildGraph, BIN_DIR, LIB_DIR, OBJ_DIR};
 use frostbuild_core::graph_store::GraphStore;
@@ -31,7 +32,13 @@ mod wheel;
 )]
 struct Cli {
     /// Workspace root (frost.toml for Frost commands; Bazel workspace for bazel-dev)
-    #[arg(short = 'C', long = "workspace", default_value = ".", global = true)]
+    #[arg(
+        short = 'C',
+        long = "workspace",
+        default_value = ".",
+        global = true,
+        value_hint = ValueHint::DirPath
+    )]
     workspace: PathBuf,
 
     #[command(subcommand)]
@@ -82,7 +89,11 @@ enum Cmd {
         /// path, file:///path, or http://host/prefix. Never required for
         /// correctness — every response is verified and any failure falls back
         /// to building locally
-        #[arg(long, value_name = "ENDPOINT")]
+        #[arg(
+            long,
+            value_name = "ENDPOINT",
+            add = ArgValueCompleter::new(complete_remote_cache)
+        )]
         remote_cache: Option<String>,
         /// Also publish what this build produces to --remote-cache
         #[arg(long, requires = "remote_cache")]
@@ -102,7 +113,7 @@ enum Cmd {
         #[arg(long, num_args = 0..=1, default_missing_value = "0", require_equals = true)]
         check_determinism: Option<Option<usize>>,
         /// Write a Chrome/Perfetto trace JSON
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::FilePath)]
         trace: Option<PathBuf>,
         /// Report scheduling measurements: makespan, worker utilization and
         /// distance from the estimated critical path
@@ -138,7 +149,7 @@ enum Cmd {
         )]
         platform: String,
         /// Explicit executable prefix for cross/emulated or custom artifacts
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::ExecutablePath)]
         runner: Option<PathBuf>,
         /// Print the exact direct argv without executing it
         #[arg(long)]
@@ -195,7 +206,7 @@ enum Cmd {
         #[arg(long, default_value_t = 50)]
         debounce_ms: u64,
         /// Explicit executable prefix for cross/emulated or custom artifacts
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::ExecutablePath)]
         runner: Option<PathBuf>,
         /// Arguments passed to the restarted program (after `--`)
         #[arg(last = true)]
@@ -220,7 +231,7 @@ enum Cmd {
         )]
         platform: String,
         /// Debugger/runtime executable, or auto for GDB/LLDB, jdb, Node or pdb
-        #[arg(long, default_value = "auto")]
+        #[arg(long, default_value = "auto", value_hint = ValueHint::ExecutablePath)]
         debugger: String,
         /// Print the exact debugger argv without launching it
         #[arg(long)]
@@ -248,7 +259,7 @@ enum Cmd {
         )]
         platform: String,
         /// Workspace-relative VS Code directory
-        #[arg(long, default_value = ".vscode")]
+        #[arg(long, default_value = ".vscode", value_hint = ValueHint::DirPath)]
         output: PathBuf,
         /// Print the generated file map without writing it
         #[arg(long)]
@@ -292,7 +303,11 @@ enum Cmd {
         /// path, file:///path, or http://host/prefix. Never required for
         /// correctness — every response is verified and any failure falls back
         /// to building locally
-        #[arg(long, value_name = "ENDPOINT")]
+        #[arg(
+            long,
+            value_name = "ENDPOINT",
+            add = ArgValueCompleter::new(complete_remote_cache)
+        )]
         remote_cache: Option<String>,
         /// Also publish what this build produces to --remote-cache
         #[arg(long, requires = "remote_cache")]
@@ -381,7 +396,11 @@ enum Cmd {
     },
     /// Export JSON Compilation Database for clangd/IDE integrations
     Compdb {
-        #[arg(long, default_value = "compile_commands.json")]
+        #[arg(
+            long,
+            default_value = "compile_commands.json",
+            value_hint = ValueHint::FilePath
+        )]
         output: PathBuf,
         #[arg(
             long,
@@ -461,9 +480,9 @@ enum Cmd {
     },
     /// Convert the supported Ninja rule/build subset to frost.toml
     ImportNinja {
-        #[arg(default_value = "build.ninja")]
+        #[arg(default_value = "build.ninja", value_hint = ValueHint::FilePath)]
         ninja: PathBuf,
-        #[arg(long, default_value = "frost.toml")]
+        #[arg(long, default_value = "frost.toml", value_hint = ValueHint::FilePath)]
         output: PathBuf,
     },
     /// Import a conservative native C/C++ subset from Bazel query XML
@@ -472,7 +491,7 @@ enum Cmd {
         #[arg(long, default_value = "//...")]
         query: String,
         /// Bazel or Bazelisk executable (defaults to BAZEL_BIN, bazel, bazelisk)
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::ExecutablePath)]
         bazel: Option<PathBuf>,
         /// Print every generated manifest without writing
         #[arg(long)]
@@ -481,16 +500,20 @@ enum Cmd {
     /// Import npm workspace validation gates and explicit Vite build boundaries
     ImportNpm {
         /// Non-interactive validation script to import; repeat or comma-separate
-        #[arg(long = "script", value_delimiter = ',')]
+        #[arg(
+            long = "script",
+            value_delimiter = ',',
+            add = ArgValueCompleter::new(complete_npm_script)
+        )]
         scripts: Vec<String>,
         /// Also import recognized `vite build` scripts with profile-specific dist trees
         #[arg(long)]
         vite_builds: bool,
         /// npm executable recorded as a fingerprinted named tool
-        #[arg(long, default_value = "npm")]
+        #[arg(long, default_value = "npm", value_hint = ValueHint::ExecutablePath)]
         npm: PathBuf,
         /// Node executable recorded with npm's toolchain closure
-        #[arg(long, default_value = "node")]
+        #[arg(long, default_value = "node", value_hint = ValueHint::ExecutablePath)]
         node: PathBuf,
         /// Print the generated root manifest without writing it
         #[arg(long)]
@@ -501,7 +524,7 @@ enum Cmd {
         /// Canonical Bazel runnable label, for example //app:server
         target: String,
         /// Bazel or Bazelisk executable (defaults to BAZEL_BIN, bazel, bazelisk)
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::ExecutablePath)]
         bazel: Option<PathBuf>,
         /// Quiet period used to coalesce editor filesystem events
         #[arg(long, default_value_t = 50)]
@@ -516,10 +539,10 @@ enum Cmd {
     /// Pack a directory into a deterministic compressed Java archive
     PackJar {
         /// Workspace-relative directory whose contents become JAR entries
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::DirPath)]
         input: PathBuf,
         /// Workspace-relative output JAR
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
         /// Optional Java binary name for the Main-Class manifest attribute
         #[arg(long)]
@@ -528,7 +551,7 @@ enum Cmd {
     /// Pack a pure-Python source tree into a deterministic standards-compliant wheel
     PackWheel {
         /// Workspace-relative source root whose contents install into purelib
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::DirPath)]
         input: PathBuf,
         /// Python distribution name written to wheel metadata
         #[arg(long)]
@@ -537,13 +560,40 @@ enum Cmd {
         #[arg(long)]
         version: String,
         /// Workspace-relative output wheel (must use the standard wheel filename)
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
     },
-    /// Generate completion code for a shell
+    /// Report workspace, output and cache locations for scripts and editors
+    Info {
+        /// Print only this key's value; omit for the whole table
+        #[arg(add = ArgValueCompleter::new(complete_info_key))]
+        key: Option<String>,
+        #[arg(
+            long,
+            default_value = "debug",
+            add = ArgValueCompleter::new(complete_profile)
+        )]
+        profile: String,
+        #[arg(
+            long,
+            default_value = frostbuild_core::manifest::HOST_PLATFORM,
+            add = ArgValueCompleter::new(complete_platform)
+        )]
+        platform: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate completion code for a shell, or install the dynamic hook
     Completions {
+        /// Omit with --install to detect the shell from $SHELL
         #[arg(value_enum)]
-        shell: CompletionShell,
+        shell: Option<CompletionShell>,
+        /// Add the workspace-aware completion hook to this shell's startup file
+        #[arg(long)]
+        install: bool,
+        /// Print what --install would write without touching any file
+        #[arg(long, requires = "install")]
+        dry_run: bool,
     },
     /// Select build or test targets interactively with fzf
     Pick {
@@ -742,6 +792,49 @@ fn complete_profile(current: &OsStr) -> Vec<CompletionCandidate> {
     candidates(current, values)
 }
 
+/// A shared cache is a directory, a `file://` directory or an HTTP prefix.
+/// Offering the schemes turns "what can I even type here?" into a keystroke,
+/// and a path-looking value falls through to directory candidates.
+fn complete_remote_cache(current: &OsStr) -> Vec<CompletionCandidate> {
+    let text = current.to_string_lossy();
+    if text.is_empty() || ["f", "h"].iter().any(|start| text.starts_with(start)) {
+        let schemes = ["file://", "http://", "https://"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut matches = candidates(current, schemes);
+        if !matches.is_empty() {
+            matches.extend(clap_complete::engine::PathCompleter::dir().complete(current));
+            return matches;
+        }
+    }
+    clap_complete::engine::PathCompleter::dir().complete(current)
+}
+
+/// npm owns the script names; reading them back is the whole point of
+/// `import-npm`, so the flag should not make the author retype them.
+fn complete_npm_script(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Ok(text) = std::fs::read_to_string(completion_workspace().join("package.json")) else {
+        return Vec::new();
+    };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let names = package["scripts"]
+        .as_object()
+        .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    candidates(current, names)
+}
+
+fn complete_info_key(current: &OsStr) -> Vec<CompletionCandidate> {
+    let values: Vec<String> = info_entries(&completion_workspace(), "debug", "host")
+        .into_iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
+    candidates(current, values)
+}
+
 fn complete_platform(current: &OsStr) -> Vec<CompletionCandidate> {
     let mut values = vec![frostbuild_core::manifest::HOST_PLATFORM.to_string()];
     if let Some(manifest) = completion_manifest() {
@@ -750,6 +843,131 @@ fn complete_platform(current: &OsStr) -> Vec<CompletionCandidate> {
     values.sort();
     values.dedup();
     candidates(current, values)
+}
+
+/// The startup file each shell reads, and the line that turns on *dynamic*
+/// completion — the one that asks this binary for candidates, so targets and
+/// profiles follow the workspace instead of a snapshot taken at install time.
+fn completion_hook(shell: CompletionShell) -> Result<(PathBuf, &'static str)> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .context("neither HOME nor USERPROFILE is set, so there is no startup file to edit")?;
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    Ok(match shell {
+        CompletionShell::Bash => (home.join(".bashrc"), "source <(COMPLETE=bash frost)"),
+        CompletionShell::Zsh => (home.join(".zshrc"), "source <(COMPLETE=zsh frost)"),
+        CompletionShell::Fish => (
+            config.join("fish/config.fish"),
+            "COMPLETE=fish frost | source",
+        ),
+        CompletionShell::Elvish => (
+            config.join("elvish/rc.elv"),
+            "eval (E:COMPLETE=elvish frost | slurp)",
+        ),
+        // Both profile locations depend on the host and the shell's own
+        // configuration, and Nushell has no dynamic callback protocol at all.
+        // Guessing a path here would write a file nothing reads.
+        CompletionShell::Powershell | CompletionShell::Nushell => bail!(
+            "--install cannot locate this shell's profile reliably. add the line from \
+             `frost completions {}` to your profile instead",
+            match shell {
+                CompletionShell::Nushell => "nushell",
+                _ => "powershell",
+            }
+        ),
+    })
+}
+
+fn detect_shell() -> Result<CompletionShell> {
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    let name = Path::new(&shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    match name {
+        "bash" => Ok(CompletionShell::Bash),
+        "zsh" => Ok(CompletionShell::Zsh),
+        "fish" => Ok(CompletionShell::Fish),
+        "elvish" => Ok(CompletionShell::Elvish),
+        other => bail!(
+            "cannot tell which shell to install for (SHELL={other:?}). name it: \
+             `frost completions bash --install`"
+        ),
+    }
+}
+
+const COMPLETION_BEGIN: &str = "# >>> frost completions >>>";
+const COMPLETION_END: &str = "# <<< frost completions <<<";
+
+fn install_completions(shell: Option<CompletionShell>, dry_run: bool) -> Result<i32> {
+    let shell = match shell {
+        Some(shell) => shell,
+        None => detect_shell()?,
+    };
+    let (path, hook) = completion_hook(shell)?;
+    let block = format!("{COMPLETION_BEGIN}\n{hook}\n{COMPLETION_END}\n");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    // Someone who already wired this up by hand gets left alone: a second
+    // hook is not additive, it is a duplicate definition on every new shell.
+    if !existing.contains(COMPLETION_BEGIN) && existing.contains("COMPLETE=") {
+        println!(
+            "frost: {} already sources a completion hook; leaving it alone",
+            path.display()
+        );
+        return Ok(0);
+    }
+
+    let updated = match (
+        existing.find(COMPLETION_BEGIN),
+        existing.find(COMPLETION_END),
+    ) {
+        (Some(start), Some(end)) if end > start => {
+            let end = end + COMPLETION_END.len();
+            let mut updated = String::with_capacity(existing.len() + block.len());
+            updated.push_str(&existing[..start]);
+            updated.push_str(block.trim_end());
+            updated.push_str(&existing[end..]);
+            updated
+        }
+        _ => {
+            let mut updated = existing.clone();
+            if !updated.is_empty() && !updated.ends_with('\n') {
+                updated.push('\n');
+            }
+            if !updated.is_empty() {
+                updated.push('\n');
+            }
+            updated.push_str(&block);
+            updated
+        }
+    };
+
+    if updated == existing {
+        println!(
+            "frost: completion hook already installed in {}",
+            path.display()
+        );
+        return Ok(0);
+    }
+    if dry_run {
+        println!("frost: would write {}", path.display());
+        for line in block.lines() {
+            println!("  + {line}");
+        }
+        return Ok(0);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, updated)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    println!("frost: installed the completion hook in {}", path.display());
+    println!("  restart the shell, or run: {hook}");
+    Ok(0)
 }
 
 fn print_completions(shell: CompletionShell) {
@@ -1469,7 +1687,23 @@ fn run(cli: Cli) -> Result<i32> {
             );
             Ok(0)
         }
-        Cmd::Completions { shell } => {
+        Cmd::Info {
+            key,
+            profile,
+            platform,
+            json,
+        } => run_info(&root, key.as_deref(), &profile, &platform, json),
+        Cmd::Completions {
+            shell,
+            install,
+            dry_run,
+        } => {
+            if install {
+                return install_completions(shell, dry_run);
+            }
+            let Some(shell) = shell else {
+                bail!("name a shell, or pass --install to detect it from $SHELL");
+            };
             print_completions(shell);
             Ok(0)
         }
@@ -2733,6 +2967,118 @@ fn inspect_tool(root: &Path, name: &str, configured: &str, required: bool) -> Do
         resolved: resolved.map(|path| path.display().to_string()),
         required,
     }
+}
+
+/// Every location Frost derives from a configuration, in report order.
+///
+/// This exists so wrappers, editors and CI scripts ask for a path instead of
+/// reimplementing the naming rules — the rules are Frost's to change, the
+/// answers are not.
+fn info_entries(root: &Path, profile: &str, platform: &str) -> Vec<(&'static str, String)> {
+    let config = if platform == frostbuild_core::manifest::HOST_PLATFORM {
+        profile.to_string()
+    } else {
+        format!("{platform}/{profile}")
+    };
+    let show = |path: PathBuf| path.display().to_string();
+    #[allow(unused_mut)]
+    let mut entries = vec![
+        ("version", env!("CARGO_PKG_VERSION").to_string()),
+        (
+            "action_key_schema",
+            frostbuild_exec::ACTION_KEY_SCHEMA.to_string(),
+        ),
+        ("workspace_root", show(root.to_path_buf())),
+        (
+            "manifest",
+            show(root.join(frostbuild_core::manifest::MANIFEST_FILE)),
+        ),
+        ("config", config.clone()),
+        (
+            "output_dir",
+            show(root.join(format!(".frost/out/{config}"))),
+        ),
+        (
+            "bin_dir",
+            show(root.join(format!("{}/{config}", frostbuild_core::graph::BIN_DIR))),
+        ),
+        (
+            "obj_dir",
+            show(root.join(format!("{}/{config}", frostbuild_core::graph::OBJ_DIR))),
+        ),
+        ("tmp_dir", show(root.join(format!(".frost/tmp/{config}")))),
+        ("cas_dir", show(root.join(".frost/cas"))),
+        (
+            "journal",
+            show(root.join(frostbuild_core::journal::JOURNAL_REL_PATH)),
+        ),
+        (
+            "hash_cache",
+            show(root.join(frostbuild_core::hashcache::CACHE_REL_PATH)),
+        ),
+        (
+            "graph_store",
+            show(frostbuild_core::graph_store::store_path(
+                root, profile, platform,
+            )),
+        ),
+    ];
+    #[cfg(unix)]
+    entries.push(("daemon_socket", show(frostbuild_daemon::socket_path(root))));
+    entries
+}
+
+fn run_info(
+    root: &Path,
+    key: Option<&str>,
+    profile: &str,
+    platform: &str,
+    json: bool,
+) -> Result<i32> {
+    let entries = info_entries(root, profile, platform);
+    if let Some(key) = key {
+        let Some((_, value)) = entries.iter().find(|(name, _)| *name == key) else {
+            bail!(
+                "unknown info key {key:?}. known keys: {}",
+                entries
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        };
+        // A single key prints its bare value so `$(frost info bin_dir)` is
+        // directly usable in a script.
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ key: value }))?
+            );
+        } else {
+            println!("{value}");
+        }
+        return Ok(0);
+    }
+    if json {
+        let table: serde_json::Map<String, serde_json::Value> = entries
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), serde_json::Value::String(value)))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Object(table))?
+        );
+        return Ok(0);
+    }
+    let width = entries
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
+    for (name, value) in &entries {
+        println!("{name:<width$}  {value}");
+    }
+    Ok(0)
 }
 
 fn run_doctor(root: &Path, profile: &str, platform: &str, json: bool) -> Result<i32> {
@@ -4011,5 +4357,79 @@ mod summary_tests {
         );
         assert_eq!(flavor, "Java/jdb");
         std::fs::remove_dir_all(root).ok();
+    }
+}
+
+#[cfg(test)]
+mod completion_contract_tests {
+    use super::*;
+    use clap::builder::ValueHint;
+    use clap::CommandFactory;
+
+    /// Values no shell can usefully guess: numbers, free identifiers and
+    /// tool-specific expressions. Listing them here is the point of the test —
+    /// a new argument has to make this choice deliberately instead of falling
+    /// back to whatever the shell does by default.
+    const FREE_TEXT: [&str; 25] = [
+        // Names another ecosystem owns and Frost cannot enumerate cheaply: a
+        // Bazel label needs a Bazel query, and the wheel/JAR metadata is what
+        // the author is deciding at that moment.
+        "frost bazel-dev::target",
+        "frost pack-jar::main_class",
+        "frost pack-wheel::distribution",
+        "frost pack-wheel::version",
+        // Numbers.
+        "frost build::jobs",
+        "frost build::remote_timeout",
+        "frost build::check_determinism",
+        "frost run::jobs",
+        "frost watch::jobs",
+        "frost watch::debounce_ms",
+        "frost dev::jobs",
+        "frost dev::debounce_ms",
+        "frost debug::jobs",
+        "frost ide::jobs",
+        "frost test::jobs",
+        "frost test::remote_timeout",
+        "frost simulate::jobs",
+        "frost bazel-dev::debounce_ms",
+        // Argv handed to another program, which owns its own grammar.
+        "frost run::program_args",
+        "frost watch::run",
+        "frost dev::program_args",
+        "frost debug::program_args",
+        "frost bazel-dev::bazel_args",
+        "frost bazel-dev::args",
+        // A Bazel query expression; answering it means running Bazel.
+        "frost import-bazel::query",
+    ];
+
+    fn walk(command: &clap::Command, path: &str, undeclared: &mut Vec<String>) {
+        for arg in command.get_arguments() {
+            if !arg.get_action().takes_values() {
+                continue;
+            }
+            let declared = arg.get_value_hint() != ValueHint::Unknown
+                || arg.get::<ArgValueCompleter>().is_some()
+                || !arg.get_possible_values().is_empty();
+            let id = format!("{path}::{}", arg.get_id());
+            if !declared && !FREE_TEXT.contains(&id.as_str()) {
+                undeclared.push(id);
+            }
+        }
+        for sub in command.get_subcommands() {
+            walk(sub, &format!("{path} {}", sub.get_name()), undeclared);
+        }
+    }
+
+    #[test]
+    fn every_value_taking_argument_declares_how_it_completes() {
+        let command = Cli::command();
+        let mut undeclared = Vec::new();
+        walk(&command, "frost", &mut undeclared);
+        assert!(
+            undeclared.is_empty(),
+            "these arguments complete as nothing: {undeclared:#?}"
+        );
     }
 }

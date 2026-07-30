@@ -102,7 +102,10 @@ impl GraphStore {
     }
 }
 
-fn store_path(root: &Path, profile: &str, platform: &str) -> PathBuf {
+/// Where the compiled graph for one configuration lives. Public because
+/// `frost info` answers "which file is this configuration's graph cache?" for
+/// wrappers and editors that would otherwise hardcode the naming rule.
+pub fn store_path(root: &Path, profile: &str, platform: &str) -> PathBuf {
     if platform == HOST_PLATFORM {
         root.join(format!(".frost/graph-{profile}.bin"))
     } else {

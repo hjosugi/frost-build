@@ -75,6 +75,11 @@ const ENV_IN_KEY: &[&str] = &[
 
 pub const DEFAULT_CAS_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+/// The action-key layout every cached entry was written under. It is reported
+/// by `frost info` because a bump invalidates the whole local cache, and
+/// tooling that wraps Frost needs to see that without reading the journal.
+pub const ACTION_KEY_SCHEMA: &str = "frost-action-key-v4";
+
 pub fn key_environment_snapshot() -> BTreeMap<String, String> {
     ENV_IN_KEY
         .iter()
@@ -2354,7 +2359,7 @@ fn streamed_action_key<'a>(
     outputs: impl IntoIterator<Item = &'a str>,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_key_field(&mut hasher, "schema", "frost-action-key-v4");
+    update_key_field(&mut hasher, "schema", ACTION_KEY_SCHEMA);
     update_key_field(&mut hasher, "builder", descriptor.builder);
     update_key_field(&mut hasher, "target", descriptor.target);
     update_key_field(&mut hasher, "cwd", descriptor.cwd);

@@ -28,6 +28,10 @@ frost init && frost build
 # Polyglot trees require an explicit, reviewable choice:
 frost init --language java
 
+# Where does this configuration write? Ask instead of hardcoding the rule:
+frost info bin_dir
+frost info --json
+
 cargo build --release --locked
 ./target/release/frost -C sample_c build
 ./sample_c/.frost/bin/debug/app                 # frost: 42 (.exe on Windows)
@@ -81,6 +85,11 @@ frost -C myrepo ide app
 # Diagnose required tools separately from optional developer integrations
 frost -C myrepo doctor
 frost -C myrepo doctor --json
+
+# Ask where a configuration writes instead of hardcoding the layout
+frost -C myrepo info                                  # whole table
+frost -C myrepo info output_dir --platform aarch64    # one bare value
+frost -C myrepo info --json
 
 # Workspace-aware target/profile/platform completion and optional fzf picker
 source <(COMPLETE=bash frost)             # Bash (Zsh/Fish/PowerShell/Elvish too)
@@ -306,6 +315,21 @@ COMPLETE=fish frost | source
 # PowerShell
 $env:COMPLETE = "powershell"; frost | Out-String | Invoke-Expression
 ```
+
+`frost completions --install` writes that hook into the startup file of the
+shell it detects from `$SHELL` (or the one named on the command line). It is
+idempotent, `--dry-run` shows the exact lines first, and it refuses rather than
+guesses: a hand-written hook is left alone, and PowerShell/Nushell profiles —
+whose location depends on the host — print the snippet to paste instead.
+
+Beyond targets, profiles and platforms, `--remote-cache` completes the
+`file://`/`http://`/`https://` schemes and directories, `import-npm --script`
+reads the script names out of `package.json`, `frost info` completes its key
+names, and every path argument declares whether it wants a file, a directory
+or an executable. A unit test walks the whole command tree and fails when an
+argument that takes a value declares no candidates, no value hint and is not
+on the explicit free-text list, so a new flag cannot silently complete as
+nothing.
 
 Elvish uses the same dynamic `COMPLETE=elvish` protocol. Nushell and startup
 files use the complete static command tree from

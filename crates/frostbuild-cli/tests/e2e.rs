@@ -1491,6 +1491,12 @@ fn completion_scripts_and_fzf_selection_are_available() {
         dynamic(&["frost", "init", "--language", ""], 3),
         ["native", "java", "rust", "go", "typescript", "python"]
     );
+    let keys = dynamic(&["frost", "-C", root, "info", ""], 4);
+    for key in ["workspace_root", "bin_dir", "action_key_schema"] {
+        assert!(keys.contains(&key.to_string()), "{keys:?}");
+    }
+    let endpoints = dynamic(&["frost", "-C", root, "build", "--remote-cache", ""], 5);
+    assert!(endpoints.contains(&"file://".to_string()), "{endpoints:?}");
 
     #[cfg(unix)]
     {
@@ -3269,6 +3275,103 @@ fn init_python_packs_a_byte_identical_wheel() {
     let (ok, out) = frost_in(&ws.dir, &["build"]);
     assert!(ok, "rebuild after clean failed:\n{out}");
     assert_eq!(first, std::fs::read(&wheel).expect("repacked wheel"));
+
+    let _ = std::fs::remove_dir_all(&ws.dir);
+}
+
+#[test]
+fn completions_install_is_idempotent_and_never_clobbers_a_hand_written_hook() {
+    let ws = Workspace::empty("completions-install");
+    let home = ws.dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let rc = home.join(".bashrc");
+    std::fs::write(&rc, "# user rc\nexport EDITOR=vim\n").unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+
+    let (ok, out) = ws.frost_env(&["completions", "bash", "--install", "--dry-run"], &env);
+    assert!(ok, "{out}");
+    assert!(out.contains("would write"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(&rc).unwrap(),
+        "# user rc\nexport EDITOR=vim\n",
+        "--dry-run must not touch the file"
+    );
+
+    let (ok, out) = ws.frost_env(&["completions", "bash", "--install"], &env);
+    assert!(ok, "{out}");
+    let installed = std::fs::read_to_string(&rc).unwrap();
+    assert!(
+        installed.contains("source <(COMPLETE=bash frost)"),
+        "{installed}"
+    );
+    assert!(installed.starts_with("# user rc\n"), "{installed}");
+
+    // Running it twice is the common case — a second hook would redefine the
+    // completion function in every new shell.
+    let (ok, out) = ws.frost_env(&["completions", "bash", "--install"], &env);
+    assert!(ok, "{out}");
+    assert!(out.contains("already installed"), "{out}");
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), installed);
+
+    // A hook the user wrote by hand is theirs, not ours to duplicate.
+    std::fs::write(&rc, "source <(COMPLETE=bash frost)\n").unwrap();
+    let (ok, out) = ws.frost_env(&["completions", "bash", "--install"], &env);
+    assert!(ok, "{out}");
+    assert!(out.contains("leaving it alone"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(&rc).unwrap(),
+        "source <(COMPLETE=bash frost)\n"
+    );
+
+    // Without an argument the shell has to be recognizable.
+    let (ok, out) = ws.frost_env(
+        &["completions", "--install"],
+        &[("HOME", home.to_str().unwrap()), ("SHELL", "/bin/tcsh")],
+    );
+    assert!(!ok, "an unrecognized shell must not be guessed:\n{out}");
+    assert!(out.contains("name it"), "{out}");
+
+    let _ = std::fs::remove_dir_all(&ws.dir);
+}
+
+#[test]
+fn info_answers_path_questions_without_a_graph() {
+    // A fresh directory has no manifest and no graph. `info` still has to
+    // answer, because that is when a wrapper needs the paths most.
+    let ws = Workspace::empty("info");
+
+    let (ok, out) = ws.frost(&["info", "--json"]);
+    assert!(ok, "info failed on a workspace without a manifest:\n{out}");
+    let table: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(table["workspace_root"], ws.dir.display().to_string());
+    assert_eq!(table["config"], "debug");
+    assert_eq!(table["action_key_schema"], "frost-action-key-v4");
+    assert_eq!(table["version"], env!("CARGO_PKG_VERSION"));
+    for key in ["output_dir", "bin_dir", "cas_dir", "journal", "graph_store"] {
+        assert!(table[key].is_string(), "{key} missing from {table}");
+    }
+
+    // One key prints its bare value so a shell can substitute it directly.
+    let (ok, out) = ws.frost(&["info", "bin_dir"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim_end(),
+        ws.dir.join(".frost/bin/debug").display().to_string()
+    );
+
+    let (ok, out) = ws.frost(&["info", "output_dir", "--profile", "release"]);
+    assert!(ok, "{out}");
+    assert!(out.trim_end().ends_with(".frost/out/release"), "{out}");
+
+    // A cross configuration is a nested tree, and info must say so rather
+    // than leaving callers to rebuild the rule.
+    let (ok, out) = ws.frost(&["info", "output_dir", "--platform", "device"]);
+    assert!(ok, "{out}");
+    assert!(out.trim_end().ends_with(".frost/out/device/debug"), "{out}");
+
+    let (ok, out) = ws.frost(&["info", "not_a_key"]);
+    assert!(!ok, "an unknown key must not be reported as empty:\n{out}");
+    assert!(out.contains("known keys"), "{out}");
 
     let _ = std::fs::remove_dir_all(&ws.dir);
 }
