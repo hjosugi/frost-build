@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-30
+
 ### Added
 
 - `frost init` detects Rust, Go, TypeScript and Python in addition to C/C++ and
