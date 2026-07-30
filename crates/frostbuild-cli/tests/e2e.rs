@@ -3343,7 +3343,14 @@ fn info_answers_path_questions_without_a_graph() {
     let (ok, out) = ws.frost(&["info", "--json"]);
     assert!(ok, "info failed on a workspace without a manifest:\n{out}");
     let table: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(table["workspace_root"], ws.dir.display().to_string());
+    // Compare resolved paths: macOS reaches its temporary directory through a
+    // symlinked `/var`, so the spelling frost reports and the one this test
+    // holds can differ while naming the same directory.
+    let reported_root = table["workspace_root"].as_str().unwrap().to_string();
+    assert_eq!(
+        std::fs::canonicalize(&reported_root).unwrap(),
+        std::fs::canonicalize(&ws.dir).unwrap()
+    );
     assert_eq!(table["config"], "debug");
     assert_eq!(table["action_key_schema"], "frost-action-key-v4");
     assert_eq!(table["version"], env!("CARGO_PKG_VERSION"));
@@ -3352,22 +3359,29 @@ fn info_answers_path_questions_without_a_graph() {
     }
 
     // One key prints its bare value so a shell can substitute it directly.
+    // The suffixes are matched by path component so the separator the host
+    // uses is not part of the contract.
     let (ok, out) = ws.frost(&["info", "bin_dir"]);
     assert!(ok, "{out}");
-    assert_eq!(
-        out.trim_end(),
-        ws.dir.join(".frost/bin/debug").display().to_string()
-    );
+    let bin_dir = Path::new(out.trim_end()).to_path_buf();
+    assert!(bin_dir.starts_with(&reported_root), "{out}");
+    assert!(bin_dir.ends_with(".frost/bin/debug"), "{out}");
 
     let (ok, out) = ws.frost(&["info", "output_dir", "--profile", "release"]);
     assert!(ok, "{out}");
-    assert!(out.trim_end().ends_with(".frost/out/release"), "{out}");
+    assert!(
+        Path::new(out.trim_end()).ends_with(".frost/out/release"),
+        "{out}"
+    );
 
     // A cross configuration is a nested tree, and info must say so rather
     // than leaving callers to rebuild the rule.
     let (ok, out) = ws.frost(&["info", "output_dir", "--platform", "device"]);
     assert!(ok, "{out}");
-    assert!(out.trim_end().ends_with(".frost/out/device/debug"), "{out}");
+    assert!(
+        Path::new(out.trim_end()).ends_with(".frost/out/device/debug"),
+        "{out}"
+    );
 
     let (ok, out) = ws.frost(&["info", "not_a_key"]);
     assert!(!ok, "an unknown key must not be reported as empty:\n{out}");
