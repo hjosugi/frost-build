@@ -5,6 +5,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `frost init` detects Rust, Go, TypeScript and Python in addition to C/C++ and
+  Java, and `--language` accepts all six. Generated manifests explain their
+  direct action and next build command; automatic detection refuses where
+  Cargo, Go modules, npm, Python packaging, Gradle/Maven, Bazel or Ninja owns
+  semantics that Frost cannot safely infer, while naming an explicit override
+  or importer. Four real-tool E2E fixtures cover init, build, cache hits,
+  source changes and deterministic Python wheel rebuilds.
+
 ## [0.7.2] - 2026-07-30
 
 ### Added

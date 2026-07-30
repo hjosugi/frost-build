@@ -1024,6 +1024,25 @@ fn validate_paths(raw: &[String]) -> Result<Vec<String>> {
 pub enum ScaffoldLanguage {
     Native,
     Java,
+    Rust,
+    Go,
+    TypeScript,
+    Python,
+}
+
+impl ScaffoldLanguage {
+    /// The `--language` spelling, also used in every diagnostic so the message
+    /// names a flag value the caller can paste back.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScaffoldLanguage::Native => "native",
+            ScaffoldLanguage::Java => "java",
+            ScaffoldLanguage::Rust => "rust",
+            ScaffoldLanguage::Go => "go",
+            ScaffoldLanguage::TypeScript => "typescript",
+            ScaffoldLanguage::Python => "python",
+        }
+    }
 }
 
 /// A starter manifest for a directory that has supported sources but no
@@ -1042,6 +1061,10 @@ pub struct Scaffold {
 
 const SOURCE_EXTENSIONS: [&str; 6] = ["c", "cc", "cpp", "cxx", "C", "c++"];
 const JAVA_EXTENSIONS: [&str; 1] = ["java"];
+const RUST_EXTENSIONS: [&str; 1] = ["rs"];
+const GO_EXTENSIONS: [&str; 1] = ["go"];
+const TYPESCRIPT_EXTENSIONS: [&str; 2] = ["ts", "tsx"];
+const PYTHON_EXTENSIONS: [&str; 1] = ["py"];
 const JAVA_PROJECT_MARKERS: [&str; 7] = [
     "pom.xml",
     "build.gradle",
@@ -1052,40 +1075,49 @@ const JAVA_PROJECT_MARKERS: [&str; 7] = [
     "mvnw",
 ];
 
+const FAMILIES: [(ScaffoldLanguage, &[&str]); 6] = [
+    (ScaffoldLanguage::Native, &SOURCE_EXTENSIONS),
+    (ScaffoldLanguage::Java, &JAVA_EXTENSIONS),
+    (ScaffoldLanguage::Rust, &RUST_EXTENSIONS),
+    (ScaffoldLanguage::Go, &GO_EXTENSIONS),
+    (ScaffoldLanguage::TypeScript, &TYPESCRIPT_EXTENSIONS),
+    (ScaffoldLanguage::Python, &PYTHON_EXTENSIONS),
+];
+
 pub fn scaffold(root: &Path) -> Result<Scaffold> {
-    let mut native = Vec::new();
-    collect_sources(root, root, &mut native, 0, &SOURCE_EXTENSIONS)?;
-    let mut java = Vec::new();
-    collect_sources(root, root, &mut java, 0, &JAVA_EXTENSIONS)?;
-    match (!native.is_empty(), !java.is_empty()) {
-        (true, false) => scaffold_for(root, ScaffoldLanguage::Native),
-        (false, true) => {
-            let mut project_markers = Vec::new();
-            collect_named_files(root, root, &mut project_markers, 0, &JAVA_PROJECT_MARKERS)?;
-            project_markers.sort();
-            if project_markers.is_empty() {
-                scaffold_for(root, ScaffoldLanguage::Java)
-            } else {
-                bail!(
-                    "Java sources and an existing Gradle/Maven project marker ({}) were found. \
-                     init will not bypass dependency, plugin or task semantics: declare that \
-                     build as a kind = \"command\" boundary, or use `frost init --language \
-                     java` only if a direct javac/JAR build is intentional",
-                    project_markers.join(", ")
-                )
-            }
+    let mut found = Vec::new();
+    for (language, extensions) in FAMILIES {
+        let mut sources = Vec::new();
+        collect_sources(root, root, &mut sources, 0, extensions)?;
+        if !sources.is_empty() {
+            found.push((language, sources.len()));
         }
-        (true, true) => bail!(
-            "both native C/C++ and Java sources were found under {}. choose \
-             `frost init --language native` or `--language java` so init does \
-             not silently omit half of a polyglot workspace",
+    }
+    match found.as_slice() {
+        [(language, _)] => {
+            // Auto-detection refuses what a package manager already owns.
+            // `--language` stays the deliberate override.
+            reject_owned_by_package_manager(root, *language)?;
+            scaffold_for(root, *language)
+        }
+        [] => bail!(
+            "no safely scaffoldable C/C++, Java, Rust, Go, TypeScript or Python sources \
+             under {}. use a kind = \"command\" target with [toolchain.tools] for Gradle, \
+             Maven, npm or another tool that owns its own build",
             root.display()
         ),
-        (false, false) => bail!(
-            "no safely scaffoldable C/C++ or Java sources under {}. use a \
-             kind = \"command\" target with [toolchain.tools] for Rust, Go, \
-             TypeScript, Gradle, Maven, npm, Python backends, or another tool",
-            root.display()
+        many => bail!(
+            "sources for several languages were found under {} ({}). choose one of {} so \
+             init does not silently omit half of a polyglot workspace",
+            root.display(),
+            many.iter()
+                .map(|(language, count)| format!("{} x{count}", language.as_str()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            many.iter()
+                .map(|(language, _)| format!("`frost init --language {}`", language.as_str()))
+                .collect::<Vec<_>>()
+                .join(", "),
         ),
     }
 }
@@ -1094,7 +1126,189 @@ pub fn scaffold_for(root: &Path, language: ScaffoldLanguage) -> Result<Scaffold>
     match language {
         ScaffoldLanguage::Native => scaffold_native(root),
         ScaffoldLanguage::Java => scaffold_java(root),
+        ScaffoldLanguage::Rust => scaffold_rust(root),
+        ScaffoldLanguage::Go => scaffold_go(root),
+        ScaffoldLanguage::TypeScript => scaffold_typescript(root),
+        ScaffoldLanguage::Python => scaffold_python(root),
     }
+}
+
+/// Auto-detection stops where another tool owns dependency resolution, plugin
+/// or task semantics. Guessing there produces a manifest that looks right and
+/// builds something else, which is worse than refusing.
+fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> Result<()> {
+    match language {
+        ScaffoldLanguage::Native => {
+            let bazel = sorted_named_files(
+                root,
+                &[
+                    "MODULE.bazel",
+                    "WORKSPACE",
+                    "WORKSPACE.bazel",
+                    "BUILD",
+                    "BUILD.bazel",
+                ],
+            )?;
+            if !bazel.is_empty() {
+                bail!(
+                    "native sources and an existing Bazel project marker ({}) were found. \
+                     init will not bypass Bazel's configured graph: run \
+                     `frost import-bazel --dry-run` to review an import, or use \
+                     `frost init --language native` only if a direct C/C++ build is intentional",
+                    bazel.join(", ")
+                );
+            }
+            let ninja = sorted_named_files(root, &["build.ninja"])?;
+            if !ninja.is_empty() {
+                bail!(
+                    "native sources and an existing Ninja graph ({}) were found. init will not \
+                     bypass its generated edges: run `frost import-ninja build.ninja` to import \
+                     the supported subset, or use `frost init --language native` only if a \
+                     direct C/C++ build is intentional",
+                    ninja.join(", ")
+                );
+            }
+            Ok(())
+        }
+        ScaffoldLanguage::Java => {
+            let markers = sorted_named_files(root, &JAVA_PROJECT_MARKERS)?;
+            if markers.is_empty() {
+                return Ok(());
+            }
+            bail!(
+                "Java sources and an existing Gradle/Maven project marker ({}) were found. \
+                 init will not bypass dependency, plugin or task semantics: declare that \
+                 build as a kind = \"command\" boundary, or use `frost init --language \
+                 java` only if a direct javac/JAR build is intentional",
+                markers.join(", ")
+            )
+        }
+        ScaffoldLanguage::Rust => {
+            let owning: Vec<String> = sorted_named_files(root, &["Cargo.toml"])?
+                .into_iter()
+                .filter(|manifest| cargo_manifest_owns_the_build(&root.join(manifest)))
+                .collect();
+            let build_scripts = sorted_named_files(root, &["build.rs"])?;
+            if owning.is_empty() && build_scripts.is_empty() {
+                return Ok(());
+            }
+            bail!(
+                "Cargo already owns this build ({}). init will not clone Cargo's dependency, \
+                 feature or build-script semantics: keep `cargo` behind a kind = \"command\" \
+                 target, or use `frost init --language rust` only if a direct rustc build of \
+                 this crate is intentional (docs/19_rust_cargo_comparison.md)",
+                owning
+                    .into_iter()
+                    .chain(build_scripts)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        ScaffoldLanguage::Go => {
+            let owning: Vec<String> = sorted_named_files(root, &["go.mod"])?
+                .into_iter()
+                .filter(|module| go_module_requires_dependencies(&root.join(module)))
+                .collect();
+            if owning.is_empty() {
+                return Ok(());
+            }
+            bail!(
+                "go.mod declares module requirements ({}). init will not resolve the module \
+                 graph: keep `go build` behind a kind = \"command\" target, or use \
+                 `frost init --language go` only if a direct build of this package is intentional",
+                owning.join(", ")
+            )
+        }
+        ScaffoldLanguage::TypeScript => {
+            let owning: Vec<String> = sorted_named_files(root, &["package.json"])?
+                .into_iter()
+                .filter(|package| package_json_declares_dependencies(&root.join(package)))
+                .collect();
+            if owning.is_empty() {
+                return Ok(());
+            }
+            bail!(
+                "package.json declares dependencies ({}). npm owns that graph and its scripts: \
+                 run `frost import-npm` to import the validation gates and explicit build \
+                 boundaries, or use `frost init --language typescript` only if a direct tsc \
+                 build is intentional",
+                owning.join(", ")
+            )
+        }
+        ScaffoldLanguage::Python => {
+            let owning: Vec<String> = sorted_named_files(root, &["pyproject.toml"])?
+                .into_iter()
+                .filter(|project| pyproject_declares_dependencies(&root.join(project)))
+                .collect();
+            if owning.is_empty() {
+                return Ok(());
+            }
+            bail!(
+                "pyproject.toml declares runtime dependencies ({}). init packs a pure-Python \
+                 tree and does not resolve or vendor an environment: keep the installer behind \
+                 a kind = \"command\" target, or use `frost init --language python` only if \
+                 packing this source tree is intentional",
+                owning.join(", ")
+            )
+        }
+    }
+}
+
+fn sorted_named_files(root: &Path, names: &[&str]) -> Result<Vec<String>> {
+    let mut found = Vec::new();
+    collect_named_files(root, root, &mut found, 0, names)?;
+    found.sort();
+    Ok(found)
+}
+
+/// Textual, like [`defines_main`]: a scaffold may be wrong here because the
+/// author reads what it wrote, and the failure mode is a refusal, not a
+/// silently different build.
+fn cargo_manifest_owns_the_build(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines().map(str::trim).any(|line| {
+        matches!(
+            line,
+            "[dependencies]" | "[build-dependencies]" | "[workspace]" | "[patch.crates-io]"
+        ) || line.starts_with("[dependencies.")
+            || line.starts_with("[target.")
+            || line.starts_with("[workspace.")
+    })
+}
+
+fn go_module_requires_dependencies(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines()
+        .map(str::trim)
+        .any(|line| line == "require (" || line.starts_with("require "))
+}
+
+fn package_json_declares_dependencies(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    ["\"dependencies\"", "\"devDependencies\"", "\"scripts\""]
+        .iter()
+        .any(|key| match text.split_once(key) {
+            // An empty object is a declaration of nothing.
+            Some((_, rest)) => !rest.trim_start().starts_with(": {}"),
+            None => false,
+        })
+}
+
+fn pyproject_declares_dependencies(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines().map(str::trim).any(|line| {
+        line == "[tool.poetry.dependencies]"
+            || line == "[project.optional-dependencies]"
+            || (line.starts_with("dependencies") && !line.replace(' ', "").ends_with("=[]"))
+    })
 }
 
 fn scaffold_native(root: &Path) -> Result<Scaffold> {
@@ -1254,6 +1468,297 @@ fn scaffold_java(root: &Path) -> Result<Scaffold> {
     Ok(Scaffold { manifest, summary })
 }
 
+fn scaffold_rust(root: &Path) -> Result<Scaffold> {
+    let sources = sorted_sources(root, &RUST_EXTENSIONS, "Rust")?;
+    let Some(entry) = sources
+        .iter()
+        .find(|path| contains_declaration(&root.join(path), "fn main("))
+        .cloned()
+    else {
+        bail!(
+            "no `fn main` under {}: a library-only crate has no single artifact init can \
+             name. keep cargo as the packaging owner behind a kind = \"command\" target",
+            root.display()
+        )
+    };
+
+    let name = workspace_name(root);
+    let output = format!(".frost/out/${{config}}/{name}");
+    let summary = vec![
+        format!("{} Rust source file(s)", sources.len()),
+        format!("entry point: {entry}"),
+        "rustc is driven directly; cargo remains the owner of dependencies and packaging".into(),
+    ];
+    let manifest = format!(
+        "# Generated by `frost init` after detecting Rust sources and one crate root.\n\
+         # Next: frost build\n\
+         # TODO: review the inferred Rust edition and direct-rustc boundary.\n\
+         [workspace]\ndefault_targets = [\"{name}\"]\n\n\
+         [toolchain.tools]\nrustc = \"rustc\"\n\n\
+         # One direct `rustc` call on the crate root. Every .rs file is declared\n\
+         # as an input so editing any module invalidates this action; rustc still\n\
+         # decides which of them it actually reads.\n\
+         [target.{name}]\nkind = \"command\"\ntool = \"rustc\"\n\
+         args = [\"--edition\", \"2021\", {entry:?}, \"-o\", \"${{out}}\"]\n\
+         inputs = {}\noutputs = {}\nsandbox = false\n",
+        toml_array(&sources),
+        toml_array(std::slice::from_ref(&output)),
+    );
+    Ok(Scaffold { manifest, summary })
+}
+
+fn scaffold_go(root: &Path) -> Result<Scaffold> {
+    let sources: Vec<String> = sorted_sources(root, &GO_EXTENSIONS, "Go")?
+        .into_iter()
+        .filter(|path| !path.ends_with("_test.go"))
+        .collect();
+    let Some(entry) = sources
+        .iter()
+        .find(|path| {
+            let file = root.join(path);
+            contains_declaration(&file, "func main(") && contains_declaration(&file, "package main")
+        })
+        .cloned()
+    else {
+        bail!(
+            "no `func main` in a `package main` file under {}: init cannot name the \
+             artifact of a library-only module",
+            root.display()
+        )
+    };
+
+    let name = workspace_name(root);
+    let output = format!(".frost/out/${{config}}/{name}");
+    let mut summary = vec![
+        format!("{} Go source file(s)", sources.len()),
+        format!("entry point: {entry}"),
+    ];
+
+    // With a module, `go build` addresses the package; without one it only
+    // accepts the file list of that package.
+    let package_dir = entry.rsplit_once('/').map(|(dir, _)| dir.to_string());
+    let mut args = vec!["build".to_string(), "-o".to_string(), "${out}".to_string()];
+    if root.join("go.mod").is_file() {
+        let package = match &package_dir {
+            Some(dir) => format!("./{dir}"),
+            None => ".".to_string(),
+        };
+        summary.push(format!("go.mod found; building package {package}"));
+        args.push(package);
+    } else {
+        let siblings: Vec<String> = sources
+            .iter()
+            .filter(|path| path.rsplit_once('/').map(|(dir, _)| dir.to_string()) == package_dir)
+            .filter(|path| contains_declaration(&root.join(path), "package main"))
+            .cloned()
+            .collect();
+        summary.push(format!(
+            "no go.mod; building {} file(s) of package main directly",
+            siblings.len()
+        ));
+        args.extend(siblings);
+    }
+
+    let manifest = format!(
+        "# Generated by `frost init` after detecting Go sources and one package main.\n\
+         # Next: frost build\n\
+         # TODO: review whether the Go module graph belongs behind a command boundary.\n\
+         [workspace]\ndefault_targets = [\"{name}\"]\n\n\
+         [toolchain.tools]\ngo = \"go\"\n\n\
+         # `go build` keeps its own build cache under HOME, which Frost passes\n\
+         # through; the action key still covers the declared sources and the\n\
+         # `go` binary itself.\n\
+         [target.{name}]\nkind = \"command\"\ntool = \"go\"\n\
+         args = {}\ninputs = {}\noutputs = {}\nsandbox = false\n",
+        toml_array(&args),
+        toml_array(&sources),
+        toml_array(std::slice::from_ref(&output)),
+    );
+    Ok(Scaffold { manifest, summary })
+}
+
+fn scaffold_typescript(root: &Path) -> Result<Scaffold> {
+    let sources = sorted_sources(root, &TYPESCRIPT_EXTENSIONS, "TypeScript")?;
+    let name = workspace_name(root);
+    let output_dir = "dist/${config}".to_string();
+    let mut summary = vec![format!("{} TypeScript source file(s)", sources.len())];
+
+    // `tsc` names its outputs after the module graph, so Frost owns the whole
+    // directory instead of a file list it cannot write down in advance.
+    let mut args = Vec::new();
+    if root.join("tsconfig.json").is_file() {
+        summary.push("tsconfig.json drives the compile; --outDir is overridden by Frost".into());
+        args.extend([
+            "-p".to_string(),
+            "tsconfig.json".to_string(),
+            "--outDir".to_string(),
+            "${output_dir}".to_string(),
+        ]);
+    } else {
+        summary.push("no tsconfig.json; compiler options are written into the manifest".into());
+        args.extend([
+            "--outDir".to_string(),
+            "${output_dir}".to_string(),
+            "--module".to_string(),
+            "es2022".to_string(),
+            "--target".to_string(),
+            "es2022".to_string(),
+            "--moduleResolution".to_string(),
+            "bundler".to_string(),
+            "${in}".to_string(),
+        ]);
+    }
+    summary.push("`tsc` must be on PATH; check with `frost doctor`".into());
+
+    let mut inputs = sources.clone();
+    if root.join("tsconfig.json").is_file() {
+        inputs.push("tsconfig.json".to_string());
+        inputs.sort();
+    }
+    let manifest = format!(
+        "# Generated by `frost init` after detecting TypeScript sources.\n\
+         # Next: frost build\n\
+         # TODO: review the compiler options and Frost-owned output directory.\n\
+         [workspace]\ndefault_targets = [\"{name}\"]\n\n\
+         [toolchain.tools]\ntsc = \"tsc\"\n\n\
+         [target.{name}]\nkind = \"command\"\ntool = \"tsc\"\n\
+         args = {}\ninputs = {}\noutput_dirs = [{output_dir:?}]\nsandbox = false\n",
+        toml_array(&args),
+        toml_array(&inputs),
+    );
+    Ok(Scaffold { manifest, summary })
+}
+
+fn scaffold_python(root: &Path) -> Result<Scaffold> {
+    let sources = sorted_sources(root, &PYTHON_EXTENSIONS, "Python")?;
+    let pyproject = std::fs::read_to_string(root.join("pyproject.toml")).unwrap_or_default();
+    let distribution = pyproject_field(&pyproject, "name").unwrap_or_else(|| workspace_name(root));
+    let version = pyproject_field(&pyproject, "version").unwrap_or_else(|| "0.1.0".to_string());
+    if !version
+        .split('.')
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    {
+        bail!(
+            "pyproject.toml version {version:?} is not a normalized numeric release, which \
+             `frost pack-wheel` requires for a standards-compliant wheel filename. set a \
+             numeric version, or declare the packaging step as its own command target"
+        );
+    }
+
+    // The wheel installs the contents of its input root into purelib, so the
+    // root must be the directory that holds the importable package.
+    let package_root = if root.join("src").is_dir() && sources.iter().any(|s| s.starts_with("src/"))
+    {
+        "src".to_string()
+    } else {
+        match sources
+            .iter()
+            .find(|path| path.ends_with("__init__.py"))
+            .and_then(|path| path.rsplit_once('/'))
+            .and_then(|(dir, _)| dir.rsplit_once('/').map(|(parent, _)| parent.to_string()))
+        {
+            Some(parent) => parent,
+            None => ".".to_string(),
+        }
+    };
+    let inputs: Vec<String> = sources
+        .iter()
+        .filter(|path| package_root == "." || path.starts_with(&format!("{package_root}/")))
+        .cloned()
+        .collect();
+    if inputs.is_empty() {
+        bail!(
+            "no Python sources under the detected package root {package_root:?}; declare the \
+             packaging step as its own command target"
+        );
+    }
+
+    let normalized = distribution
+        .to_ascii_lowercase()
+        .replace(['-', '.'], "_")
+        .replace(' ', "_");
+    let output = format!(".frost/out/${{config}}/{normalized}-{version}-py3-none-any.whl");
+    let summary = vec![
+        format!("{} Python source file(s)", inputs.len()),
+        format!("distribution {distribution} {version}, packed from {package_root}/"),
+        "a deterministic wheel is the artifact; the interpreter and installer stay yours".into(),
+    ];
+    let manifest = format!(
+        "# Generated by `frost init` after detecting a pure-Python source tree.\n\
+         # Next: frost build\n\
+         # TODO: review the inferred distribution, version and package root.\n\
+         [workspace]\ndefault_targets = [\"{normalized}\"]\n\n\
+         [toolchain.tools]\nfrost = \"frost\"\n\n\
+         # `frost pack-wheel` writes a deterministic, standards-compliant pure-Python\n\
+         # wheel: no interpreter runs, so the action is reproducible by construction.\n\
+         [target.{normalized}]\nkind = \"command\"\ntool = \"frost\"\n\
+         args = [\"pack-wheel\", \"--input\", {package_root:?}, \"--distribution\", \
+         {distribution:?}, \"--version\", {version:?}, \"--output\", \"${{out}}\"]\n\
+         inputs = {}\noutputs = {}\nsandbox = false\n",
+        toml_array(&inputs),
+        toml_array(std::slice::from_ref(&output)),
+    );
+    Ok(Scaffold { manifest, summary })
+}
+
+fn sorted_sources(root: &Path, extensions: &[&str], label: &str) -> Result<Vec<String>> {
+    let mut sources = Vec::new();
+    collect_sources(root, root, &mut sources, 0, extensions)?;
+    sources.sort();
+    if sources.is_empty() {
+        bail!(
+            "no {label} sources under {}; choose another --language or add a direct \
+             command target",
+            root.display()
+        );
+    }
+    Ok(sources)
+}
+
+fn workspace_name(root: &Path) -> String {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .map(sanitize_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "app".to_string())
+}
+
+/// Textual declaration probe shared by the non-native scaffolds. Comment lines
+/// are skipped; anything subtler belongs in the file the author reads.
+fn contains_declaration(path: &Path, needle: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with("//") && !line.starts_with('#') && !line.starts_with('*'))
+        .any(|line| line.contains(needle))
+}
+
+/// First `key = "value"` of the `[project]` table. Deliberately not a full TOML
+/// parse: a miss falls back to a default the summary prints.
+fn pyproject_field(text: &str, key: &str) -> Option<String> {
+    let mut in_project = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_project = line == "[project]";
+            continue;
+        }
+        if !in_project {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(key) {
+            if let Some(value) = rest.trim_start().strip_prefix('=') {
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 fn collect_sources(
     root: &Path,
     dir: &Path,
@@ -1268,7 +1773,19 @@ fn collect_sources(
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || matches!(name.as_ref(), "target" | "build" | "node_modules") {
+        if name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "target"
+                    | "build"
+                    | "node_modules"
+                    | "dist"
+                    | "vendor"
+                    | "venv"
+                    | "__pycache__"
+                    | "site-packages"
+            )
+        {
             continue;
         }
         let ty = entry.file_type()?;
@@ -1303,7 +1820,19 @@ fn collect_named_files(
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || matches!(name.as_ref(), "target" | "build" | "node_modules") {
+        if name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "target"
+                    | "build"
+                    | "node_modules"
+                    | "dist"
+                    | "vendor"
+                    | "venv"
+                    | "__pycache__"
+                    | "site-packages"
+            )
+        {
             continue;
         }
         let ty = entry.file_type()?;
@@ -1870,6 +2399,280 @@ mod tests {
             assert!(error.contains(marker), "{error}");
             assert!(error.contains("kind = \"command\""), "{error}");
             let explicit = scaffold_for(&root, ScaffoldLanguage::Java).unwrap();
+            Manifest::parse_str(&explicit.manifest).unwrap();
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    fn scaffold_fixture(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "frost-core-scaffold-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        root
+    }
+
+    #[test]
+    fn rust_scaffold_drives_rustc_directly_and_declares_every_module() {
+        let root = scaffold_fixture("rust");
+        std::fs::write(
+            root.join("src/main.rs"),
+            "mod helper;\nfn main() { println!(\"{}\", helper::value()); }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/helper.rs"), "pub fn value() -> i32 { 42 }\n").unwrap();
+
+        let scaffold = scaffold(&root).unwrap();
+        assert!(
+            scaffold
+                .summary
+                .iter()
+                .any(|line| line == "entry point: src/main.rs"),
+            "{:?}",
+            scaffold.summary
+        );
+        let manifest = Manifest::parse_str(&scaffold.manifest).unwrap();
+        let name = root.file_name().unwrap().to_str().unwrap();
+        let target = &manifest.targets[name];
+        assert_eq!(target.kind, TargetKind::Command);
+        assert_eq!(target.tool.as_deref(), Some("rustc"));
+        assert_eq!(
+            target.args,
+            ["--edition", "2021", "src/main.rs", "-o", "${out}"]
+        );
+        // A module the crate root pulls in must invalidate the action even
+        // though rustc, not Frost, decides that it is read.
+        assert_eq!(target.inputs, ["src/helper.rs", "src/main.rs"]);
+        assert_eq!(target.outputs, [format!(".frost/out/${{config}}/{name}")]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rust_scaffold_refuses_a_library_only_crate() {
+        let root = scaffold_fixture("rust-lib");
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n").unwrap();
+
+        let error = scaffold(&root).unwrap_err().to_string();
+        assert!(error.contains("no `fn main`"), "{error}");
+        assert!(error.contains("kind = \"command\""), "{error}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn go_scaffold_uses_package_mode_only_when_a_module_exists() {
+        let root = scaffold_fixture("go");
+        std::fs::write(
+            root.join("src/main.go"),
+            "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"go\") }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/support.go"),
+            "package main\nfunc support() int { return 1 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main_test.go"),
+            "package main\nimport \"testing\"\nfunc TestX(t *testing.T) {}\n",
+        )
+        .unwrap();
+
+        // No module: `go build` only accepts the file list of that package,
+        // and test files are not part of the binary.
+        let file_mode = scaffold(&root).unwrap();
+        let manifest = Manifest::parse_str(&file_mode.manifest).unwrap();
+        let name = root.file_name().unwrap().to_str().unwrap();
+        let target = &manifest.targets[name];
+        assert_eq!(
+            target.args,
+            ["build", "-o", "${out}", "src/main.go", "src/support.go"]
+        );
+        assert!(!target
+            .inputs
+            .iter()
+            .any(|input| input.ends_with("_test.go")));
+
+        std::fs::write(root.join("go.mod"), "module demo\n\ngo 1.22\n").unwrap();
+        let package_mode = scaffold(&root).unwrap();
+        let manifest = Manifest::parse_str(&package_mode.manifest).unwrap();
+        assert_eq!(
+            manifest.targets[name].args,
+            ["build", "-o", "${out}", "./src"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn typescript_scaffold_owns_the_output_directory() {
+        let root = scaffold_fixture("typescript");
+        std::fs::write(root.join("src/index.ts"), "export const x: number = 1;\n").unwrap();
+
+        // tsc names its outputs after the module graph, so the directory is
+        // the only honest declaration.
+        let plain = scaffold(&root).unwrap();
+        let manifest = Manifest::parse_str(&plain.manifest).unwrap();
+        let name = root.file_name().unwrap().to_str().unwrap();
+        let target = &manifest.targets[name];
+        assert_eq!(target.tool.as_deref(), Some("tsc"));
+        assert_eq!(target.output_dirs, ["dist/${config}"]);
+        assert!(target.outputs.is_empty());
+        assert!(target.args.contains(&"${output_dir}".to_string()));
+
+        std::fs::write(root.join("tsconfig.json"), "{\"compilerOptions\": {}}\n").unwrap();
+        let configured = scaffold(&root).unwrap();
+        let manifest = Manifest::parse_str(&configured.manifest).unwrap();
+        let target = &manifest.targets[name];
+        assert_eq!(
+            target.args,
+            ["-p", "tsconfig.json", "--outDir", "${output_dir}"]
+        );
+        // The config decides what is compiled, so it is an input too.
+        assert!(target.inputs.contains(&"tsconfig.json".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_scaffold_packs_a_normalized_deterministic_wheel() {
+        let root = scaffold_fixture("python");
+        std::fs::create_dir_all(root.join("src/demo_pkg")).unwrap();
+        std::fs::write(
+            root.join("src/demo_pkg/__init__.py"),
+            "def message():\n    return 'ok'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"Demo.Pkg-name\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+
+        let scaffold = scaffold(&root).unwrap();
+        let manifest = Manifest::parse_str(&scaffold.manifest).unwrap();
+        let target = &manifest.targets["demo_pkg_name"];
+        assert_eq!(target.tool.as_deref(), Some("frost"));
+        assert_eq!(
+            target.outputs,
+            ["".to_owned() + ".frost/out/${config}/demo_pkg_name-1.2.3-py3-none-any.whl"]
+        );
+        assert!(target.args.contains(&"pack-wheel".to_string()));
+        assert!(target.args.contains(&"Demo.Pkg-name".to_string()));
+        assert_eq!(target.inputs, ["src/demo_pkg/__init__.py"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_scaffold_refuses_a_version_no_wheel_filename_can_carry() {
+        let root = scaffold_fixture("python-version");
+        std::fs::create_dir_all(root.join("src/demo")).unwrap();
+        std::fs::write(root.join("src/demo/__init__.py"), "x = 1\n").unwrap();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"1.0.0b1\"\n",
+        )
+        .unwrap();
+
+        let error = scaffold(&root).unwrap_err().to_string();
+        assert!(
+            error.contains("not a normalized numeric release"),
+            "{error}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn auto_detection_refuses_what_a_package_manager_already_owns() {
+        // Each case: the marker file, its content, the language that stays
+        // available as a deliberate override, and a phrase the message owes
+        // the reader.
+        let cases: [(&str, &str, &str, ScaffoldLanguage, &str); 6] = [
+            (
+                "bazel",
+                "MODULE.bazel",
+                "module(name = \"x\")\n",
+                ScaffoldLanguage::Native,
+                "frost import-bazel --dry-run",
+            ),
+            (
+                "ninja",
+                "build.ninja",
+                "rule cc\n  command = cc -c $in -o $out\n",
+                ScaffoldLanguage::Native,
+                "frost import-ninja build.ninja",
+            ),
+            (
+                "cargo",
+                "Cargo.toml",
+                "[package]\nname = \"x\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
+                ScaffoldLanguage::Rust,
+                "Cargo already owns this build",
+            ),
+            (
+                "gomod",
+                "go.mod",
+                "module x\n\ngo 1.22\n\nrequire github.com/x/y v1.0.0\n",
+                ScaffoldLanguage::Go,
+                "declares module requirements",
+            ),
+            (
+                "npm",
+                "package.json",
+                "{\n  \"name\": \"x\",\n  \"dependencies\": { \"left-pad\": \"1.0.0\" }\n}\n",
+                ScaffoldLanguage::TypeScript,
+                "frost import-npm",
+            ),
+            (
+                "pep621",
+                "pyproject.toml",
+                "[project]\nname = \"demo\"\nversion = \"1.0.0\"\ndependencies = [\"requests\"]\n",
+                ScaffoldLanguage::Python,
+                "does not resolve or vendor an environment",
+            ),
+        ];
+
+        for (label, marker, content, language, expected) in cases {
+            let root = scaffold_fixture(label);
+            match language {
+                ScaffoldLanguage::Native => {
+                    std::fs::write(root.join("src/main.c"), "int main(void) { return 0; }\n")
+                        .unwrap()
+                }
+                ScaffoldLanguage::Rust => {
+                    std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap()
+                }
+                ScaffoldLanguage::Go => {
+                    std::fs::write(root.join("src/main.go"), "package main\nfunc main() {}\n")
+                        .unwrap()
+                }
+                ScaffoldLanguage::TypeScript => {
+                    std::fs::write(root.join("src/index.ts"), "export const x = 1;\n").unwrap()
+                }
+                ScaffoldLanguage::Python => {
+                    std::fs::create_dir_all(root.join("src/demo")).unwrap();
+                    std::fs::write(root.join("src/demo/__init__.py"), "x = 1\n").unwrap();
+                }
+                other => panic!("unexpected language {other:?}"),
+            }
+            std::fs::write(root.join(marker), content).unwrap();
+
+            let error = scaffold(&root).unwrap_err().to_string();
+            assert!(error.contains(expected), "{label}: {error}");
+            assert!(error.contains(marker), "{label}: {error}");
+            assert!(
+                error.contains(&format!("--language {}", language.as_str())),
+                "{label}: {error}"
+            );
+
+            // The override still works: refusing is about guessing, not ability.
+            let explicit = scaffold_for(&root, language).unwrap();
             Manifest::parse_str(&explicit.manifest).unwrap();
 
             let _ = std::fs::remove_dir_all(&root);
