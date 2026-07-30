@@ -16,7 +16,7 @@ navLinks?.addEventListener("click", (event) => {
 
 const commands = {
   cargo:
-    "cargo install --git https://github.com/hjosugi/frost-build --tag v0.7.0 frostbuild-cli",
+    "cargo install --git https://github.com/hjosugi/frost-build --tag v0.7.1 frostbuild-cli",
   source:
     "git clone https://github.com/hjosugi/frost-build && cd frost-build && cargo build --release --locked",
 };
