@@ -5,6 +5,13 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- The official Pages site now has a responsive documentation hub that guides
+  readers from quick start and normative specifications through language
+  adapters, benchmark evidence, architecture studies and delivery process,
+  while keeping the repository Markdown authoritative.
+
 ## [0.7.1] - 2026-07-29
 
 ### Added
