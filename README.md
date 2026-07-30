@@ -21,10 +21,11 @@ definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win
 ## Quick start
 
 ```bash
-# In a directory that already has plain C/C++ or Java sources:
+# In a directory that already has C/C++, Java, Rust, Go, TypeScript or Python
+# sources:
 frost init && frost build
 
-# Mixed native/Java trees require an explicit, reviewable choice:
+# Polyglot trees require an explicit, reviewable choice:
 frost init --language java
 
 cargo build --release --locked
@@ -267,6 +268,27 @@ Python and Node installations. Package-manager adapters deliberately leave
 Cargo/Go/npm/Gradle/Maven's internal incremental cache authoritative; Frost
 partitions their project/task graph and keys declared boundary artifacts. See
 [docs/10_language_adapters.md](docs/10_language_adapters.md).
+
+`frost init` writes that manifest for a directory that has none. It detects
+C/C++, Java, Rust, Go, TypeScript and Python, and it stops where another tool
+already owns the build: Cargo dependencies and build scripts, Go module
+requirements, npm dependencies/scripts, Python runtime dependencies, and
+Gradle/Maven project markers each produce a refusal that names the responsible
+file and a deliberate `--language` override. Native projects with Bazel or
+Ninja markers are directed to the corresponding importer instead of silently
+bypassing the existing graph.
+
+```bash
+frost init                      # auto-detect, or refuse and say why
+frost init --language rust      # deliberate direct-tool override
+frost init --dry-run            # review the manifest without writing it
+```
+
+Generated manifests explain the direct action they chose and include a
+`Next: frost build` comment. Rust calls `rustc` on one crate root, Go builds
+one `package main`, TypeScript gives `tsc` a Frost-owned output tree, and
+Python packs a deterministic pure-Python wheel. Package/dependency resolution
+stays with the ecosystem tool.
 
 ## Completion and interactive selection
 

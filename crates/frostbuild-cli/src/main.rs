@@ -643,6 +643,24 @@ enum CompletionShell {
 enum InitLanguage {
     Native,
     Java,
+    Rust,
+    Go,
+    Typescript,
+    Python,
+}
+
+impl From<InitLanguage> for frostbuild_core::manifest::ScaffoldLanguage {
+    fn from(language: InitLanguage) -> Self {
+        use frostbuild_core::manifest::ScaffoldLanguage;
+        match language {
+            InitLanguage::Native => ScaffoldLanguage::Native,
+            InitLanguage::Java => ScaffoldLanguage::Java,
+            InitLanguage::Rust => ScaffoldLanguage::Rust,
+            InitLanguage::Go => ScaffoldLanguage::Go,
+            InitLanguage::Typescript => ScaffoldLanguage::TypeScript,
+            InitLanguage::Python => ScaffoldLanguage::Python,
+        }
+    }
 }
 
 fn completion_workspace() -> PathBuf {
@@ -3769,14 +3787,7 @@ fn run_init(root: &std::path::Path, dry_run: bool, language: Option<InitLanguage
         );
     }
     let scaffold = match language {
-        Some(InitLanguage::Native) => frostbuild_core::manifest::scaffold_for(
-            root,
-            frostbuild_core::manifest::ScaffoldLanguage::Native,
-        )?,
-        Some(InitLanguage::Java) => frostbuild_core::manifest::scaffold_for(
-            root,
-            frostbuild_core::manifest::ScaffoldLanguage::Java,
-        )?,
+        Some(language) => frostbuild_core::manifest::scaffold_for(root, language.into())?,
         None => frostbuild_core::manifest::scaffold(root)?,
     };
     if dry_run {
