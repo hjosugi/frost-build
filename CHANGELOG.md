@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-30
+
 ### Added
 
 - The official Pages site now has a responsive documentation hub that guides
