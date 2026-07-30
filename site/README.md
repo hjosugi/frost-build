@@ -4,6 +4,10 @@ This directory is the source for the official static site at
 <https://hjosugi.github.io/frost-build/>. It has no runtime dependencies and
 uses relative asset URLs so it works at the repository's Pages base path.
 
+`index.html` is the project overview. `docs/index.html` is the public
+documentation hub and links to the authoritative Markdown files in the
+repository; the Markdown remains the source of truth.
+
 Brand assets:
 
 - `assets/frostbuild-mark.png` — 1254 px transparent master;

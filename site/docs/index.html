@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07111f">
+    <meta
+      name="description"
+      content="FrostBuild documentation: quick start, architecture, manifest reference, language adapters, benchmarks, and correctness evidence."
+    >
+    <meta property="og:title" content="FrostBuild documentation">
+    <meta
+      property="og:description"
+      content="Build with FrostBuild, understand its correctness model, and inspect the evidence behind its performance claims."
+    >
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://hjosugi.github.io/frost-build/docs/">
+    <meta
+      property="og:image"
+      content="https://hjosugi.github.io/frost-build/assets/frostbuild-mark-512.png"
+    >
+    <meta name="twitter:card" content="summary">
+    <link rel="canonical" href="https://hjosugi.github.io/frost-build/docs/">
+    <link rel="icon" href="../favicon.png" type="image/png">
+    <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+    <link rel="stylesheet" href="../styles.css">
+    <title>Documentation — FrostBuild</title>
+  </head>
+  <body class="docs-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="aurora aurora-one" aria-hidden="true"></div>
+    <div class="aurora aurora-two" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary navigation">
+        <a class="brand" href="../" aria-label="FrostBuild home">
+          <img src="../assets/frostbuild-mark-512.png" width="40" height="40" alt="">
+          <span>FrostBuild</span>
+        </a>
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="nav-links">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle navigation</span>
+        </button>
+        <div class="nav-links" id="nav-links">
+          <a href="../#why">Why FrostBuild</a>
+          <a href="../#proof">Proof</a>
+          <a href="../#start">Get started</a>
+          <a class="nav-current" href="./" aria-current="page">Docs</a>
+          <a class="nav-github" href="https://github.com/hjosugi/frost-build">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="docs-main" id="main">
+      <section class="docs-hero shell">
+        <div class="docs-hero-copy">
+          <div class="docs-breadcrumbs" aria-label="Breadcrumb">
+            <a href="../">FrostBuild</a>
+            <span aria-hidden="true">/</span>
+            <span>Documentation</span>
+          </div>
+          <h1>Build with the <span>full picture.</span></h1>
+          <p>
+            Start with a working build, then go as deep as you need. The architecture
+            and manifest specification are the contract; every performance claim links
+            back to a reproducible report.
+          </p>
+          <div class="docs-hero-actions">
+            <a class="button button-primary" href="#start-here">Start here <span>↓</span></a>
+            <a
+              class="button button-secondary"
+              href="https://github.com/hjosugi/frost-build/tree/main/docs"
+            >
+              Browse Markdown
+            </a>
+          </div>
+        </div>
+        <aside class="docs-snapshot" aria-label="Quick start">
+          <div class="docs-snapshot-label">v0.7.1 · quick start</div>
+          <code>cargo install --git \
+https://github.com/hjosugi/frost-build \
+--tag v0.7.1 frostbuild-cli
+
+frost init
+frost build</code>
+          <p>
+            Native C/C++ and plain Java can be scaffolded automatically. Other
+            ecosystems use explicit, direct-command boundaries.
+          </p>
+        </aside>
+      </section>
+
+      <div class="docs-rule">
+        <div class="docs-rule-inner shell">
+          <strong>Source of truth</strong>
+          <span aria-hidden="true"></span>
+          DESIGN.md defines the engine. The manifest specification defines
+          <code>frost.toml</code>. Research documents explain why.
+        </div>
+      </div>
+
+      <div class="docs-layout shell">
+        <nav class="docs-toc" aria-label="Documentation sections">
+          <span>On this page</span>
+          <a href="#start-here">Start here</a>
+          <a href="#build">Build and integrate</a>
+          <a href="#evidence">Performance evidence</a>
+          <a href="#architecture">Architecture and research</a>
+          <a href="#process">Platforms and process</a>
+        </nav>
+
+        <div class="docs-content">
+          <section class="docs-section" id="start-here">
+            <div class="docs-section-heading">
+              <div>
+                <p class="kicker">START HERE</p>
+                <h2>Three documents.<br>One mental model.</h2>
+              </div>
+              <p>
+                Learn the commands, the correctness contract, and the configuration
+                format before exploring implementation studies.
+              </p>
+            </div>
+            <div class="docs-card-grid">
+              <a class="docs-card" href="https://github.com/hjosugi/frost-build#quick-start">
+                <span class="docs-card-tag">01 · Guide</span>
+                <h3>Quick start</h3>
+                <p>Install FrostBuild, initialize a workspace, build, test, run, and inspect a graph.</p>
+                <span class="docs-card-arrow">Open README →</span>
+              </a>
+              <a
+                class="docs-card"
+                href="https://github.com/hjosugi/frost-build/blob/main/DESIGN.md"
+              >
+                <span class="docs-card-tag">02 · Normative</span>
+                <h3>Architecture</h3>
+                <p>The action model, graph, cache boundaries, invariants, non-goals, and v2 line.</p>
+                <span class="docs-card-arrow">Read DESIGN.md →</span>
+              </a>
+              <a
+                class="docs-card"
+                href="https://github.com/hjosugi/frost-build/blob/main/docs/06_manifest_spec.md"
+              >
+                <span class="docs-card-tag">03 · Reference</span>
+                <h3>Manifest specification</h3>
+                <p>Every supported <code>frost.toml</code> field, target type, profile, and platform rule.</p>
+                <span class="docs-card-arrow">Open the specification →</span>
+              </a>
+            </div>
+          </section>
+
+          <section class="docs-section" id="build">
+            <div class="docs-section-heading">
+              <div>
+                <p class="kicker">BUILD AND INTEGRATE</p>
+                <h2>From one target<br>to a polyglot graph.</h2>
+              </div>
+              <p>
+                Use native rules where Frost owns the compiler boundary and explicit
+                adapters where an ecosystem already owns its inner build.
+              </p>
+            </div>
+            <div class="docs-groups">
+              <article class="docs-group">
+                <h3>Everyday workflows</h3>
+                <p>Build, test, watch, debug, and migrate existing graphs.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/22_developer_loop.md">
+                    Developer loop
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/09_platform_support.md">
+                    Host and target platforms
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/23_bazel_migration.md">
+                    Conservative Bazel migration
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/06_ninja_importer.md">
+                    Ninja importer
+                  </a>
+                </div>
+              </article>
+              <article class="docs-group">
+                <h3>Language and ecosystem boundaries</h3>
+                <p>Choose the unit Frost can cache and verify without hiding work.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/10_language_adapters.md">
+                    Language adapter contract
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/18_polyglot_win_matrix.md">
+                    Polyglot win matrix
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/25_npm_workspace_import.md">
+                    npm workspace import
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/27_npm_production_adoption.md">
+                    npm production adoption
+                  </a>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="docs-section" id="evidence">
+            <div class="docs-section-heading">
+              <div>
+                <p class="kicker">PERFORMANCE EVIDENCE</p>
+                <h2>Read the scope,<br>then the number.</h2>
+              </div>
+              <p>
+                Reports preserve equivalent work, semantic artifact checks, raw
+                samples, tool versions, and losing cases.
+              </p>
+            </div>
+            <div class="docs-groups">
+              <article class="docs-group">
+                <h3>Method and system comparisons</h3>
+                <p>How results are collected and where FrostBuild still loses.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/05_benchmark_methodology.md">
+                    Benchmark methodology
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/14_bazel_gap_analysis.md">
+                    Bazel gap analysis
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/00_world_fastest_build_tools.md">
+                    Build-tool landscape
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/tree/main/bench/baselines">
+                    Raw benchmark baselines
+                  </a>
+                </div>
+              </article>
+              <article class="docs-group">
+                <h3>Equal-artifact language reports</h3>
+                <p>One compiler and artifact contract at a time.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/17_java_gradle_maven_comparison.md">
+                    Java · Gradle · Maven
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/19_rust_cargo_comparison.md">
+                    Rust · Cargo
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/20_go_build_comparison.md">
+                    Go · go build
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/21_typescript_tsc_comparison.md">
+                    TypeScript · tsc
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/24_python_wheel_comparison.md">
+                    Python wheels
+                  </a>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="docs-section" id="architecture">
+            <div class="docs-section-heading">
+              <div>
+                <p class="kicker">ARCHITECTURE AND RESEARCH</p>
+                <h2>Decisions keep<br>their evidence.</h2>
+              </div>
+              <p>
+                These documents explain the trade-offs behind pruning, storage,
+                scheduling, remote work, and migration.
+              </p>
+            </div>
+            <div class="docs-groups">
+              <article class="docs-group">
+                <h3>Core strategy</h3>
+                <p>The mechanisms behind correctness-first incremental work.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/01_architecture_nix_bazel_micro_partition.md">
+                    Nix, Bazel, and micro-partitions
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/02_two_x_strategy.md">
+                    2× strategy
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/15_research_cache_layers.md">
+                    Cache-layer separation
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/16_action_key_audit.md">
+                    Action-key audit
+                  </a>
+                </div>
+              </article>
+              <article class="docs-group">
+                <h3>Forward-looking studies</h3>
+                <p>Measured options, explicit adoption decisions, and deferred work.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/03_papers_and_references.md">
+                    Papers and primary sources
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/07_remote_cache_study.md">
+                    Remote cache
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/11_remote_execution_study.md">
+                    Remote execution
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/08_predictive_selection.md">
+                    Predictive selection
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/09_learned_scheduling.md">
+                    Learned scheduling
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/26_deltacdc_remote_calibration.md">
+                    DeltaCDC calibration
+                  </a>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="docs-section" id="process">
+            <div class="docs-section-heading">
+              <div>
+                <p class="kicker">PLATFORMS AND PROCESS</p>
+                <h2>Know what is tested.<br>Know what is historical.</h2>
+              </div>
+              <p>
+                CI coverage, fuzz targets, issue-to-implementation evidence, and
+                superseded design paths stay visible.
+              </p>
+            </div>
+            <div class="docs-groups">
+              <article class="docs-group">
+                <h3>Correctness and delivery</h3>
+                <p>Verification surfaces and their tracked implementation evidence.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/12_fuzzing.md">
+                    Fuzzing and property tests
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/13_issue_implementation_matrix.md">
+                    Issue implementation matrix
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/CONTRIBUTING.md">
+                    Contributing
+                  </a>
+                </div>
+              </article>
+              <article class="docs-group">
+                <h3>Historical record</h3>
+                <p>Useful context that is no longer the product contract.</p>
+                <div class="doc-list">
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/04_zig_implementation_plan.md">
+                    Superseded Zig plan
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/17_session_log_2026-07.md">
+                    July 2026 session log
+                  </a>
+                  <a href="https://github.com/hjosugi/frost-build/blob/main/docs/README.md">
+                    Complete documentation index
+                  </a>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <div class="docs-callout">
+            <div>
+              <h3>Can’t find the boundary you need?</h3>
+              <p>
+                Open an issue with the language, artifact, incumbent build tool,
+                and a reproducible clean/no-op/change workload.
+              </p>
+            </div>
+            <a
+              class="button button-secondary"
+              href="https://github.com/hjosugi/frost-build/issues/new/choose"
+            >
+              Open an issue
+            </a>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <div class="shell footer-inner">
+        <a class="brand" href="../">
+          <img src="../assets/frostbuild-mark-512.png" width="36" height="36" alt="">
+          <span>FrostBuild</span>
+        </a>
+        <p>Correctness first. Performance measured.</p>
+        <div class="footer-links">
+          <a href="https://github.com/hjosugi/frost-build">Source</a>
+          <a href="https://github.com/hjosugi/frost-build/releases">Releases</a>
+          <a href="./" aria-current="page">Docs</a>
+          <a href="https://github.com/hjosugi/frost-build/blob/main/LICENSE">License</a>
+        </div>
+      </div>
+    </footer>
+    <script src="../script.js"></script>
+  </body>
+</html>
