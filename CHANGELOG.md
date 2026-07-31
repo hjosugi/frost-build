@@ -23,6 +23,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   keeps its exact payload and means `--output json`; the two spellings
   disagreeing is an error rather than a silent preference. Path globs are
   uniform: `*` and `?` stop at `/`, `**` crosses it.
+- Three more sample workspaces, and `docs/29_sample_workspaces.md` covering all
+  five. They exist to make one decision concrete: whether Frost should own the
+  compiler or own the boundary around a tool that owns its own dependency
+  graph. `sample_java/` is multi-module Java in the Gradle/Maven directory
+  layout, built without either — `${deps}` puts the dependency module's jar on
+  javac's classpath so the application module never writes down where the
+  library puts its output. `sample_spring/` is a Spring Boot application built
+  by Gradle and `sample_maven/` one packaged by Maven, each wrapped as a single
+  `command` target with declared inputs and an owned output tree: Frost caches
+  and restores the tree without reproducing the task graph, which is the honest
+  answer when reproducing it would mean reimplementing the tool. Warm builds
+  skip the ecosystem tool entirely (Gradle 12.3 s → 1 ms), and deleting the
+  output tree restores it from the content-addressed store in milliseconds
+  without running it. The two wrapped samples are not built in CI, because
+  resolving from the network is a dependency the correctness suite does not
+  take.
 - `sample_multi/`, a multi-package workspace with the shape `sample_c` cannot
   have: four packages, four target kinds, a generated header consumed from a
   package other than the one that writes it, and a diamond where `cli` reaches

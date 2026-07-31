@@ -1,0 +1,64 @@
+# Spring Boot, built by Gradle, cached by Frost.
+#
+#   frost -C sample_spring build
+#   java -jar sample_spring/build/debug/libs/sample-spring-0.0.1.jar   # frost: 42
+#
+# This is the opposite lesson from sample_java. There, Frost owns the compiler
+# and every javac invocation is a Frost action. Here Gradle owns dependency
+# resolution, the Spring Boot plugin's repackaging and the whole task graph —
+# Frost could not reproduce that without reimplementing it, and pretending
+# otherwise is how a build tool ships wrong answers. So the whole Gradle
+# invocation is one Frost action with a declared boundary: these inputs, that
+# owned output tree. Frost caches and restores the tree; it does not look
+# inside.
+#
+# What that buys: an unchanged source tree skips Gradle entirely, and the
+# produced jar is restorable from the content-addressed store on another
+# checkout. What it costs: the granularity is the whole module. Gradle's own
+# incrementality still applies within a miss.
+#
+# Maven is the same shape — `mvn -q package` with `-Dproject.build.directory`
+# in place of the property below. See docs/29_sample_workspaces.md.
+#
+# Not built in CI: Gradle resolves the Spring Boot plugin and starter from the
+# network, which is a dependency the correctness suite deliberately does not
+# take. Run it locally with Gradle on PATH.
+
+[workspace]
+name = "sample_spring"
+default_targets = ["boot_jar"]
+
+[toolchain.tools]
+gradle = "gradle"
+
+[target.boot_jar]
+kind = "command"
+tool = "gradle"
+# `build/${config}` is Frost's, so build.gradle reads the location from this
+# property. A plain `gradle bootJar` with no property still writes `build/`.
+args = [
+  "bootJar",
+  "--no-daemon",
+  "--console=plain",
+  "-PfrostBuildDir=build/${config}",
+]
+inputs = ["build.gradle", "settings.gradle", "src/main/java/**/*.java"]
+# Frost owns this tree entirely: every file under it is recorded as an output,
+# which is how a tool whose output names cannot be written down in advance —
+# a jar named from the project version — is still cacheable.
+output_dirs = ["build/${config}"]
+# Gradle needs its user home for the dependency cache, a JDK, and this
+# machine's proxy configuration to reach the repositories. Each name's
+# present-or-absent value is action-key material, so a build that resolved
+# against a different proxy does not reuse this result.
+pass_env = [
+  "HOME",
+  "JAVA_HOME",
+  "GRADLE_USER_HOME",
+  "JAVA_TOOL_OPTIONS",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]
+# Gradle reads a JDK, its user home and the network, all outside the workspace.
+sandbox = false
