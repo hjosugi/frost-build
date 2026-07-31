@@ -1,0 +1,50 @@
+# Maven, cached by Frost — the same boundary as sample_spring, a different
+# tool inside it.
+#
+#   frost -C sample_maven build
+#   java -jar sample_maven/target/debug/sample-maven-0.0.1.jar   # frost: 42
+#
+# Maven owns dependency resolution, the plugin lifecycle and packaging. Frost
+# does not reproduce any of it: the whole `mvn package` is one action with a
+# declared boundary — these inputs, that owned output tree — and Frost caches
+# and restores the tree without looking inside.
+#
+# The one thing worth copying from here: Maven's build directory comes from the
+# POM rather than the command line, so pom.xml reads a `frost.buildDir`
+# property that this target sets. Gradle's equivalent is in
+# sample_spring/build.gradle. Both exist because a Frost-owned directory must
+# carry the profile/platform key, and neither tool's default does.
+#
+# Not built in CI: Maven resolves plugins from the network, which is a
+# dependency the correctness suite deliberately does not take. Run it locally
+# with Maven on PATH.
+
+[workspace]
+name = "sample_maven"
+default_targets = ["package"]
+
+[toolchain.tools]
+mvn = "mvn"
+
+[target.package]
+kind = "command"
+tool = "mvn"
+args = ["-B", "package", "-Dfrost.buildDir=target/${config}"]
+inputs = ["pom.xml", "src/main/java/**/*.java"]
+output_dirs = ["target/${config}"]
+# Maven needs its local repository under HOME, a JDK, and this machine's proxy
+# configuration to reach the repositories. Each name's present-or-absent value
+# is action-key material, so a build resolved through a different proxy does
+# not reuse this result.
+pass_env = [
+  "HOME",
+  "JAVA_HOME",
+  "MAVEN_OPTS",
+  "JAVA_TOOL_OPTIONS",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]
+# Maven reads a JDK, its local repository and the network, all outside the
+# workspace.
+sandbox = false

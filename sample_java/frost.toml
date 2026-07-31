@@ -1,0 +1,24 @@
+# Multi-module Java demo workspace, in the directory layout Gradle and Maven
+# projects use (`<module>/src/main/java/<package>/`), built without either.
+#
+#   frost -C sample_java build
+#   java -cp sample_java/app/.frost/out/debug/app.jar:sample_java/greeting/.frost/out/debug/greeting.jar \
+#        com.example.app.App          # frost: 42
+#
+# The point is the module boundary. `app` never writes down where `greeting`
+# puts its jar: `${deps}` expands to the declared outputs of the targets it
+# declared a dependency on, so the layout convention stays inside the target
+# that owns it. See docs/29_sample_workspaces.md for when to build Java this
+# way and when to wrap Gradle or Maven instead (sample_gradle).
+#
+# `frost` must be on PATH: the jar step is `frost pack-jar`, which produces a
+# deterministic archive (sorted entries, fixed timestamps) so an unchanged
+# input yields identical bytes and downstream work stays cached.
+
+[workspace]
+name = "sample_java"
+default_targets = ["//app:app"]
+
+[toolchain.tools]
+javac = "javac"
+pack_jar = "frost"

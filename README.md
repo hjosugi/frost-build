@@ -52,7 +52,19 @@ cargo build --release --locked
 # all of them.
 ./target/release/frost -C sample_multi query allpaths //apps/cli:cli //core:core
 ./target/release/frost -C sample_multi query rdeps //core:core --kind cc_test
+
+# Multi-module Java, with Frost owning javac (needs a JDK and frost on PATH):
+./target/release/frost -C sample_java build
+
+# Spring Boot via Gradle, and Maven: the whole ecosystem build is one cached
+# action with a declared boundary (needs Gradle/Maven and the network).
+./target/release/frost -C sample_spring build
+./target/release/frost -C sample_maven build
 ```
+
+[docs/29_sample_workspaces.md](docs/29_sample_workspaces.md) walks through all
+five, and through the choice they exist to illustrate: when to let Frost own
+the compiler, and when to wrap a tool that owns its own dependency graph.
 
 Useful production workflows:
 
@@ -236,6 +248,9 @@ crates/frostbuild-cli/      frost command and end-to-end correctness tests
 crates/frostbuild-bench/    benchmark binary entry point
 sample_c/                   real compiler sample workspace
 sample_multi/               multi-package sample: four packages, a diamond
+sample_java/                multi-module Java, Frost owning javac
+sample_spring/              Spring Boot via Gradle, wrapped as one cached action
+sample_maven/               the same wrapping with Maven
 bench/                      checked-in benchmark baselines
 docs/                       design decisions and research outcomes
 .github/                    CI, security and release automation

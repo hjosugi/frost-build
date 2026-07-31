@@ -1431,6 +1431,66 @@ fn query_deps_rdeps_somepath() {
 }
 
 #[test]
+fn multi_module_java_sample_builds_across_module_boundaries() {
+    let javac_present = Command::new("javac").arg("--version").output().is_ok();
+    if !(javac_present && java_toolchain_is_consistent()) {
+        eprintln!("skipping Java sample E2E: javac and java must be present and from the same JDK");
+        return;
+    }
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sample_java");
+    let ws = Workspace::empty("java-sample");
+    copy_dir(&src, &ws.dir).expect("copy sample_java");
+
+    // The sample names its jar step `frost`, because a checked-in manifest
+    // cannot know this build's target directory. Put it on PATH rather than
+    // rewriting the manifest, so the test exercises what a reader would run.
+    let frost_dir = Path::new(frost_bin()).parent().unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let with_frost = format!("{}{separator}{path}", frost_dir.display());
+
+    let (ok, out) = ws.frost_env(&["build"], &[("PATH", with_frost.as_str())]);
+    assert!(ok, "{out}");
+
+    let greeting = ws.dir.join("greeting/.frost/out/debug/greeting.jar");
+    let app = ws.dir.join("app/.frost/out/debug/app.jar");
+    assert!(greeting.is_file(), "greeting jar: {out}");
+    assert!(app.is_file(), "app jar: {out}");
+
+    // App compiles against Greeting, so a class that loads and runs is the
+    // proof that ${deps} put the dependency's jar on javac's classpath without
+    // the manifest naming its path.
+    let classpath = format!("{}{separator}{}", app.display(), greeting.display());
+    let run = Command::new("java")
+        .args(["-cp", &classpath, "com.example.app.App"])
+        .output()
+        .expect("run the packaged app");
+    assert!(run.status.success(), "packaged app should run: {out}");
+    assert_eq!(normalized_output(&run.stdout), "frost: 42\n");
+
+    let (ok, out) = ws.frost_env(&["build"], &[("PATH", with_frost.as_str())]);
+    assert!(ok, "{out}");
+    assert!(out.contains("up to date"), "{out}");
+
+    // Editing the library has to reach the application module.
+    let source = ws
+        .dir
+        .join("greeting/src/main/java/com/example/greeting/Greeting.java");
+    let edited = std::fs::read_to_string(&source)
+        .unwrap()
+        .replace("\"frost\"", "\"frost-edited\"");
+    std::fs::write(&source, edited).unwrap();
+    let (ok, out) = ws.frost_env(&["build"], &[("PATH", with_frost.as_str())]);
+    assert!(ok, "{out}");
+    let run = Command::new("java")
+        .args(["-cp", &classpath, "com.example.app.App"])
+        .output()
+        .expect("run the rebuilt app");
+    assert!(run.status.success(), "rebuilt app should run");
+    assert_eq!(normalized_output(&run.stdout), "frost-edited: 42\n");
+}
+
+#[test]
 fn multi_package_sample_builds_runs_and_caches() {
     let ws = Workspace::multi("multi-sample");
 

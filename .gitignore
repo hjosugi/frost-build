@@ -5,6 +5,11 @@ bench/results/
 sample_c/gen/
 sample_multi/gen/
 
+# Ecosystem build state in the wrapped-tool samples. Their output trees
+# (sample_spring/build/, sample_maven/target/) are already covered by the
+# generic build/ and target/ rules below.
+.gradle/
+
 # Rust build artifacts
 target/
 

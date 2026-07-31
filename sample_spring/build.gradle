@@ -1,0 +1,22 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.example'
+version = '0.0.1'
+
+// Frost owns the output tree it caches, and every Frost-owned directory carries
+// the profile/platform key so debug, release and cross builds cannot collide.
+// Gradle's default `build/` has no such key, so the location is a property and
+// Frost passes one; a plain `gradle build` still writes `build/`.
+layout.buildDirectory = file(providers.gradleProperty('frostBuildDir').getOrElse('build'))
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
+}
