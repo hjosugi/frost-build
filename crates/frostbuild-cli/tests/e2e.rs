@@ -91,6 +91,16 @@ impl Workspace {
         workspace
     }
 
+    /// The multi-package sample: four packages, four target kinds, and a
+    /// diamond, which is the shape the graph queries need and `sample_c`'s
+    /// single line of dependencies cannot provide.
+    fn multi(name: &str) -> Self {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sample_multi");
+        let workspace = Self::empty(name);
+        copy_dir(&src, &workspace.dir).expect("copy sample_multi");
+        workspace
+    }
+
     fn empty(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("frost-e2e-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1418,6 +1428,307 @@ fn query_deps_rdeps_somepath() {
     let (ok, out) = ws.frost(&["query", "somepath", "util", "gen_config"]);
     assert!(!ok, "no-path case exits nonzero");
     assert!(out.contains("no path"), "{out}");
+}
+
+#[test]
+fn multi_package_sample_builds_runs_and_caches() {
+    let ws = Workspace::multi("multi-sample");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    // The genrule writes a header one package consumes and three more inherit
+    // through their dependencies, so a cold build of the diamond is a real
+    // cross-package ordering test, not four independent compiles.
+    assert!(out.contains("GEN gen_version"), "{out}");
+    assert!(out.contains("LINK //apps/cli:cli"), "{out}");
+
+    let binary = ws.binary(".frost/bin/debug/apps_cli_cli");
+    let run = Command::new(&binary).output().expect("run built cli");
+    assert!(run.status.success(), "built cli should run");
+    assert_eq!(normalized_output(&run.stdout), "frost 1: 42\n");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("up to date"), "{out}");
+
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("1 passed"), "{out}");
+
+    // Editing the shared bottom of the diamond has to reach the top through
+    // both middles; a stale `render` would still link and print the old answer.
+    let core = ws.dir.join("core/src/core.c");
+    let edited = std::fs::read_to_string(&core)
+        .unwrap()
+        .replace("return a + b;", "return a + b + 1;");
+    std::fs::write(&core, edited).unwrap();
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let run = Command::new(&binary).output().expect("run rebuilt cli");
+    assert!(run.status.success(), "rebuilt cli should run");
+    assert_eq!(normalized_output(&run.stdout), "frost 1: 43\n");
+}
+
+#[test]
+fn query_owners_reports_declared_and_generated_inputs() {
+    let ws = Workspace::multi("query-owners");
+
+    // A source belongs to exactly the target that compiles it. `*` stops at
+    // `/`, so this pattern reaches the three packages one level down and not
+    // apps/cli, which is two.
+    let (ok, out) = ws.frost(&["query", "owners", "*/src/*.c"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        ["//core:core", "//render:render", "//text:text"]
+    );
+
+    // `**` crosses `/`, so the same query reaches the whole workspace.
+    let (ok, out) = ws.frost(&["query", "owners", "**/src/*.c"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        [
+            "//apps/cli:cli",
+            "//core:core",
+            "//render:render",
+            "//text:text"
+        ]
+    );
+
+    // The generated header is the case the configuration-free graph can still
+    // answer completely: every target that transitively depends on the genrule
+    // carries it as an order-only input, and the genrule that writes it does
+    // not consume it.
+    let (ok, out) = ws.frost(&["query", "owners", "gen/version.h"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        [
+            "//apps/cli:cli",
+            "//core:core",
+            "//core:core_test",
+            "//render:render",
+            "//text:text"
+        ]
+    );
+
+    // Several patterns union rather than intersect.
+    let (ok, out) = ws.frost(&["query", "owners", "core/src/core.c", "text/src/text.c"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        ["//core:core", "//text:text"]
+    );
+
+    // A path nobody declares is empty and says why, rather than looking like a
+    // target with no owners.
+    let (ok, out) = ws.frost(&["query", "owners", "core/include/core.h"]);
+    assert!(!ok, "an undeclared header exits nonzero: {out}");
+    assert!(out.contains("frost explain"), "{out}");
+}
+
+#[test]
+fn query_allpaths_returns_every_route() {
+    let ws = Workspace::multi("query-allpaths");
+
+    // The diamond: somepath commits to one route, allpaths owes both.
+    let (ok, out) = ws.frost(&["query", "somepath", "//apps/cli:cli", "//core:core"]);
+    assert!(ok, "{out}");
+    assert_eq!(out.trim().lines().count(), 3);
+
+    let (ok, out) = ws.frost(&[
+        "query",
+        "allpaths",
+        "//apps/cli:cli",
+        "//core:core",
+        "--json",
+    ]);
+    assert!(ok, "{out}");
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(parsed["query"], "allpaths(//apps/cli:cli, //core:core)");
+    assert_eq!(parsed["truncated"], false);
+    assert_eq!(
+        parsed["paths"],
+        serde_json::json!([
+            ["//apps/cli:cli", "//render:render", "//core:core"],
+            ["//apps/cli:cli", "//text:text", "//core:core"],
+        ])
+    );
+
+    // Text output separates the routes by a blank line and keeps the
+    // one-target-per-line shape every other query function prints.
+    let (ok, out) = ws.frost(&["query", "allpaths", "//apps/cli:cli", "//core:core"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim(),
+        "//apps/cli:cli\n//render:render\n//core:core\n\n//apps/cli:cli\n//text:text\n//core:core"
+    );
+
+    // Direction matters, and no route is stated rather than implied by silence.
+    let (ok, out) = ws.frost(&["query", "allpaths", "//core:core", "//apps/cli:cli"]);
+    assert!(!ok, "no-path case exits nonzero");
+    assert!(out.contains("no path"), "{out}");
+
+    // The bound is reported, not applied quietly.
+    let (ok, out) = ws.frost(&[
+        "query",
+        "allpaths",
+        "//apps/cli:cli",
+        "//core:core",
+        "--limit",
+        "1",
+    ]);
+    assert!(ok, "{out}");
+    assert!(out.contains("not complete"), "{out}");
+
+    let (ok, out) = ws.frost(&[
+        "query",
+        "allpaths",
+        "//apps/cli:cli",
+        "//core:core",
+        "--limit",
+        "1",
+        "--json",
+    ]);
+    assert!(ok, "{out}");
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(parsed["truncated"], true);
+    assert_eq!(parsed["paths"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn query_filters_by_kind_and_attr() {
+    let ws = Workspace::multi("query-filters");
+
+    let (ok, out) = ws.frost(&["query", "rdeps", "//core:core", "--kind", "cc_library"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        ["//core:core", "//render:render", "//text:text"]
+    );
+
+    let (ok, out) = ws.frost(&["query", "rdeps", "//core:core", "--kind", "cc_test"]);
+    assert!(ok, "{out}");
+    assert_eq!(out.trim().lines().collect::<Vec<_>>(), ["//core:core_test"]);
+
+    // Direct deps, not the transitive closure the query walked.
+    let (ok, out) = ws.frost(&[
+        "query",
+        "deps",
+        "//apps/cli:cli",
+        "--attr",
+        "deps=//core:core",
+    ]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        ["//render:render", "//text:text"]
+    );
+
+    let (ok, out) = ws.frost(&["query", "deps", "//apps/cli:cli", "--attr", "srcs=**/*.c"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("gen_version"),
+        "a genrule has no sources: {out}"
+    );
+
+    // Filters compose as AND.
+    let (ok, out) = ws.frost(&[
+        "query",
+        "rdeps",
+        "//core:core",
+        "--kind",
+        "cc_library",
+        "--attr",
+        "deps=//core:core",
+    ]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim().lines().collect::<Vec<_>>(),
+        ["//render:render", "//text:text"]
+    );
+
+    // A filter that removes everything is an empty result with a reason, not a
+    // silent success.
+    let (ok, out) = ws.frost(&["query", "deps", "//apps/cli:cli", "--kind", "command"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("filters removed everything"), "{out}");
+
+    // The accepted names are closed sets, so a typo fails instead of widening
+    // the answer.
+    let (ok, out) = ws.frost(&["query", "deps", "//apps/cli:cli", "--kind", "cc_lib"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("unknown --kind"), "{out}");
+
+    let (ok, out) = ws.frost(&["query", "deps", "//apps/cli:cli", "--attr", "source=x"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("unknown --attr name"), "{out}");
+
+    let (ok, out) = ws.frost(&["query", "deps", "//apps/cli:cli", "--attr", "deps"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("not NAME=PATTERN"), "{out}");
+}
+
+#[test]
+fn query_output_formats_and_json_compatibility() {
+    let ws = Workspace::multi("query-output");
+
+    let (ok, text) = ws.frost(&["query", "deps", "//text:text"]);
+    assert!(ok, "{text}");
+    assert_eq!(text.trim(), "//core:core\n//text:text\ngen_version");
+
+    // --output text is the default spelled out, so it must agree exactly.
+    let (ok, explicit) = ws.frost(&["query", "deps", "//text:text", "--output", "text"]);
+    assert!(ok, "{explicit}");
+    assert_eq!(explicit, text);
+
+    let (ok, out) = ws.frost(&["query", "deps", "//text:text", "--output", "label-kind"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim(),
+        "cc_library target //core:core\ncc_library target //text:text\ngenrule target gen_version"
+    );
+
+    let (ok, out) = ws.frost(&["query", "deps", "//text:text", "--output", "dot"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.trim(),
+        concat!(
+            "digraph frost_query {\n",
+            "  rankdir=LR;\n",
+            "  \"//core:core\";\n",
+            "  \"//text:text\";\n",
+            "  \"gen_version\";\n",
+            "  \"//core:core\" -> \"gen_version\";\n",
+            "  \"//text:text\" -> \"//core:core\";\n",
+            "}"
+        )
+    );
+
+    // --json predates --output and keeps its exact payload: adding `paths` to
+    // the path queries must not have added anything here.
+    let (ok, older) = ws.frost(&["query", "deps", "//text:text", "--json"]);
+    assert!(ok, "{older}");
+    let parsed: serde_json::Value = serde_json::from_str(older.trim()).unwrap();
+    assert_eq!(parsed["query"], "deps(//text:text)");
+    assert_eq!(
+        parsed["targets"],
+        serde_json::json!(["//core:core", "//text:text", "gen_version"])
+    );
+    assert_eq!(
+        parsed.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["query", "targets"]
+    );
+
+    let (ok, newer) = ws.frost(&["query", "deps", "//text:text", "--output", "json"]);
+    assert!(ok, "{newer}");
+    assert_eq!(newer, older, "--json and --output json are one format");
+
+    // Two spellings that disagree are a mistake worth naming.
+    let (ok, out) = ws.frost(&["query", "deps", "//text:text", "--json", "--output", "dot"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("disagree"), "{out}");
 }
 
 #[test]

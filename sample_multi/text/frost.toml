@@ -1,0 +1,7 @@
+# One of the two middles of the diamond. Depends on //core:core only.
+
+[target.text]
+kind = "cc_library"
+srcs = ["src/text.c"]
+includes = ["include"]
+deps = ["//core:core"]

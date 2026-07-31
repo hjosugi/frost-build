@@ -28,9 +28,11 @@ frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VAL
 frost pick --platform=VALUE --print --profile=VALUE --tests
 frost plan <targets...> --platform=VALUE --profile=VALUE
 frost query
-frost query deps <target> --json
-frost query rdeps <target> --json
-frost query somepath <from> <to> --json
+frost query allpaths <from> <to> --attr=VALUE --json --kind=VALUE --limit=VALUE --output=VALUE
+frost query deps <target> --attr=VALUE --json --kind=VALUE --output=VALUE
+frost query owners <paths...> --attr=VALUE --json --kind=VALUE --output=VALUE
+frost query rdeps <target> --attr=VALUE --json --kind=VALUE --output=VALUE
+frost query somepath <from> <to> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost run <target> <program_args...> --platform=VALUE --print --profile=VALUE --runner=VALUE -j/--jobs=VALUE
 frost simulate <targets...> --jobs=VALUE --json --platform=VALUE --profile=VALUE
 frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going

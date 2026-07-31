@@ -3,6 +3,7 @@
 .frost-bench/
 bench/results/
 sample_c/gen/
+sample_multi/gen/
 
 # Rust build artifacts
 target/

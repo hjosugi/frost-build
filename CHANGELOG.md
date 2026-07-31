@@ -7,6 +7,29 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost query` answers the questions it claimed to. `owners <paths...>` is the
+  file→target direction — "what must rebuild when this changes" — over declared
+  action inputs, including the generated headers a genrule dependency
+  contributes transitively; a header discovered only through a depfile is build
+  state rather than configuration, and the empty result says so instead of
+  looking like a file nobody owns. `allpaths <from> <to>` returns every route
+  where `somepath` commits to one, which is the difference between explaining a
+  rebuild and being able to cut a dependency; the count is exponential on
+  stacked diamonds, so the walk is bounded by `--limit` and reports that it
+  stopped rather than implying completeness. `--kind` and `--attr NAME=PATTERN`
+  (deps, srcs, outputs, sandbox, timeout) filter every function against closed
+  sets, so a typo fails instead of silently widening the answer, and
+  `--output text|json|label-kind|dot` replaces the format guesswork. `--json`
+  keeps its exact payload and means `--output json`; the two spellings
+  disagreeing is an error rather than a silent preference. Path globs are
+  uniform: `*` and `?` stop at `/`, `**` crosses it.
+- `sample_multi/`, a multi-package workspace with the shape `sample_c` cannot
+  have: four packages, four target kinds, a generated header consumed from a
+  package other than the one that writes it, and a diamond where `cli` reaches
+  `core` through both `text` and `render`. An E2E builds it, runs it, edits the
+  bottom of the diamond and requires the change to reach the top by both
+  routes.
+
 - Actions can be stopped. A target may declare `timeout = <seconds>`,
   `--timeout` imposes one on a whole invocation, and test actions carry a
   300-second default because a hanging test otherwise holds a CI job open by

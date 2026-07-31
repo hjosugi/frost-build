@@ -1,0 +1,31 @@
+# Multi-package C demo workspace for the Rust `frost` binary.
+#
+#   frost -C sample_multi build
+#   frost -C sample_multi test --all
+#   frost -C sample_multi query allpaths //apps/cli:cli //core:core
+#
+# Unlike sample_c, which is one manifest and one straight line of deps, this
+# workspace exists to have a shape: four packages, four target kinds, and a
+# diamond. `cli` reaches `core` through both `text` and `render`, which is the
+# case `somepath` answers incompletely and `allpaths` answers fully. The
+# generated header is consumed from a different package than the one that
+# produces it, so `query owners gen/version.h` has a non-trivial answer.
+
+[workspace]
+name = "sample_multi"
+default_targets = ["//apps/cli:cli"]
+
+[toolchain]
+# Left to the host default (`cc`, or `gcc` where that name does not exist) so
+# this workspace builds anywhere frost is published.
+cflags = ["-O2", "-Wall"]
+
+# Produces gen/version.h, which every package below compiles against. The
+# paired extension-neutral launchers resolve to tools/gen_version on POSIX and
+# tools\gen_version.cmd through PATHEXT on Windows.
+[target.gen_version]
+kind = "genrule"
+cmd = "tools${pathsep}gen_version ${out}"
+inputs = ["tools/gen_version", "tools/gen_version.cmd"]
+outputs = ["gen/version.h"]
+includes = ["gen"]

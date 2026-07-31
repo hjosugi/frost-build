@@ -39,6 +39,19 @@ cargo build --release --locked
 ./target/release/frost -C sample_c build --explain
 ./target/release/frost -C sample_c plan
 ./target/release/frost -C sample_c graph --dot
+
+# sample_multi is the same idea with a shape: four packages, four target
+# kinds, and a diamond, which is what the graph queries have to answer for.
+./target/release/frost -C sample_multi build
+./sample_multi/.frost/bin/debug/apps_cli_cli    # frost 1: 42 (.exe on Windows)
+./target/release/frost -C sample_multi test --all
+
+# Which targets must rebuild when this file changes?
+./target/release/frost -C sample_multi query owners "core/src/*.c"
+# Every route between two targets, not just one — cutting a dependency needs
+# all of them.
+./target/release/frost -C sample_multi query allpaths //apps/cli:cli //core:core
+./target/release/frost -C sample_multi query rdeps //core:core --kind cc_test
 ```
 
 Useful production workflows:
@@ -222,6 +235,7 @@ crates/frostbuild-daemon/   watcher, framed socket protocol, frostd
 crates/frostbuild-cli/      frost command and end-to-end correctness tests
 crates/frostbuild-bench/    benchmark binary entry point
 sample_c/                   real compiler sample workspace
+sample_multi/               multi-package sample: four packages, a diamond
 bench/                      checked-in benchmark baselines
 docs/                       design decisions and research outcomes
 .github/                    CI, security and release automation

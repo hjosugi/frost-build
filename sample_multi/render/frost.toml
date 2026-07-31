@@ -1,0 +1,8 @@
+# The other middle of the diamond. Also depends on //core:core only, which is
+# what gives //apps/cli:cli two distinct paths down to it.
+
+[target.render]
+kind = "cc_library"
+srcs = ["src/render.c"]
+includes = ["include"]
+deps = ["//core:core"]

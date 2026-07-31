@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::{Manifest, TargetKind, Toolchain, DEFAULT_PROFILE, HOST_PLATFORM};
@@ -103,6 +103,44 @@ pub struct TargetNode {
     /// the same inputs still produce the same result under a different limit.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+}
+
+/// A workspace-relative path glob, with the semantics every query surface
+/// shares: `*` and `?` stop at `/`, `**` crosses it, and a pattern written with
+/// backslashes still matches the `/` form the graph stores.
+pub struct PathPattern(glob::Pattern);
+
+impl PathPattern {
+    pub fn new(pattern: &str) -> Result<Self> {
+        let normalized = pattern.replace('\\', "/");
+        Ok(Self(glob::Pattern::new(&normalized).with_context(
+            || format!("invalid path pattern {pattern:?}"),
+        )?))
+    }
+
+    pub fn matches(&self, path: &str) -> bool {
+        // Without `require_literal_separator` a `*` swallows `/`, so `src/*.c`
+        // would match `src/deep/nested.c` and a caller asking about one
+        // directory would silently get another's answer.
+        self.0.matches_with(
+            path,
+            glob::MatchOptions {
+                require_literal_separator: true,
+                ..Default::default()
+            },
+        )
+    }
+}
+
+/// Result of [`BuildGraph::allpaths`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct AllPaths {
+    pub paths: Vec<Vec<String>>,
+    /// The walk stopped at its limit and more paths exist. Reported rather
+    /// than silently dropped, because a partial answer to "what would I have
+    /// to cut" is worse than a slow one only if the reader believes it is
+    /// complete.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -926,6 +964,105 @@ impl BuildGraph {
         Ok(visit(self, from, to, &mut path, &mut seen).then_some(path))
     }
 
+    /// Every simple dependency path from `from` down to `to`, sorted.
+    ///
+    /// `somepath` answers "does this reach that", which is enough to explain a
+    /// rebuild. Removing the dependency is the other question, and one path
+    /// cannot answer it: cutting the only edge it names leaves the other routes
+    /// intact. The count is exponential in the worst case — a chain of diamonds
+    /// doubles it per diamond — so the walk stops at `limit` and says that it
+    /// did, rather than running until the caller gives up.
+    pub fn allpaths(&self, from: &str, to: &str, limit: usize) -> Result<AllPaths> {
+        for name in [from, to] {
+            if !self.targets.contains_key(name) {
+                bail!("unknown target {name:?}");
+            }
+        }
+        fn visit<'a>(
+            graph: &'a BuildGraph,
+            current: &'a str,
+            to: &str,
+            path: &mut Vec<&'a str>,
+            on_path: &mut BTreeSet<&'a str>,
+            found: &mut Vec<Vec<String>>,
+            limit: usize,
+        ) -> bool {
+            // Only the current path is marked, not everything ever visited: a
+            // target reachable by two routes must be walked once per route.
+            if !on_path.insert(current) {
+                return false;
+            }
+            path.push(current);
+            let truncated = if current == to {
+                found.push(path.iter().map(|name| (*name).to_string()).collect());
+                found.len() >= limit
+            } else {
+                let mut deps: Vec<&str> = graph.targets[current]
+                    .deps
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                deps.sort_unstable();
+                deps.iter()
+                    .any(|dep| visit(graph, dep, to, path, on_path, found, limit))
+            };
+            path.pop();
+            on_path.remove(current);
+            truncated
+        }
+        let mut found = Vec::new();
+        let truncated = visit(
+            self,
+            from,
+            to,
+            &mut Vec::new(),
+            &mut BTreeSet::new(),
+            &mut found,
+            limit.max(1),
+        );
+        found.sort();
+        Ok(AllPaths {
+            paths: found,
+            truncated,
+        })
+    }
+
+    /// Targets that declare any of `paths` among the inputs of one of their
+    /// actions, sorted. Patterns are globs over workspace-relative paths.
+    ///
+    /// "Declare" is exact, and narrower than "compiles against": a compile
+    /// action's inputs are its source plus the generated headers a genrule
+    /// dependency puts in reach, because those are the files the configuration
+    /// knows about. A checked-in header only becomes an input of a particular
+    /// compile once a build has read the depfile, which is build state rather
+    /// than configuration — `frost explain` reports that. Asking for the target
+    /// that publishes such a header and then taking its `rdeps` gives the
+    /// affected set without leaving the configuration.
+    pub fn owners(&self, patterns: &[String]) -> Result<Vec<String>> {
+        let matchers = patterns
+            .iter()
+            .map(|pattern| PathPattern::new(pattern))
+            .collect::<Result<Vec<_>>>()?;
+        let mut matched_files: BTreeSet<FileId> = BTreeSet::new();
+        for (id, file) in self.files.iter().enumerate() {
+            if matchers.iter().any(|m| m.matches(&file.path)) {
+                matched_files.insert(id);
+            }
+        }
+        let mut owners = BTreeSet::new();
+        for action in &self.actions {
+            if action
+                .inputs
+                .iter()
+                .chain(&action.order_only_inputs)
+                .any(|id| matched_files.contains(id))
+            {
+                owners.insert(action.target.clone());
+            }
+        }
+        Ok(owners.into_iter().collect())
+    }
+
     pub fn to_dot(&self) -> String {
         let mut out = String::from("digraph frost {\n  rankdir=LR;\n");
         for target in self.targets.values() {
@@ -1651,6 +1788,93 @@ mod tests {
         );
         assert_eq!(graph.somepath("util", "gen").unwrap(), None);
         assert!(graph.deps_closure("nope").is_err());
+    }
+
+    #[test]
+    fn allpaths_walks_every_route_and_bounds_itself() {
+        // A diamond: `top` reaches `bottom` through both `left` and `right`,
+        // which is exactly what one path cannot describe.
+        let manifest = Manifest::parse_str(
+            r#"
+            [target.bottom]
+            kind = "cc_library"
+            srcs = ["bottom.c"]
+
+            [target.left]
+            kind = "cc_library"
+            srcs = ["left.c"]
+            deps = ["bottom"]
+
+            [target.right]
+            kind = "cc_library"
+            srcs = ["right.c"]
+            deps = ["bottom"]
+
+            [target.top]
+            kind = "cc_binary"
+            srcs = ["top.c"]
+            deps = ["left", "right"]
+            "#,
+        )
+        .unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+
+        let found = graph.allpaths("top", "bottom", 16).unwrap();
+        assert!(!found.truncated);
+        assert_eq!(
+            found.paths,
+            vec![
+                vec!["top".to_string(), "left".to_string(), "bottom".to_string()],
+                vec!["top".to_string(), "right".to_string(), "bottom".to_string()],
+            ]
+        );
+
+        // Reaching a target twice by different routes must not be mistaken for
+        // a cycle: a single global visited set would report only one path.
+        assert_eq!(graph.allpaths("top", "left", 16).unwrap().paths.len(), 1);
+
+        // Direction is not symmetric, and no route is an empty answer rather
+        // than an error.
+        let none = graph.allpaths("bottom", "top", 16).unwrap();
+        assert!(none.paths.is_empty() && !none.truncated);
+
+        // The bound stops the walk and says so.
+        let capped = graph.allpaths("top", "bottom", 1).unwrap();
+        assert!(capped.truncated);
+        assert_eq!(capped.paths.len(), 1);
+
+        assert!(graph.allpaths("top", "nope", 16).is_err());
+    }
+
+    #[test]
+    fn owners_reports_targets_that_declare_a_file() {
+        let graph = BuildGraph::from_manifest(&demo_manifest()).unwrap();
+
+        assert_eq!(
+            graph.owners(&["src/util.c".to_string()]).unwrap(),
+            vec!["util".to_string()]
+        );
+
+        // The generated header belongs to the target that compiles against it,
+        // not to the genrule that writes it.
+        assert_eq!(
+            graph.owners(&["gen/config.h".to_string()]).unwrap(),
+            vec!["app".to_string()]
+        );
+
+        // A pattern nobody declares is empty rather than an error: asking
+        // about a file that turns out not to be an input is a normal question.
+        assert!(graph.owners(&["nope.c".to_string()]).unwrap().is_empty());
+
+        // `*` stops at `/`, so a pattern rooted at the workspace cannot reach
+        // into a directory; `**` is how a caller asks for the whole tree.
+        assert!(graph.owners(&["*.c".to_string()]).unwrap().is_empty());
+        assert_eq!(
+            graph.owners(&["**/*.c".to_string()]).unwrap(),
+            vec!["app".to_string(), "util".to_string()]
+        );
+
+        assert!(graph.owners(&["[".to_string()]).is_err());
     }
 
     #[test]

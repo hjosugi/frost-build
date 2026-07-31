@@ -632,15 +632,15 @@ enum QueryCmd {
     Deps {
         #[arg(add = ArgValueCompleter::new(complete_target))]
         target: String,
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        opts: QueryOpts,
     },
     /// Targets that transitively depend on a target ("what does this affect?")
     Rdeps {
         #[arg(add = ArgValueCompleter::new(complete_target))]
         target: String,
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        opts: QueryOpts,
     },
     /// One dependency path between two targets
     Somepath {
@@ -648,10 +648,62 @@ enum QueryCmd {
         from: String,
         #[arg(add = ArgValueCompleter::new(complete_target))]
         to: String,
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        opts: QueryOpts,
+    },
+    /// Every dependency path between two targets ("what would I have to cut?")
+    Allpaths {
+        #[arg(add = ArgValueCompleter::new(complete_target))]
+        from: String,
+        #[arg(add = ArgValueCompleter::new(complete_target))]
+        to: String,
+        /// Stop after this many paths. The count is exponential on a graph of
+        /// stacked diamonds, so the walk is bounded and says when it stopped.
+        #[arg(long, default_value_t = DEFAULT_ALLPATHS_LIMIT)]
+        limit: usize,
+        #[command(flatten)]
+        opts: QueryOpts,
+    },
+    /// Targets that declare these files among their action inputs
+    Owners {
+        /// Workspace-relative paths or globs
+        #[arg(required = true, value_hint = ValueHint::FilePath)]
+        paths: Vec<String>,
+        #[command(flatten)]
+        opts: QueryOpts,
     },
 }
+
+/// Filters and output formats every query function shares.
+#[derive(clap::Args)]
+struct QueryOpts {
+    /// Keep only targets of this kind (cc_binary, cc_library, cc_test,
+    /// genrule, test, kofun_binary, command)
+    #[arg(long, value_name = "KIND", add = ArgValueCompleter::new(complete_target_kind))]
+    kind: Option<String>,
+    /// Keep only targets whose attribute matches, as NAME=PATTERN. Repeatable;
+    /// every one must match. NAME is deps, srcs, outputs, sandbox or timeout.
+    #[arg(long, value_name = "NAME=PATTERN", add = ArgValueCompleter::new(complete_attr_filter))]
+    attr: Vec<String>,
+    /// Output format
+    #[arg(long, value_enum)]
+    output: Option<QueryOutput>,
+    /// Alias for --output json, kept for compatibility
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum QueryOutput {
+    Text,
+    Json,
+    LabelKind,
+    Dot,
+}
+
+/// Enough paths to answer "what would I have to cut" on any graph a person
+/// reads, and few enough that a pathological one still returns.
+const DEFAULT_ALLPATHS_LIMIT: usize = 4096;
 
 #[derive(Subcommand)]
 enum DaemonCmd {
@@ -787,6 +839,23 @@ fn complete_test_target(current: &OsStr) -> Vec<CompletionCandidate> {
                 matches!(target.kind, TargetKind::CcTest | TargetKind::Test).then_some(target.name)
             })
         }),
+    )
+}
+
+/// The half of `--attr NAME=PATTERN` that comes from a closed set. The value
+/// after `=` is a glob or a scalar the author is choosing, so completion stops
+/// at the name.
+fn complete_attr_filter(current: &OsStr) -> Vec<CompletionCandidate> {
+    candidates(
+        current,
+        AttrFilter::NAMES.iter().map(|name| format!("{name}=")),
+    )
+}
+
+fn complete_target_kind(current: &OsStr) -> Vec<CompletionCandidate> {
+    candidates(
+        current,
+        TargetKind::ALL.iter().map(|kind| kind.as_str().to_string()),
     )
 }
 
@@ -1570,45 +1639,7 @@ fn run(cli: Cli) -> Result<i32> {
             platform,
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
-        Cmd::Query { function } => {
-            // The target-level graph is configuration-free: deps are
-            // unconditional, so any profile/platform yields the same shape.
-            let graph = load_graph(&root, "debug", frostbuild_core::manifest::HOST_PLATFORM)?;
-            let (query, names) = match &function {
-                QueryCmd::Deps { target, .. } => {
-                    (format!("deps({target})"), graph.deps_closure(target)?)
-                }
-                QueryCmd::Rdeps { target, .. } => {
-                    (format!("rdeps({target})"), graph.rdeps_closure(target)?)
-                }
-                QueryCmd::Somepath { from, to, .. } => {
-                    let path = graph.somepath(from, to)?;
-                    let Some(path) = path else {
-                        println!("no path from {from} to {to}");
-                        return Ok(1);
-                    };
-                    (format!("somepath({from}, {to})"), path)
-                }
-            };
-            let json = match &function {
-                QueryCmd::Deps { json, .. }
-                | QueryCmd::Rdeps { json, .. }
-                | QueryCmd::Somepath { json, .. } => *json,
-            };
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(
-                        &serde_json::json!({ "query": query, "targets": names })
-                    )?
-                );
-            } else {
-                for name in &names {
-                    println!("{name}");
-                }
-            }
-            Ok(0)
-        }
+        Cmd::Query { function } => run_query(&root, &function),
         Cmd::Cache { command } => match command {
             CacheCmd::Stats { json } => {
                 let stats = frostbuild_core::cas::LocalCas::new(
@@ -3974,6 +4005,282 @@ fn default_jobs() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
+impl QueryCmd {
+    fn opts(&self) -> &QueryOpts {
+        match self {
+            QueryCmd::Deps { opts, .. }
+            | QueryCmd::Rdeps { opts, .. }
+            | QueryCmd::Somepath { opts, .. }
+            | QueryCmd::Allpaths { opts, .. }
+            | QueryCmd::Owners { opts, .. } => opts,
+        }
+    }
+}
+
+impl QueryOutput {
+    fn as_str(self) -> &'static str {
+        match self {
+            QueryOutput::Text => "text",
+            QueryOutput::Json => "json",
+            QueryOutput::LabelKind => "label-kind",
+            QueryOutput::Dot => "dot",
+        }
+    }
+}
+
+impl QueryOpts {
+    /// `--json` predates `--output`, so it stays and means `--output json`.
+    /// Two spellings that disagree are a mistake worth naming rather than
+    /// silently resolving in one direction.
+    fn format(&self) -> Result<QueryOutput> {
+        match (self.output, self.json) {
+            (Some(QueryOutput::Json), _) | (None, true) => Ok(QueryOutput::Json),
+            (Some(other), true) => bail!(
+                "--json and --output {} disagree; --json is the older spelling of --output json",
+                other.as_str()
+            ),
+            (Some(other), false) => Ok(other),
+            (None, false) => Ok(QueryOutput::Text),
+        }
+    }
+}
+
+/// One `--attr NAME=PATTERN` restriction. The set is closed: an unrecognized
+/// name is a typo that would otherwise silently widen the result.
+enum AttrFilter {
+    Deps(frostbuild_core::graph::PathPattern),
+    Srcs(frostbuild_core::graph::PathPattern),
+    Outputs(frostbuild_core::graph::PathPattern),
+    Sandbox(bool),
+    Timeout(Option<u64>),
+}
+
+impl AttrFilter {
+    const NAMES: [&'static str; 5] = ["deps", "srcs", "outputs", "sandbox", "timeout"];
+
+    fn parse(spec: &str) -> Result<Self> {
+        let (name, value) = spec
+            .split_once('=')
+            .with_context(|| format!("--attr {spec:?} is not NAME=PATTERN"))?;
+        let pattern = || frostbuild_core::graph::PathPattern::new(value);
+        match name {
+            "deps" => Ok(AttrFilter::Deps(pattern()?)),
+            "srcs" => Ok(AttrFilter::Srcs(pattern()?)),
+            "outputs" => Ok(AttrFilter::Outputs(pattern()?)),
+            "sandbox" => match value {
+                "true" => Ok(AttrFilter::Sandbox(true)),
+                "false" => Ok(AttrFilter::Sandbox(false)),
+                other => bail!("--attr sandbox= takes true or false, not {other:?}"),
+            },
+            "timeout" => match value {
+                "none" => Ok(AttrFilter::Timeout(None)),
+                other => Ok(AttrFilter::Timeout(Some(other.parse().with_context(
+                    || format!("--attr timeout= takes seconds or none, not {other:?}"),
+                )?))),
+            },
+            other => bail!(
+                "unknown --attr name {other:?}; expected one of {}",
+                Self::NAMES.join(", ")
+            ),
+        }
+    }
+
+    fn matches(&self, graph: &BuildGraph, name: &str) -> bool {
+        let Some(target) = graph.targets.get(name) else {
+            return false;
+        };
+        let file = |id: &usize| graph.files[*id].path.as_str();
+        match self {
+            AttrFilter::Deps(pattern) => target.deps.iter().any(|dep| pattern.matches(dep)),
+            // Declared inputs only. Order-only generated headers are reachable
+            // through `query owners`, but they are not this target's sources.
+            AttrFilter::Srcs(pattern) => target
+                .actions
+                .iter()
+                .flat_map(|a| graph.actions[*a].inputs.iter())
+                .any(|id| pattern.matches(file(id))),
+            AttrFilter::Outputs(pattern) => target
+                .outputs
+                .iter()
+                .chain(
+                    target
+                        .actions
+                        .iter()
+                        .flat_map(|a| graph.actions[*a].outputs.iter()),
+                )
+                .any(|id| pattern.matches(file(id))),
+            AttrFilter::Sandbox(want) => target
+                .actions
+                .iter()
+                .any(|a| graph.actions[*a].sandbox == *want),
+            AttrFilter::Timeout(want) => target.timeout_secs == *want,
+        }
+    }
+}
+
+/// Answer a graph question without configuring a build.
+///
+/// Every function here is configuration-free: the target-level graph has
+/// unconditional deps, so any profile or platform yields the same shape and
+/// the answer does not depend on how the caller would have built it.
+fn run_query(root: &std::path::Path, function: &QueryCmd) -> Result<i32> {
+    let graph = load_graph(root, "debug", frostbuild_core::manifest::HOST_PLATFORM)?;
+    let opts = function.opts();
+    let format = opts.format()?;
+    if let Some(kind) = &opts.kind {
+        if !TargetKind::ALL.iter().any(|k| k.as_str() == kind) {
+            let known: Vec<&str> = TargetKind::ALL.iter().map(|k| k.as_str()).collect();
+            bail!(
+                "unknown --kind {kind:?}; expected one of {}",
+                known.join(", ")
+            );
+        }
+    }
+    let attrs = opts
+        .attr
+        .iter()
+        .map(|spec| AttrFilter::parse(spec))
+        .collect::<Result<Vec<_>>>()?;
+    let keep = |name: &String| {
+        let kind_ok = opts.kind.as_ref().is_none_or(|want| {
+            graph
+                .targets
+                .get(name)
+                .is_some_and(|target| target.kind.as_str() == want)
+        });
+        kind_ok && attrs.iter().all(|attr| attr.matches(&graph, name))
+    };
+
+    let mut paths: Option<Vec<Vec<String>>> = None;
+    let mut truncated = false;
+    let (query, targets) = match function {
+        QueryCmd::Deps { target, .. } => (format!("deps({target})"), graph.deps_closure(target)?),
+        QueryCmd::Rdeps { target, .. } => {
+            (format!("rdeps({target})"), graph.rdeps_closure(target)?)
+        }
+        QueryCmd::Somepath { from, to, .. } => {
+            let Some(path) = graph.somepath(from, to)? else {
+                println!("no path from {from} to {to}");
+                return Ok(1);
+            };
+            (format!("somepath({from}, {to})"), path)
+        }
+        QueryCmd::Allpaths {
+            from, to, limit, ..
+        } => {
+            let found = graph.allpaths(from, to, *limit)?;
+            if found.paths.is_empty() {
+                println!("no path from {from} to {to}");
+                return Ok(1);
+            }
+            truncated = found.truncated;
+            // A filter drops members from each path rather than dropping the
+            // path: "the test targets along this route" is still a route.
+            let kept: Vec<Vec<String>> = found
+                .paths
+                .into_iter()
+                .map(|path| path.into_iter().filter(&keep).collect::<Vec<_>>())
+                .filter(|path| !path.is_empty())
+                .collect();
+            let union: BTreeSet<String> = kept.iter().flatten().cloned().collect();
+            paths = Some(kept);
+            (
+                format!("allpaths({from}, {to})"),
+                union.into_iter().collect(),
+            )
+        }
+        QueryCmd::Owners { paths: files, .. } => (
+            format!("owners({})", files.join(", ")),
+            graph.owners(files)?,
+        ),
+    };
+    let targets: Vec<String> = targets.into_iter().filter(keep).collect();
+
+    match format {
+        QueryOutput::Json => {
+            let mut payload = serde_json::json!({ "query": query, "targets": targets });
+            if let Some(paths) = &paths {
+                payload["paths"] = serde_json::json!(paths);
+                payload["truncated"] = serde_json::json!(truncated);
+            }
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+        QueryOutput::Text => match &paths {
+            // One path per block keeps the existing one-target-per-line shape
+            // that `deps`, `rdeps` and `somepath` have always printed.
+            Some(paths) => {
+                for (index, path) in paths.iter().enumerate() {
+                    if index > 0 {
+                        println!();
+                    }
+                    for name in path {
+                        println!("{name}");
+                    }
+                }
+            }
+            None => {
+                for name in &targets {
+                    println!("{name}");
+                }
+            }
+        },
+        QueryOutput::LabelKind => {
+            for name in &targets {
+                let kind = graph
+                    .targets
+                    .get(name)
+                    .map_or("unknown", |target| target.kind.as_str());
+                println!("{kind} target {name}");
+            }
+        }
+        QueryOutput::Dot => {
+            let selected: BTreeSet<&str> = targets.iter().map(String::as_str).collect();
+            println!("digraph frost_query {{");
+            println!("  rankdir=LR;");
+            for name in &targets {
+                println!("  {name:?};");
+            }
+            for name in &targets {
+                let Some(target) = graph.targets.get(name) else {
+                    continue;
+                };
+                let mut deps: Vec<&str> = target
+                    .deps
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|dep| selected.contains(dep))
+                    .collect();
+                deps.sort_unstable();
+                for dep in deps {
+                    println!("  {name:?} -> {dep:?};");
+                }
+            }
+            println!("}}");
+        }
+    }
+
+    if truncated && format != QueryOutput::Json {
+        eprintln!("frost: stopped at the --limit; more paths exist and this list is not complete");
+    }
+    if targets.is_empty() {
+        // stdout stays empty so a pipeline sees nothing, but a person running
+        // this by hand should not have to guess whether the query matched
+        // nothing or the filter removed everything.
+        let reason = if opts.kind.is_some() || !opts.attr.is_empty() {
+            "nothing matched, or the --kind/--attr filters removed everything"
+        } else if matches!(function, QueryCmd::Owners { .. }) {
+            "no target declares those paths among its action inputs; a header \
+             read only through a depfile is build state, so `frost explain` \
+             reports it instead"
+        } else {
+            "nothing matched"
+        };
+        eprintln!("frost: {query}: {reason}");
+        return Ok(1);
+    }
+    Ok(0)
+}
+
 /// Compare scheduling strategies by planning them, not by running them.
 ///
 /// Every strategy is scored against the durations recorded in the journal, so
@@ -4390,7 +4697,7 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 27] = [
+    const FREE_TEXT: [&str; 28] = [
         // Seconds.
         "frost build::timeout",
         "frost test::timeout",
@@ -4416,6 +4723,7 @@ mod completion_contract_tests {
         "frost test::remote_timeout",
         "frost simulate::jobs",
         "frost bazel-dev::debounce_ms",
+        "frost query allpaths::limit",
         // Argv handed to another program, which owns its own grammar.
         "frost run::program_args",
         "frost watch::run",
