@@ -1,14 +1,18 @@
 # The application module. Note what is *not* here: greeting's output path.
 #
-# `deps` names the target, and `${deps}` expands to that target's declared
-# outputs, so where greeting writes its jar stays greeting's business. Writing
-# `../greeting/.frost/out/${config}/greeting.jar` by hand would work today and
-# break the moment the layout convention changes.
+# `${dep:LABEL}` resolves to the single declared output of a target this one
+# declared a dependency on, so where greeting writes its jar stays greeting's
+# business. Writing `../greeting/.frost/out/${config}/greeting.jar` by hand
+# would work today and break the moment the layout convention changes.
 #
-# One dependency means `${deps}` is one argv item, which is what `-cp` wants.
-# Joining several dependency outputs into a single path-separated argument is
-# the gap tracked in issue #158; until then, a module that needs two jars on
-# one classpath states them itself.
+# The expansion lands in argv, and argv is action-key material, so moving that
+# jar rebuilds this module rather than replaying a command that names a path
+# which no longer exists.
+#
+# `${deps}` (every dependency's outputs) and `${deps:LABEL}` (one dependency's
+# outputs) are the plural forms; both must occupy a whole argument, so neither
+# builds a path-separated classpath. A module needing two jars on one `-cp`
+# still writes that argument itself.
 
 [target.app]
 kind = "command"
@@ -17,7 +21,7 @@ deps = ["//greeting:greeting"]
 inputs = ["src/main/java/com/example/app/App.java"]
 outputs = [".frost/out/${config}/app.jar"]
 clean_dirs = [".frost/tmp/${config}/app-classes"]
-args = ["-cp", "${deps}", "-d", "${clean_dir}", "${in}"]
+args = ["-cp", "${dep://greeting:greeting}", "-d", "${clean_dir}", "${in}"]
 steps = [
   { tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
                                "--output", "${out}",
