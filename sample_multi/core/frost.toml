@@ -1,0 +1,15 @@
+# The shared bottom of the diamond. Both //text:text and //render:render
+# depend on it, so a change here reaches //apps/cli:cli by two routes.
+
+[target.core]
+kind = "cc_library"
+srcs = ["src/core.c"]
+includes = ["include"]
+# The generated header lives in the root package; the dep is what puts
+# gen/version.h on this compile's include path and in its order-only inputs.
+deps = ["//:gen_version"]
+
+[target.core_test]
+kind = "cc_test"
+srcs = ["tests/core_test.c"]
+deps = ["core"]

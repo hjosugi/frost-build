@@ -1,0 +1,12 @@
+#!/bin/sh
+# Generates gen/version.h. The output is deliberately constant: re-running the
+# genrule with an unchanged script produces identical bytes, so early cutoff
+# keeps every downstream compile cached rather than rebuilding the world.
+set -eu
+out="$1"
+cat > "$out" <<'EOF'
+#ifndef FROST_SAMPLE_MULTI_VERSION_H
+#define FROST_SAMPLE_MULTI_VERSION_H
+#define FROST_SAMPLE_MULTI_VERSION "1"
+#endif
+EOF

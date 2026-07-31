@@ -105,6 +105,18 @@ pub enum TargetKind {
 }
 
 impl TargetKind {
+    /// Every kind, so a caller that offers or validates the set cannot drift
+    /// from the enum by forgetting to add one.
+    pub const ALL: [TargetKind; 7] = [
+        TargetKind::CcBinary,
+        TargetKind::CcLibrary,
+        TargetKind::CcTest,
+        TargetKind::Genrule,
+        TargetKind::Test,
+        TargetKind::KofunBinary,
+        TargetKind::Command,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             TargetKind::CcBinary => "cc_binary",

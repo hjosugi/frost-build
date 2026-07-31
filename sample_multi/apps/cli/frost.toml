@@ -1,0 +1,6 @@
+# The top of the diamond, and the workspace default target.
+
+[target.cli]
+kind = "cc_binary"
+srcs = ["src/main.c"]
+deps = ["//text:text", "//render:render"]
