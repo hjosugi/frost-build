@@ -7,6 +7,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `${dep:LABEL}` and `${deps:LABEL}` in `command` and `test` arguments resolve
+  to the declared outputs of one named dependency, so a consumer stops
+  repeating the producer's output-path convention and a layout change stops
+  being a breaking change spread across the manifest. Only a declared
+  dependency resolves — reaching anything else would let the argv name a file
+  this target has no edge to, so the build could run before it existed.
+  `${dep:LABEL}` requires exactly one output, because a dependency with several
+  has no single path it could mean and first-wins would be silently wrong; the
+  error names the plural form. A dependency declaring only `output_dirs` is an
+  error for both, since the tree stamp Frost writes for an owned directory is
+  its bookkeeping rather than a path to hand to a tool. The expansion is argv,
+  and argv is action-key material, so a dependency that moves its output
+  rebuilds its consumers instead of replaying a command that names a path which
+  no longer exists. `sample_java` now uses it.
+
 - `frost query` answers the questions it claimed to. `owners <paths...>` is the
   file→target direction — "what must rebuild when this changes" — over declared
   action inputs, including the generated headers a genrule dependency

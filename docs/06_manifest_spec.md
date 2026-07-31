@@ -233,6 +233,8 @@ release and cross-device writes from colliding. Command arguments support:
 |---|---|
 | `${in}` | one argv item per declared `inputs` path |
 | `${deps}` | one argv item per output of declared target dependencies |
+| `${dep:LABEL}` | the single declared output of one declared dependency |
+| `${deps:LABEL}` | one argv item per output of one declared dependency |
 | `${outs}` | one argv item per declared output |
 | `${out}` | first declared output |
 | `${out_dir}` | parent directory of the first output |
@@ -244,8 +246,38 @@ release and cross-device writes from colliding. Command arguments support:
 | `${config}` | profile or platform/profile output-tree key |
 | `${profile}` / `${platform}` | selected names |
 
-The multi-value forms `${in}`, `${deps}`, `${outs}`, `${output_dirs}` and
-`${clean_dirs}` must occupy a complete argument. Static `env` values and the present-or-absent value of every
+`${dep:LABEL}` and `${deps:LABEL}` name one dependency instead of all of them,
+so a consumer does not repeat the producer's output-path convention:
+
+```toml
+[target.app]
+kind = "command"
+tool = "javac"
+deps = ["//greeting:greeting"]
+args = ["-cp", "${dep://greeting:greeting}", "-d", "${clean_dir}", "${in}"]
+```
+
+`LABEL` must appear in this target's `deps`; resolving anything else would let
+the argv name a file this target has no edge to, so the build could run before
+that file existed. `${dep:LABEL}` requires exactly one declared output — a
+dependency with several has no single path it could mean, and first-wins would
+be silently wrong, so it is an error naming `${deps:LABEL}` instead. A
+dependency that declares only `output_dirs` has no file output to substitute
+and is an error for both forms: the tree stamp Frost writes for an owned
+directory is its record of the contents, not a path for a tool. Reference the
+directory through the producing target's own `${output_dir}`, or declare a file
+output.
+
+The expansion lands in argv, which is action-key material, so a dependency that
+moves its output rebuilds its consumers rather than replaying a command naming
+a path that no longer exists.
+
+The multi-value forms `${in}`, `${deps}`, `${deps:LABEL}`, `${outs}`,
+`${output_dirs}` and `${clean_dirs}` must occupy a complete argument.
+`${dep:LABEL}` is single-valued and composes inside a larger argument, so
+`--flag=${dep:LABEL}` works. Neither plural form joins its items into one
+path-separated string; an argument like a Java classpath that needs several
+paths in one item is still written out by the author. Static `env` values and the present-or-absent value of every
 `pass_env` name participate in the action key. All other host variables are
 cleared; Frost then supplies its normal deterministic baseline and forces the
 locale to `C`.

@@ -336,11 +336,17 @@ impl BuildGraph {
                                 .flat_map(|dep| dep_outputs(&graph, dep))
                                 .map(|file| graph.files[file].path.clone())
                                 .collect::<Vec<_>>();
+                            let dependency_map = target
+                                .deps
+                                .iter()
+                                .map(|dep| (dep.clone(), dep_output_paths(&graph, dep)))
+                                .collect::<Vec<_>>();
                             let argv = expand_test_args(
                                 driver,
                                 &target.args,
                                 &target.inputs,
                                 &dependency_paths,
+                                &dependency_map,
                                 &tree,
                                 profile,
                                 platform,
@@ -425,6 +431,10 @@ impl BuildGraph {
                         }
                     }
                     let mut dependency_inputs = Vec::new();
+                    // Keyed by label as well as flattened, so `${dep:LABEL}`
+                    // can name one dependency's output without the manifest
+                    // repeating that dependency's layout convention.
+                    let mut dependency_map: Vec<(String, Vec<String>)> = Vec::new();
                     for dep in &target.deps {
                         for output in dep_outputs(&graph, dep) {
                             if !inputs.contains(&output) {
@@ -432,6 +442,7 @@ impl BuildGraph {
                             }
                             dependency_inputs.push(output);
                         }
+                        dependency_map.push((dep.clone(), dep_output_paths(&graph, dep)));
                     }
                     let input_paths = target.inputs.clone();
                     let dependency_paths = dependency_inputs
@@ -463,6 +474,7 @@ impl BuildGraph {
                         &target.args,
                         &input_paths,
                         &dependency_paths,
+                        &dependency_map,
                         &outputs,
                         &output_dirs,
                         &clean_dirs,
@@ -492,6 +504,7 @@ impl BuildGraph {
                             &step.args,
                             &input_paths,
                             &dependency_paths,
+                            &dependency_map,
                             &outputs,
                             &output_dirs,
                             &clean_dirs,
@@ -1114,6 +1127,88 @@ impl PathExt {
     }
 }
 
+/// Declared outputs of `dep`, per label, for `${dep:...}` / `${deps:...}`.
+///
+/// The tree stamp Frost writes for an owned `output_dirs` target is excluded:
+/// it is Frost's record of the directory's contents, not a path any tool should
+/// be handed. A target that owns only directories therefore resolves to nothing
+/// here, and referencing it is an error that says so.
+fn dep_output_paths(graph: &BuildGraph, dep: &str) -> Vec<String> {
+    graph
+        .targets
+        .get(dep)
+        .map(|target| {
+            target
+                .outputs
+                .iter()
+                .map(|&id| graph.files[id].path.clone())
+                .filter(|path| !path.starts_with(&format!("{TREE_STAMP_DIR}/")))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve one `${dep:LABEL}` / `${deps:LABEL}` label against the target's
+/// declared dependencies.
+///
+/// Only declared dependencies resolve. Reaching an arbitrary target would make
+/// the argv depend on a target this one has no edge to, so the build could run
+/// before that output existed.
+fn dep_reference<'a>(
+    map: &'a [(String, Vec<String>)],
+    label: &str,
+    arg: &str,
+) -> Result<&'a [String]> {
+    let Some((_, outputs)) = map.iter().find(|(name, _)| name == label) else {
+        let declared: Vec<&str> = map.iter().map(|(name, _)| name.as_str()).collect();
+        bail!(
+            "command arg {arg:?} references {label:?}, which is not a declared dependency \
+             (declared: {})",
+            if declared.is_empty() {
+                "none".to_string()
+            } else {
+                declared.join(", ")
+            }
+        );
+    };
+    if outputs.is_empty() {
+        bail!(
+            "command arg {arg:?} references {label:?}, which declares no file outputs; \
+             a target that owns only output_dirs has no path to substitute"
+        );
+    }
+    Ok(outputs)
+}
+
+/// Replace every `${dep:LABEL}` in one argument. Single-valued by definition:
+/// a dependency with several outputs has no one path this could mean, so it is
+/// an error rather than a silent first-wins pick.
+fn expand_dep_singles(arg: &str, map: &[(String, Vec<String>)]) -> Result<String> {
+    const OPEN: &str = "${dep:";
+    let mut out = String::new();
+    let mut rest = arg;
+    while let Some(start) = rest.find(OPEN) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + OPEN.len()..];
+        let Some(end) = after.find('}') else {
+            bail!("unterminated ${{dep:...}} in command arg {arg:?}");
+        };
+        let label = &after[..end];
+        let outputs = dep_reference(map, label, arg)?;
+        if outputs.len() != 1 {
+            bail!(
+                "command arg {arg:?} uses ${{dep:{label}}} but {label:?} declares {} outputs; \
+                 use ${{deps:{label}}} as a whole argument to pass all of them",
+                outputs.len()
+            );
+        }
+        out.push_str(&outputs[0]);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 fn dep_outputs(graph: &BuildGraph, dep: &str) -> Vec<FileId> {
     graph
         .targets
@@ -1253,6 +1348,7 @@ fn expand_command_args(
     args: &[String],
     inputs: &[String],
     dependency_inputs: &[String],
+    dependency_map: &[(String, Vec<String>)],
     outputs: &[String],
     output_dirs: &[String],
     clean_dirs: &[String],
@@ -1263,6 +1359,13 @@ fn expand_command_args(
 ) -> Result<Vec<String>> {
     let mut argv = vec![driver.to_string()];
     for arg in args {
+        if let Some(label) = arg
+            .strip_prefix("${deps:")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            argv.extend(dep_reference(dependency_map, label, arg)?.iter().cloned());
+            continue;
+        }
         match arg.as_str() {
             "${in}" => argv.extend(inputs.iter().cloned()),
             "${deps}" => argv.extend(dependency_inputs.iter().cloned()),
@@ -1275,12 +1378,13 @@ fn expand_command_args(
                     || arg.contains("${outs}")
                     || arg.contains("${output_dirs}")
                     || arg.contains("${clean_dirs}")
+                    || arg.contains("${deps:")
                 {
                     bail!(
                         "multi-value command variables must occupy one complete argument: {arg:?}"
                     );
                 }
-                let mut expanded = arg.clone();
+                let mut expanded = expand_dep_singles(arg, dependency_map)?;
                 if expanded.contains("${out}") || expanded.contains("${out_dir}") {
                     // A target that only owns directories has no single output
                     // path to name, which is a manifest error rather than a
@@ -1319,6 +1423,7 @@ fn expand_command_args(
                 if expanded.contains("${") {
                     bail!(
                         "unknown command variable in {arg:?} (supported: ${{in}}, ${{deps}}, \
+                         ${{dep:LABEL}}, ${{deps:LABEL}}, \
                          ${{out}}, ${{out_dir}}, ${{outs}}, ${{output_dir}}, \
                          ${{output_dirs}}, ${{clean_dir}}, ${{clean_dirs}}, \
                          ${{depfile}}, ${{config}}, ${{profile}}, ${{platform}})"
@@ -1331,25 +1436,35 @@ fn expand_command_args(
     Ok(argv)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expand_test_args(
     driver: &str,
     args: &[String],
     inputs: &[String],
     dependency_inputs: &[String],
+    dependency_map: &[(String, Vec<String>)],
     config: &str,
     profile: &str,
     platform: &str,
 ) -> Result<Vec<String>> {
     let mut argv = vec![driver.to_string()];
     for arg in args {
+        if let Some(label) = arg
+            .strip_prefix("${deps:")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            argv.extend(dep_reference(dependency_map, label, arg)?.iter().cloned());
+            continue;
+        }
         match arg.as_str() {
             "${in}" => argv.extend(inputs.iter().cloned()),
             "${deps}" => argv.extend(dependency_inputs.iter().cloned()),
             _ => {
-                if arg.contains("${in}") || arg.contains("${deps}") {
+                if arg.contains("${in}") || arg.contains("${deps}") || arg.contains("${deps:") {
                     bail!("multi-value test variables must occupy one complete argument: {arg:?}");
                 }
-                let expanded = expand_config_template(arg, config, profile, platform)?;
+                let expanded = expand_dep_singles(arg, dependency_map)?;
+                let expanded = expand_config_template(&expanded, config, profile, platform)?;
                 argv.push(expanded);
             }
         }
@@ -1788,6 +1903,132 @@ mod tests {
         );
         assert_eq!(graph.somepath("util", "gen").unwrap(), None);
         assert!(graph.deps_closure("nope").is_err());
+    }
+
+    fn dep_reference_manifest(user_args: &str) -> String {
+        format!(
+            r#"
+            [toolchain.tools]
+            pack = "pack"
+
+            [target.one]
+            kind = "genrule"
+            cmd = "sh one.sh ${{out}}"
+            inputs = ["one.sh"]
+            outputs = ["gen/one.txt"]
+
+            [target.two]
+            kind = "genrule"
+            cmd = "sh two.sh ${{outs}}"
+            inputs = ["two.sh"]
+            outputs = ["gen/two-a.txt", "gen/two-b.txt"]
+
+            [target.tree]
+            kind = "command"
+            tool = "pack"
+            inputs = ["tree.in"]
+            output_dirs = ["dist/${{config}}"]
+            args = ["--out", "${{output_dir}}"]
+
+            [target.user]
+            kind = "command"
+            tool = "pack"
+            inputs = ["user.in"]
+            outputs = [".frost/out/${{config}}/user.bin"]
+            deps = ["one", "two", "tree"]
+            args = {user_args}
+            "#
+        )
+    }
+
+    fn user_argv(user_args: &str) -> Result<Vec<String>> {
+        let manifest = Manifest::parse_str(&dep_reference_manifest(user_args))?;
+        let graph = BuildGraph::from_manifest(&manifest)?;
+        let action = graph
+            .actions
+            .iter()
+            .find(|action| action.target == "user")
+            .expect("user action");
+        Ok(action.argv.clone())
+    }
+
+    #[test]
+    fn dep_references_name_one_dependency_without_repeating_its_layout() {
+        // The whole point: the referencing target never writes gen/one.txt.
+        let argv = user_argv(r#"["--single", "${dep:one}"]"#).unwrap();
+        assert_eq!(argv, vec!["pack", "--single", "gen/one.txt"]);
+
+        // A reference composes inside a larger argument, which is what a
+        // `-Dkey=path` style flag needs.
+        let argv = user_argv(r#"["--flag=${dep:one}"]"#).unwrap();
+        assert_eq!(argv, vec!["pack", "--flag=gen/one.txt"]);
+
+        // Several references in one argument each resolve.
+        let argv = user_argv(r#"["${dep:one}:${dep:one}"]"#).unwrap();
+        assert_eq!(argv, vec!["pack", "gen/one.txt:gen/one.txt"]);
+
+        // The plural form takes every output of one dependency, as separate
+        // argv items, and must occupy a whole argument like the other
+        // multi-value variables.
+        let argv = user_argv(r#"["--many", "${deps:two}"]"#).unwrap();
+        assert_eq!(
+            argv,
+            vec!["pack", "--many", "gen/two-a.txt", "gen/two-b.txt"]
+        );
+        let error = user_argv(r#"["--many=${deps:two}"]"#)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("one complete argument"), "{error}");
+    }
+
+    #[test]
+    fn dep_references_reject_what_they_cannot_mean() {
+        // Not a declared dependency: resolving it would let the argv name a
+        // file this target has no edge to, so the build could run before it
+        // existed.
+        let error = user_argv(r#"["${dep:absent}"]"#).unwrap_err().to_string();
+        assert!(error.contains("not a declared dependency"), "{error}");
+        assert!(error.contains("one, two, tree"), "{error}");
+
+        // Several outputs have no single path this could mean. First-wins
+        // would be silently wrong, so it names the plural form instead.
+        let error = user_argv(r#"["${dep:two}"]"#).unwrap_err().to_string();
+        assert!(error.contains("declares 2 outputs"), "{error}");
+        assert!(error.contains("${deps:two}"), "{error}");
+
+        // A target that owns only a directory has no file output to
+        // substitute, and its tree stamp is Frost's bookkeeping rather than
+        // a path to hand to a tool.
+        let error = user_argv(r#"["${dep:tree}"]"#).unwrap_err().to_string();
+        assert!(error.contains("declares no file outputs"), "{error}");
+        let error = user_argv(r#"["${deps:tree}"]"#).unwrap_err().to_string();
+        assert!(error.contains("declares no file outputs"), "{error}");
+
+        let error = user_argv(r#"["${dep:one"]"#).unwrap_err().to_string();
+        assert!(error.contains("unterminated"), "{error}");
+    }
+
+    #[test]
+    fn a_dependency_that_moves_its_output_changes_the_referencing_argv() {
+        // The expansion lands in argv, and argv is action-key material, so the
+        // dependent rebuilds rather than replaying a command naming a path
+        // that no longer exists. That is the property that makes the
+        // indirection safe to rely on.
+        let before = user_argv(r#"["${dep:one}"]"#).unwrap();
+        let moved = dep_reference_manifest(r#"["${dep:one}"]"#)
+            .replace("gen/one.txt", "gen/renamed/one.txt");
+        let manifest = Manifest::parse_str(&moved).unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+        let after = graph
+            .actions
+            .iter()
+            .find(|action| action.target == "user")
+            .expect("user action")
+            .argv
+            .clone();
+        assert_eq!(before, vec!["pack", "gen/one.txt"]);
+        assert_eq!(after, vec!["pack", "gen/renamed/one.txt"]);
+        assert_ne!(before, after);
     }
 
     #[test]
