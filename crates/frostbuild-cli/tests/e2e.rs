@@ -428,6 +428,93 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn a_consumer_names_its_dependency_instead_of_that_dependency_s_layout() {
+    let ws = Workspace::empty("dep-references");
+    // Nothing below writes `gen/`, `.frost/out/` or a profile directory by
+    // hand. That is the whole claim: the producer owns where its output goes,
+    // and moving it is not a breaking change for the consumers.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["report"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.greeting]
+kind = "genrule"
+cmd = "printf hello > ${out}"
+inputs = ["seed.txt"]
+outputs = ["gen/greeting.txt"]
+
+[target.parts]
+kind = "genrule"
+cmd = "printf one > gen/a.txt; printf two > gen/b.txt"
+inputs = ["seed.txt"]
+outputs = ["gen/a.txt", "gen/b.txt"]
+
+# A genrule consuming another genrule, through the shell, with both forms.
+[target.bundle]
+kind = "genrule"
+cmd = "cat ${dep:greeting} ${deps:parts} > ${out}"
+deps = ["greeting", "parts"]
+outputs = ["gen/bundle.txt"]
+
+# A command consuming the same output through its environment rather than
+# through argv, which is the surface a tool configured by env needs.
+[target.report]
+kind = "command"
+tool = "sh"
+args = ["-c", "printf '%s' \"$(cat $GREETING) $(cat gen/bundle.txt)\" > ${out}"]
+env = { GREETING = "${dep:greeting}" }
+deps = ["greeting", "bundle"]
+outputs = [".frost/out/${config}/report.txt"]
+"#,
+    );
+    ws.write("seed.txt", "1");
+
+    let report = ws.dir.join(".frost/out/debug/report.txt");
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "dependency-reference build failed:\n{out}");
+    assert_eq!(read(&ws.dir.join("gen/bundle.txt")), "helloonetwo");
+    assert_eq!(read(&report), "hello helloonetwo");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // The point of the indirection: the producer relocates its output and no
+    // consumer is edited. Both the genrule cmd and the env value follow it,
+    // and because each expansion is action-key material the consumers rerun
+    // rather than replaying a command naming a path that no longer exists.
+    let moved = read(&ws.dir.join("frost.toml")).replace("gen/greeting.txt", "gen/text/hello.txt");
+    ws.write("frost.toml", &moved);
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "rebuild after the producer moved failed:\n{out}");
+    assert!(
+        ws.dir.join("gen/text/hello.txt").is_file(),
+        "the producer must write its new path:\n{out}"
+    );
+    assert_eq!(
+        read(&report),
+        "hello helloonetwo",
+        "consumers still resolve"
+    );
+    assert!(
+        out.contains("RUN report"),
+        "the env reference must be action-key material:\n{out}"
+    );
+}
+
+#[test]
 // A shell wrapper stands in for a tool whose dependency protocol is not
 // Makefile-shaped; `cmd.exe` adds nothing to what is tested here. The MSVC
 // `showincludes` path is covered by unit tests until Windows CI runs the E2E
