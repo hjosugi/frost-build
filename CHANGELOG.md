@@ -7,6 +7,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Changed
 
+- Failure messages answer the next question, not just the current one. A
+  mistyped target now offers up to three candidates instead of one, compares
+  labels by their parts so `//apps/cli:cl` suggests `//apps/cli:cli` rather than
+  whatever shares the longest prefix, and points at `frost query deps //...`
+  instead of printing a wall of names when a workspace has many. An unknown
+  manifest key adds `did you mean \`srcs\`?` to serde's list of all twenty-three
+  accepted keys. A tool frost cannot find now says which `[toolchain]` line
+  declared it, how many PATH entries were searched, which targets need it, and
+  to run `frost doctor` — previously it said only that the tool was not on PATH.
+
 - The test summary counts a skipped test as skipped rather than failed. A test
   that never ran because something upstream failed was reported as a failure,
   which blames the wrong file; the exit code is unchanged, since a build with
