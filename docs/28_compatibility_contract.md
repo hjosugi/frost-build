@@ -36,10 +36,14 @@ end of this document.
 | `2` | refusal | frost could not run the work as asked | an unparsable command line; an unknown target, profile or platform; a manifest that does not parse or does not validate; a missing or unreadable workspace; a configured tool that is not executable; an internal error |
 
 The distinction that matters to a script is `1` versus `2`: `1` is an answer
-about your code, `2` is an answer about your invocation or environment.
-`exit_codes_separate_a_bad_invocation_from_a_bad_build` runs one invocation
-from each row against a real workspace, so a new failure path has to choose a
-class rather than inherit one.
+about your code, `2` is an answer about your invocation or environment. A
+mistyped target name, an unreadable `frost.toml` and a tool frost cannot find
+are all `2`; a compile or test that ran and failed is `1`.
+`exit_codes_separate_your_code_from_your_invocation` drives one case of each
+through the real binary, because a document that says so and a binary that does
+so are different claims; `exit_codes_separate_a_bad_invocation_from_a_bad_build`
+covers the rest of the refusal rows — an unknown profile, an unknown platform, a
+query for a target that does not exist — on every host rather than only on unix.
 
 ### `frost lint --json`
 

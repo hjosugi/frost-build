@@ -119,6 +119,20 @@ impl Workspace {
         (out.status.success(), text)
     }
 
+    /// The exit code, not just whether it was zero. The contract in docs/28
+    /// distinguishes 1 ("your code") from 2 ("your invocation"), and a bool
+    /// cannot tell those apart.
+    fn frost_code(&self, args: &[&str]) -> (i32, String) {
+        let out = Command::new(frost_bin())
+            .arg("-C")
+            .arg(&self.dir)
+            .args(args)
+            .output()
+            .expect("spawn frost");
+        let text = normalized_output(&out.stdout) + &normalized_output(&out.stderr);
+        (out.status.code().unwrap_or(-1), text)
+    }
+
     fn frost_env(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
         let mut command = Command::new(frost_bin());
         command.arg("-C").arg(&self.dir).args(args);
@@ -425,6 +439,129 @@ outputs = [".frost/out/${config}/report.txt"]
         !out.contains("RUN report"),
         "an identical tree must cut the dependent off:\n{out}"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_mistyped_target_is_answered_with_candidates() {
+    let ws = Workspace::multi("diagnostics-target");
+    // A workspace names its targets by label, and the package the author
+    // already typed is almost always the one they meant.
+    let (ok, out) = ws.frost(&["build", "//apps/cli:cl"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("unknown target"), "{out}");
+    assert!(
+        out.contains("//apps/cli:cli"),
+        "the near label must be offered:\n{out}"
+    );
+
+    // Nothing similar is not answered with a wrong guess.
+    let (ok, out) = ws.frost(&["build", "//apps/cli:zzzzzzzzzz"]);
+    assert!(!ok, "{out}");
+    assert!(!out.contains("did you mean"), "{out}");
+}
+
+#[test]
+#[cfg(unix)]
+fn a_missing_tool_says_where_it_looked_and_who_needed_it() {
+    let ws = Workspace::empty("diagnostics-tool");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["packager"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+mytool = "frost-e2e-definitely-not-installed"
+
+[target.packager]
+kind = "command"
+tool = "mytool"
+inputs = ["a.txt"]
+outputs = [".frost/out/${config}/o.txt"]
+args = ["x"]
+"#,
+    );
+    ws.write("a.txt", "one");
+
+    let (code, out) = ws.frost_code(&["build"]);
+    // The three questions someone actually has, in order.
+    assert!(out.contains("frost-e2e-definitely-not-installed"), "{out}");
+    assert!(
+        out.contains("[toolchain.tools].mytool"),
+        "which line to go and look at:\n{out}"
+    );
+    assert!(out.contains("PATH"), "where it looked:\n{out}");
+    assert!(
+        out.contains("required by packager"),
+        "which target breaks:\n{out}"
+    );
+    assert!(out.contains("frost doctor"), "what to do next:\n{out}");
+    // A workspace frost cannot run as asked, not a build that ran and failed.
+    assert_eq!(code, 2, "{out}");
+}
+
+#[test]
+#[cfg(unix)]
+fn exit_codes_separate_your_code_from_your_invocation() {
+    // docs/28 promises 0 / 1 / 2 mean three different things. The existing
+    // unit test checks the document says so; this checks frost does.
+    let ws = Workspace::empty("diagnostics-exit-codes");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["ok"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.ok]
+kind = "test"
+tool = "sh"
+args = ["-c", "true"]
+inputs = ["a.txt"]
+sandbox = false
+
+[target.broken]
+kind = "test"
+tool = "sh"
+args = ["-c", "exit 1"]
+inputs = ["a.txt"]
+sandbox = false
+"#,
+    );
+    ws.write("a.txt", "one");
+
+    // 0: the requested work completed.
+    let (code, out) = ws.frost_code(&["test", "ok"]);
+    assert_eq!(code, 0, "{out}");
+
+    // 1: the work ran and did not succeed. This is an answer about your code.
+    let (code, out) = ws.frost_code(&["test", "broken"]);
+    assert_eq!(code, 1, "{out}");
+
+    // 2: frost could not run the work as asked. An answer about your
+    // invocation, which is the distinction a script needs.
+    let (code, out) = ws.frost_code(&["test", "nonexistent-target"]);
+    assert_eq!(code, 2, "{out}");
+    let (code, out) = ws.frost_code(&["--not-a-flag"]);
+    assert_eq!(code, 2, "{out}");
+
+    // A manifest frost cannot read is also an invocation problem, not a
+    // failing build.
+    ws.write("frost.toml", "[target.app\n");
+    let (code, out) = ws.frost_code(&["build"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("frost.toml:1:"), "with the position:\n{out}");
 }
 
 #[test]
@@ -5761,10 +5898,12 @@ fn an_unknown_target_offers_the_targets_it_might_have_been() {
     assert!(out.contains("unknown target \"cli\""), "{out}");
     assert!(out.contains("did you mean \"//apps/cli:cli\"?"), "{out}");
 
-    // A typo inside a label stays inside its package.
+    // A typo inside a label stays inside its package: `//core:core` is what
+    // was meant, so it leads the list even when other names are near enough to
+    // be offered after it.
     let (ok, out) = ws.frost(&["build", "//core:cor"]);
     assert!(!ok, "{out}");
-    assert!(out.contains("did you mean \"//core:core\"?"), "{out}");
+    assert!(out.contains("did you mean \"//core:core\""), "{out}");
 
     // Nothing close: the known set, since this workspace is small enough to
     // print. A suggestion that is not actually similar is worse than none.
@@ -5872,10 +6011,15 @@ fn a_missing_tool_says_where_it_looked_and_what_it_blocks() {
     // One message carrying all four things a reader needs: which key asked for
     // it, what it named, where frost looked, and what stops working until it
     // is there. Any one of them alone leaves the next step a guess.
-    assert!(out.contains("[toolchain.tools] absent"), "{out}");
+    //
+    // `a_missing_tool_says_where_it_looked_and_who_needed_it` asks the same of
+    // the same message and is not a duplicate of this: it names one target and
+    // runs only on unix, so it cannot see whether the attribution sorts and
+    // joins more than one, or whether any of this survives on Windows.
+    assert!(out.contains("[toolchain.tools].absent"), "{out}");
     assert!(out.contains("frost-e2e-definitely-absent-tool"), "{out}");
-    assert!(out.contains("looked for it on PATH"), "{out}");
-    assert!(out.contains("needed by first, second"), "{out}");
+    assert!(out.contains("PATH entries"), "{out}");
+    assert!(out.contains("required by first, second"), "{out}");
     assert!(out.contains("frost doctor"), "{out}");
 }
 

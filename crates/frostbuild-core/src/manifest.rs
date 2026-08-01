@@ -64,40 +64,50 @@ pub fn default_arflags() -> &'static [String] {
     })
 }
 
-/// The closest candidate to `input`, when one is close enough to be worth
-/// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
-/// Up to `limit` candidates similar enough to `input` to be worth offering,
-/// nearest first.
+/// The closest candidates to `input`, best first, at most `limit` of them.
 ///
-/// One suggestion is enough when a name was mistyped; a label is different,
-/// because `cli` in a workspace with `//apps/cli:cli` and `//tools/cli:cli` has
-/// two right answers and picking one silently is worse than showing both.
-pub fn closest_several<'a>(
+/// Labels are scored by their parts rather than as whole strings. In a
+/// workspace every target is `//some/package:name`, and edit distance over the
+/// whole label is dominated by the package prefix — `//apps/cli:cli` is one
+/// edit from `//apps/cli:clip` and eight from `//core:cli`, though only one of
+/// those is a plausible typo of the name.
+///
+/// The name decides and the package breaks ties, in that order. The name is
+/// what identifies a target; the package only says where it lives. So an exact
+/// name in another package still beats a distant name in the one that was
+/// typed — someone who writes `//core:cli` when `//apps/cli:cli` exists got
+/// the location wrong, not the thing.
+pub fn suggestions<'a>(
     input: &str,
     candidates: impl IntoIterator<Item = &'a str>,
     limit: usize,
 ) -> Vec<&'a str> {
-    let budget = suggestion_budget(input);
-    let mut ranked: Vec<(usize, &str)> = candidates
-        .into_iter()
-        .filter_map(|candidate| {
-            // A label is matched on its whole spelling and on the name after
-            // the colon, whichever is closer: someone typing `cli` means
-            // `//apps/cli:cli`, and the edit distance between those is large.
-            let whole = edit_distance(input, candidate);
-            let local = candidate
-                .rsplit_once(':')
-                .map(|(_, name)| edit_distance(input, name))
-                .unwrap_or(usize::MAX);
-            let distance = whole.min(local);
-            (distance <= budget).then_some((distance, candidate))
-        })
-        .collect();
-    // Nearest first, and alphabetical within a distance so the list does not
-    // depend on the order the graph happened to hand them over in.
-    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
-    ranked.truncate(limit);
-    ranked.into_iter().map(|(_, name)| name).collect()
+    let (input_package, input_name) = split_label(input);
+    let budget = 1 + input_name.chars().count() / 3;
+    let mut scored: Vec<(usize, usize, &str)> = Vec::new();
+    for candidate in candidates {
+        let (package, name) = split_label(candidate);
+        let name_distance = edit_distance(input_name, name);
+        if name_distance <= budget {
+            scored.push((
+                name_distance,
+                edit_distance(input_package, package),
+                candidate,
+            ));
+        }
+    }
+    scored.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    scored.truncate(limit);
+    scored.into_iter().map(|(_, _, name)| name).collect()
+}
+
+/// `//pkg:name` into its parts. A bare name is its own name in no package, so
+/// single-manifest workspaces compare exactly as they always did.
+fn split_label(label: &str) -> (&str, &str) {
+    match label.rsplit_once(':') {
+        Some((package, name)) => (package, name),
+        None => ("", label),
+    }
 }
 
 /// One edit per three characters: short names need a near-exact match, longer
@@ -2285,6 +2295,103 @@ fn toml_array(values: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn suggestions_prefer_the_package_the_author_already_named() {
+        let known = [
+            "//apps/cli:cli",
+            "//apps/cli:clip",
+            "//core:core",
+            "//core:core_test",
+        ];
+
+        // The package is already right, so the near name in it comes first.
+        let hints = suggestions("//apps/cli:cl", known, 3);
+        assert_eq!(hints.first(), Some(&"//apps/cli:cli"));
+
+        // Comparing whole labels would rank by prefix length instead of by the
+        // part that was actually mistyped, which is the bug this avoids.
+        let hints = suggestions("//core:cor", known, 3);
+        assert_eq!(hints.first(), Some(&"//core:core"));
+
+        // The package only breaks ties. Both of these are one edit from the
+        // typed name, so the one in the package already named wins -- and
+        // dropping the package term entirely would sort them alphabetically
+        // and pick the other.
+        let tie = ["//apps/cli:clx", "//core:clx"];
+        assert_eq!(
+            suggestions("//core:cli", tie, 3).first(),
+            Some(&"//core:clx")
+        );
+
+        // But an exact name elsewhere beats a distant name here: someone who
+        // writes //core:cli when //apps/cli:cli exists got the location wrong,
+        // not the thing.
+        let split = ["//apps/cli:cli", "//core:cty"];
+        assert_eq!(
+            suggestions("//core:cli", split, 3).first(),
+            Some(&"//apps/cli:cli")
+        );
+
+        // A bare name in a single-manifest workspace behaves as it always did.
+        assert_eq!(suggestions("parsel", ["parser", "walker"], 3), ["parser"]);
+
+        // Nothing similar suggests nothing. A wrong suggestion is worse than
+        // none, because it sends the reader somewhere confidently.
+        assert!(suggestions("zzzzzzzz", ["parser", "walker"], 3).is_empty());
+
+        // At most `limit`, best first.
+        let hints = suggestions("parse", ["parser", "parsex", "parsed", "parseq"], 2);
+        assert_eq!(hints.len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_key_is_told_which_key_was_meant() {
+        // serde names all twenty-three accepted keys, which buries the one
+        // that matters.
+        let error = Manifest::parse_str(
+            r#"
+            [target.app]
+            kind = "cc_binary"
+            src = ["main.c"]
+            "#,
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("unknown field `src`"), "{text}");
+        assert!(text.contains("did you mean `srcs`?"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_resembles_nothing_gets_no_invented_suggestion() {
+        let error = Manifest::parse_str(
+            r#"
+            [target.app]
+            kind = "cc_binary"
+            srcs = ["main.c"]
+            quantumflux = 1
+            "#,
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("unknown field `quantumflux`"), "{text}");
+        assert!(!text.contains("did you mean"), "{text}");
+    }
+
+    #[test]
+    fn a_broken_manifest_says_where_it_broke() {
+        // Line, column, the offending line and a caret. The span comes from
+        // `toml`, so this notices a dependency bump that takes it away; the
+        // rendering is ours, because `frost lsp` needs the position as a range
+        // rather than as a sentence, and `path:line:column:` is what an editor
+        // and a terminal both already know how to read.
+        let error = Manifest::parse_str("[target.app\nkind = \"cc_binary\"\n").unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("frost.toml:1:12:"), "{text}");
+        assert!(text.contains("[target.app"), "{text}");
+        assert!(text.contains('^'), "{text}");
+    }
+
     use super::*;
 
     const OK: &str = r#"

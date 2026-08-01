@@ -7,22 +7,19 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Changed
 
-- Failure messages say where and what next, not only what. A manifest error is
-  now `path:line:column: problem` — workspace-relative, so it is the same on
-  every machine — with the offending line, a caret over the span the parser
-  recorded, and `did you mean \`srcs\`?` when a valid alternative is close to
-  what was written. An unknown target offers up to three labels it might have
-  been rather than one, because a bare name in a multi-package workspace can
-  match several and choosing one silently sends the reader to the wrong
-  package; past a handful of targets it names `frost query deps //...` instead
-  of printing them all. A configured tool that is not executable says which
-  manifest key declared it, where frost looked, which targets needed it and to
-  run `frost doctor` — in one message, because any one of those alone leaves
-  the next step a guess. The position lives on a `ManifestError` rather than
-  inside a formatted string, so `frost lsp` puts its squiggle on the bytes the
-  parser identified and shows the sentence without the position repeated in it.
-  docs/28 gains the exit-code classification table, with a test that runs one
-  invocation from each row.
+- Failure messages answer the next question, not just the current one. A
+  mistyped target now offers up to three candidates instead of one, compares
+  labels by their parts so `//apps/cli:cl` suggests `//apps/cli:cli` rather than
+  whatever shares the longest prefix, and points at `frost query deps //...`
+  instead of printing a wall of names when a workspace has many. An unknown
+  manifest key adds `did you mean \`srcs\`?` to serde's list of all twenty-three
+  accepted keys. A tool frost cannot find now says which `[toolchain]` line
+  declared it, how many PATH entries were searched, which targets need it, and
+  to run `frost doctor` — previously it said only that the tool was not on PATH.
+  The position lives on a `ManifestError` rather than only inside the
+  formatted string, so `frost lsp` puts its squiggle on the bytes the parser
+  identified and shows the sentence without the position repeated in it.
+  docs/28 gains the exit-code classification table.
 
 - The test summary counts a skipped test as skipped rather than failed. A test
   that never ran because something upstream failed was reported as a failure,
