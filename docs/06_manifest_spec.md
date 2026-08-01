@@ -645,8 +645,8 @@ not change what a person sees.
 `would_run`, `may_run`. These are stable names of their own, deliberately not
 the display strings — the terminal says "cache miss" for an action that ran,
 which is right on a terminal and wrong in a field a machine switches on.
-`detail` appears only when there is something to say, so its absence means
-nothing went wrong rather than requiring a comparison against an empty string.
+`detail` is `null` unless there is something to say, so a consumer tests it for
+null rather than comparing against an empty string.
 
 The events are the same ones the progress display consumes, written by the same
 thread, so a dashboard and a human cannot disagree about what happened.
@@ -663,3 +663,45 @@ A fully cached rerun takes the all-cached fast path and reports a single
 `all_cached` event rather than one per action. That is what keeps that path
 O(1), and it is why comparing a cold build's events to a warm one's compares
 two different things.
+
+### A JUnit report from the stream
+
+`scripts/frost_junit.py` converts the stream to the JUnit XML that CI systems
+already render, and to a Markdown summary for `$GITHUB_STEP_SUMMARY`:
+
+```sh
+frost test --all --keep-going --no-tui --build-event-json events.ndjson
+python3 scripts/frost_junit.py events.ndjson \
+    --output junit.xml --summary "$GITHUB_STEP_SUMMARY"
+```
+
+A script rather than a subcommand, because the shape of a test report is a
+property of the CI system reading it, and one vendor's dialect does not belong
+inside the build engine. `.github/workflows/ci.yml` runs it on `sample_multi`,
+which is what makes the rendering something you can look at rather than
+something this document asserts.
+
+Two of its decisions are about *not* reporting a green build that was not:
+
+- A build that broke before any test ran has no test events, and a report of
+  zero tests and zero failures reads as "nothing wrong". So a non-test action
+  that did not pass is reported too, in a `build` suite. `--all-actions` adds
+  the ones that passed, which are noise in a test report.
+- A fully cached rerun has no per-action events either. It becomes one passing
+  case that says so.
+
+A test that passed only on a retry is a `flakyFailure` — surefire's spelling —
+*and* a `system-out` line, so a viewer that has never heard of the element
+still shows that the pass was not free. Shards keep their `#0/3` marker in the
+case name, because two cases with the same name are deduplicated by most
+viewers, hiding half the work.
+
+**On a schema it does not know.** A stream whose `schema` is not the one the
+script was written against is refused, with the exit code frost uses for "could
+not run the work as asked" — a bump means a field changed meaning or left, and
+reading it anyway would report the wrong thing confidently. Unknown *events*
+and unknown *fields* are ignored instead, which is the other half of the
+additive promise: a stream that grew a field must not break a reader. The one
+addition it cannot absorb silently is an unknown `result`, which is reported as
+an `error` rather than a pass — guessing green would hide exactly the outcome
+the reader was too old to understand.

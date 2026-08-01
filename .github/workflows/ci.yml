@@ -68,6 +68,66 @@ jobs:
         run: cargo test -p frostbuild-cli --test e2e daemon_build_status_and_stop --locked -- --nocapture
       - run: cargo test -p frostbuild-cli --test e2e --locked -- --test-threads 1 --nocapture
 
+  # The last of #136's acceptance criteria is the one that cannot be met by a
+  # test: that the JUnit conversion actually *appears* in CI. A unit test can
+  # assert the XML is well formed; only a real run can show it rendered. So
+  # this job builds a real workspace, converts the stream frost wrote, and
+  # writes the result to the job summary — where it is visible without
+  # downloading anything — as well as uploading the XML for anyone who wants to
+  # feed it to a viewer.
+  #
+  # It is its own job rather than three more steps on `cargo` so that a failure
+  # here names itself instead of being read as a broken test suite, and so the
+  # gate is not made slower by a demonstration.
+  junit:
+    name: JUnit report from the event stream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build -p frostbuild-cli --locked
+      - name: Build and test sample_multi, recording the event stream
+        # --keep-going so a failure produces a report of everything else rather
+        # than a report of the first thing that broke.
+        run: |
+          target/debug/frost -C sample_multi test --all --keep-going --no-tui \
+            --build-event-json events.ndjson
+      # Runs whether or not the build passed: a report of a failing build is
+      # the case the report exists for. `always()` would also run it on a
+      # cancelled job, which has nothing to report.
+      - name: Convert the stream to JUnit XML
+        if: success() || failure()
+        run: |
+          python3 scripts/frost_junit.py events.ndjson \
+            --output junit.xml --summary "$GITHUB_STEP_SUMMARY"
+      # A green report proves the pipeline; it does not show the case the
+      # report exists for. So the same test is broken in a throwaway copy and
+      # converted again, into the summary only — the uploaded artifact stays
+      # the honest one. `|| true` because this build is *meant* to fail.
+      - name: Show what a failing build's report looks like
+        if: success() || failure()
+        run: |
+          cp -r sample_multi /tmp/broken
+          rm -rf /tmp/broken/.frost
+          sed -i 's/frost_core_add(40, 2) != 42/frost_core_add(40, 2) != 41/' \
+            /tmp/broken/core/tests/core_test.c
+          target/debug/frost -C /tmp/broken test --all --keep-going --no-tui \
+            --build-event-json broken.ndjson || true
+          python3 scripts/frost_junit.py broken.ndjson --output /dev/null \
+            --suite-name "a deliberately broken build" \
+            --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report
+        if: success() || failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-xml
+          path: |
+            junit.xml
+            events.ndjson
+
   python:
     name: Python prototype tests
     runs-on: ubuntu-latest

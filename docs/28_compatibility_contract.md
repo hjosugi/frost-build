@@ -25,6 +25,13 @@ end of this document.
 | `--build-event-json` events | Every line carries `schema`. Fields are added, never removed or retyped; `event` and `result` names keep their meaning. A bump means a field changed meaning or left | `the_build_event_stream_is_ndjson_a_ci_job_can_read` |
 | Artifact layout under the configured output tree | `.frost/out/<config>`, `.frost/bin/<config>` and the `${config}` rule stay as documented, and `frost info` answers them so callers need not encode the rule | `info_answers_path_questions_without_a_graph` |
 
+The event-stream row has a reader inside this repository, which is how the
+additive half of that promise is checked rather than only stated:
+`scripts/frost_junit.py` ignores events and fields it has never heard of, and
+refuses a `schema` that is not the one it knows — `tests/test_frost_junit.py`
+drives both, plus the one case an additive change cannot cover, a `result` name
+the reader is too old to understand.
+
 ### Exit codes
 
 | Code | Meaning | Examples |
