@@ -484,6 +484,74 @@ root are recorded workspace-relative, and the recorded list is sorted, so it doe
 not depend on which spelling the tool printed. `--sandbox` also requires every workspace input to be declared,
 so package managers that traverse a module cache normally use `sandbox = false`.
 
+## Build stamping
+
+A binary that reports its version has to get that version from outside the
+build. Doing it the obvious way — a git SHA in a compile flag — makes every
+commit change every action key, and an incremental build tool stops being one.
+
+```toml
+[stamp]
+command = ["tools/workspace_status.sh"]
+# stable_prefix = "STABLE_"   # the default
+```
+
+The command runs once per build, from the workspace root, and prints one
+`KEY=VALUE` per line:
+
+```
+STABLE_GIT_SHA=9f2c1ab
+STABLE_VERSION=1.4.0
+BUILD_TIME=1764691200
+```
+
+`${stamp.KEY}` then expands in a `kind = "command"` target's `args` and `env`.
+The split is by **rate of change**, decided by the key's name:
+
+| | in the action key | when the value changes |
+|---|---|---|
+| `STABLE_*` | yes | the action re-runs, and so does anything whose inputs its output changed |
+| everything else | no | only the action that reads it re-runs, every build |
+
+A stable value rebuilding the binary that embeds it is the correct answer, not
+cache thrash: a binary reporting the wrong commit is worse than a rebuild. A
+volatile value in an action key would rebuild the workspace every second, so an
+action that reads one is instead re-executed unconditionally — one action, not
+the graph above it. If its output bytes come out the same, early cutoff stops
+there.
+
+Deciding by **name** rather than by value is what lets frost classify a
+reference without running the command, so the graph can be built and a manifest
+validated at load, and the graph stays a pure function of the manifest.
+
+**A volatile value must not reach a compile.** A command target that writes
+`version.h` containing a build time re-runs every build by design — that part is
+cheap. But the header's bytes then differ every build, so every translation unit
+including it recompiles and everything above them relinks. One unconditional
+action becomes a full rebuild. frost rejects that at load, naming the value, the
+file and the way out, because the symptom ("our builds stopped being
+incremental") shows up months later and nowhere near the manifest that caused
+it.
+
+Genrules do not expand `${stamp.…}`. A genrule runs through a shell, where
+frost cannot tell a value it substituted from one the shell produced; the error
+says so rather than reporting an unknown variable.
+
+**When it runs.** Only when something in the closure actually reads a stamp. A
+workspace that stamps its release binary does not pay for a `git describe` — or
+get broken by a status script that stopped working — when it builds a library.
+The command inherits the invoking environment rather than frost's action
+baseline: it is not an action, its output is not cached or sandboxed, and a
+status script needs the PATH and credentials of whoever ran frost.
+
+**When it fails.** The build fails, and the script's own diagnostic is kept.
+`--stamp-optional` downgrades that to a warning and leaves every value empty —
+off by default, because a status script that quietly stopped working is how a
+release binary ends up reporting no version at all in a build that looked
+green. `--no-stamp` skips the command entirely and expands every reference to
+nothing; a stamp-free build is a different build and its action keys say so,
+rather than reusing results that embedded a value.
+
 ## Incrementality and diagnostics
 
 The BLAKE3 action key covers canonical argv/cwd, environment whitelist,

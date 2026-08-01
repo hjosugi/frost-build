@@ -283,6 +283,20 @@ pub struct BuildOptions {
     /// own. `None` leaves build actions unbounded, which is the default: a
     /// watchdog costs a thread per action, and the common hang is a test.
     pub timeout: Option<Duration>,
+    /// Values the workspace's `[stamp]` command printed for this build, keyed
+    /// by name.
+    ///
+    /// `None` means stamping is off — `--no-stamp`, or `--stamp-optional`
+    /// after the command failed — and every reference expands to nothing.
+    /// That is deliberately different from `Some(empty)`, which would mean the
+    /// command ran and printed nothing, and where a reference is a mistake
+    /// worth reporting. Collapsing the two would make `--no-stamp` fail every
+    /// workspace that actually uses a stamp, which is all of them.
+    ///
+    /// One map for the whole build on purpose: a stamp names a property of the
+    /// invocation, so an action that saw a different value than its neighbour
+    /// would make "which build produced this binary" unanswerable.
+    pub stamps: Option<BTreeMap<String, String>>,
     /// Run every test this many times, requiring all of them to pass. 1 is the
     /// default and means the ordinary single run.
     ///
@@ -362,6 +376,7 @@ impl Default for BuildOptions {
             progress: None,
             timeout: None,
             remote: None,
+            stamps: None,
             runs_per_test: 1,
         }
     }
@@ -965,6 +980,9 @@ impl<'a> Engine<'a> {
             {
                 return Ok(false);
             }
+            if !action.volatile_stamps.is_empty() {
+                return Ok(false);
+            }
             let Some(previous) = self.previous.actions.get(&journal_id(self.graph, action)) else {
                 return Ok(false);
             };
@@ -1309,6 +1327,15 @@ impl<'a> Engine<'a> {
 
         if self.opts.no_cache && action.kind == ActionKind::Test {
             return self.execute(local, action, inputs, "test cache disabled".into());
+        }
+
+        // A recorded result was produced with the previous build's volatile
+        // values. Reusing it would ship a binary stamped with a build time
+        // that is not this build's, which is the one thing the stamp was for.
+        // Confined to this action: nothing downstream reruns unless the bytes
+        // this produces actually differ.
+        if !action.volatile_stamps.is_empty() {
+            return self.execute(local, action, inputs, "volatile stamp value".into());
         }
 
         // A recorded pass says the test passed once. It cannot answer "does it
@@ -1795,7 +1822,7 @@ impl<'a> Engine<'a> {
             action_environment = Some(environment);
         }
         let environment = action_environment.as_ref().unwrap_or(&self.key_env);
-        let argv = action_key_argv(action);
+        let argv = action_key_argv(action, self.opts.stamps.as_ref());
         streamed_action_key(
             StreamedActionDescriptor {
                 builder: "frost-engine-v1",
@@ -2248,6 +2275,13 @@ impl<'a> Engine<'a> {
     ) -> std::result::Result<CommandBatch, String> {
         let mut captured = String::new();
         for argv in std::iter::once(&action.argv).chain(&action.followup_argv) {
+            // The graph carries the reference; the value arrives here, once
+            // per build. Doing it at execution rather than at graph
+            // construction is what lets the graph stay a pure function of the
+            // manifest, and therefore stay cacheable.
+            let argv = &self
+                .stamped_argv(action, argv)
+                .map_err(|error| format!("{error:#}"))?;
             let mut command = self
                 .command_for_argv(action, inputs, argv)
                 .map_err(|error| format!("{error:#}"))?;
@@ -2295,7 +2329,7 @@ impl<'a> Engine<'a> {
                 return Ok(CommandBatch {
                     captured,
                     failure: Some((
-                        argv.clone(),
+                        argv.to_vec(),
                         format!(
                             "timed out after {}s ({})",
                             limit.as_secs(),
@@ -2309,7 +2343,7 @@ impl<'a> Engine<'a> {
             if !output.status.success() {
                 return Ok(CommandBatch {
                     captured,
-                    failure: Some((argv.clone(), describe_exit(&output.status))),
+                    failure: Some((argv.to_vec(), describe_exit(&output.status))),
                 });
             }
         }
@@ -2335,7 +2369,7 @@ impl<'a> Engine<'a> {
         command
             .env_clear()
             .envs(self.command_env.iter().map(|(key, value)| (key, value)))
-            .envs(&action.env)
+            .envs(self.stamped_env(action)?.iter())
             .env("LC_ALL", "C")
             .env("LANG", "C")
             // Actions never read from the terminal. Inheriting stdin lets a
@@ -2351,6 +2385,55 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(command)
+    }
+
+    /// This action's argv with every `${stamp.KEY}` replaced by its value.
+    ///
+    /// Borrowed unchanged for the overwhelming majority of actions, which
+    /// reference no stamp at all.
+    fn stamped_argv<'argv>(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        argv: &'argv [String],
+    ) -> Result<Cow<'argv, [String]>> {
+        if !self.action_reads_a_stamp(action) {
+            return Ok(Cow::Borrowed(argv));
+        }
+        let context = format!("action {:?}", action.id);
+        argv.iter()
+            .map(|arg| self.expand_stamps(arg, &context))
+            .collect::<Result<Vec<_>>>()
+            .map(Cow::Owned)
+    }
+
+    fn stamped_env<'env>(
+        &self,
+        action: &'env frostbuild_core::graph::ActionNode,
+    ) -> Result<Cow<'env, BTreeMap<String, String>>> {
+        if !self.action_reads_a_stamp(action) {
+            return Ok(Cow::Borrowed(&action.env));
+        }
+        let context = format!("action {:?} environment", action.id);
+        action
+            .env
+            .iter()
+            .map(|(name, value)| Ok((name.clone(), self.expand_stamps(value, &context)?)))
+            .collect::<Result<BTreeMap<_, _>>>()
+            .map(Cow::Owned)
+    }
+
+    /// With stamping off, a reference expands to nothing rather than failing:
+    /// `--no-stamp` exists to build without the values, and a workspace that
+    /// has a `[stamp]` section is one that references it.
+    fn expand_stamps(&self, text: &str, context: &str) -> Result<String> {
+        match &self.opts.stamps {
+            Some(stamps) => frostbuild_core::stamp::expand(text, stamps, context),
+            None => Ok(frostbuild_core::stamp::blank(text, context)?),
+        }
+    }
+
+    fn action_reads_a_stamp(&self, action: &frostbuild_core::graph::ActionNode) -> bool {
+        !action.stable_stamps.is_empty() || !action.volatile_stamps.is_empty()
     }
 
     fn priority(&self, local: usize) -> u64 {
@@ -2697,11 +2780,32 @@ fn path_is_inside(directory: &str, path: &str) -> bool {
         && path.as_bytes()[directory.len()] == b'/'
 }
 
-fn action_key_argv(action: &frostbuild_core::graph::ActionNode) -> Cow<'_, [String]> {
-    if action.followup_argv.is_empty() && action.clean_dirs.is_empty() && !action.preserve_outputs {
+fn action_key_argv<'a>(
+    action: &'a frostbuild_core::graph::ActionNode,
+    stamps: Option<&BTreeMap<String, String>>,
+) -> Cow<'a, [String]> {
+    if action.followup_argv.is_empty()
+        && action.clean_dirs.is_empty()
+        && !action.preserve_outputs
+        && action.stable_stamps.is_empty()
+    {
         return Cow::Borrowed(&action.argv);
     }
     let mut argv = action.argv.clone();
+    // The argv itself still holds the unexpanded `${stamp.KEY}`, which is what
+    // keeps a *volatile* value out of the key: the reference is constant, only
+    // the value changes. A stable value has to get in some other way, so it is
+    // named here explicitly.
+    for key in &action.stable_stamps {
+        argv.push("\0frost-stamp".into());
+        argv.push(key.clone());
+        argv.push(
+            stamps
+                .and_then(|stamps| stamps.get(key))
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
     if action.preserve_outputs {
         argv.push("\0frost-preserve-outputs".into());
     }
@@ -3001,6 +3105,80 @@ mod tests {
         );
     }
 
+    /// The property the whole stable/volatile split rests on, pinned where it
+    /// lives rather than through a build.
+    ///
+    /// End to end it is invisible: an action reading a volatile value is
+    /// re-executed unconditionally, so whether the value is also in its key
+    /// changes nothing you can observe. That is exactly why it needs a test.
+    /// The day someone replaces the unconditional re-execution with ordinary
+    /// key-based invalidation — a reasonable-looking simplification — a
+    /// volatile value in the key would rebuild everything downstream on every
+    /// build, and no other test in this repository would notice.
+    #[test]
+    fn a_volatile_stamp_value_stays_out_of_the_action_key_and_a_stable_one_does_not() {
+        fn action(stable: &[&str], volatile: &[&str]) -> frostbuild_core::graph::ActionNode {
+            frostbuild_core::graph::ActionNode {
+                id: "command:release".into(),
+                desc: "RUN release [sh]".into(),
+                kind: ActionKind::Command,
+                target: "release".into(),
+                sandbox: false,
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "echo ${stamp.STABLE_V} ${stamp.BUILD_TIME}".into(),
+                ],
+                followup_argv: Vec::new(),
+                clean_dirs: Vec::new(),
+                preserve_outputs: false,
+                env: BTreeMap::new(),
+                pass_env: Vec::new(),
+                inputs: Vec::new(),
+                order_only_inputs: Vec::new(),
+                outputs: Vec::new(),
+                output_dirs: Vec::new(),
+                depfile: None,
+                depfile_format: frostbuild_core::depfile::Format::Make,
+                flaky_retries: 0,
+                stable_stamps: stable.iter().map(|key| key.to_string()).collect(),
+                volatile_stamps: volatile.iter().map(|key| key.to_string()).collect(),
+            }
+        }
+        let key = |action: &frostbuild_core::graph::ActionNode,
+                   stamps: &BTreeMap<String, String>| {
+            action_key_argv(action, Some(stamps)).into_owned()
+        };
+        let node = action(&["STABLE_V"], &["BUILD_TIME"]);
+        let first = BTreeMap::from([
+            ("STABLE_V".to_string(), "1.0.0".to_string()),
+            ("BUILD_TIME".to_string(), "100".to_string()),
+        ]);
+        let later_clock = BTreeMap::from([
+            ("STABLE_V".to_string(), "1.0.0".to_string()),
+            ("BUILD_TIME".to_string(), "999".to_string()),
+        ]);
+        let new_version = BTreeMap::from([
+            ("STABLE_V".to_string(), "2.0.0".to_string()),
+            ("BUILD_TIME".to_string(), "100".to_string()),
+        ]);
+
+        assert_eq!(
+            key(&node, &first),
+            key(&node, &later_clock),
+            "a clock that moved must not change an action key"
+        );
+        assert_ne!(
+            key(&node, &first),
+            key(&node, &new_version),
+            "a stable value that changed must change it"
+        );
+        // And the value that is key material is the value, not the reference:
+        // keeping only the key name would make every version look alike.
+        assert!(key(&node, &first).contains(&"1.0.0".to_string()));
+        assert!(!key(&node, &first).contains(&"100".to_string()));
+    }
+
     #[test]
     fn multi_step_commands_and_clean_dirs_are_unambiguous_key_material() {
         fn action(
@@ -3027,6 +3205,8 @@ mod tests {
                 depfile: None,
                 depfile_format: frostbuild_core::depfile::Format::Make,
                 flaky_retries: 0,
+                stable_stamps: Vec::new(),
+                volatile_stamps: Vec::new(),
             }
         }
         let digest = |action: &frostbuild_core::graph::ActionNode| {
@@ -3034,7 +3214,7 @@ mod tests {
                 StreamedActionDescriptor {
                     builder: "frost-engine-v1",
                     target: &action.id,
-                    argv: action_key_argv(action).as_ref(),
+                    argv: action_key_argv(action, None).as_ref(),
                     cwd: ".",
                     toolchain_hash: "toolchain",
                     output_dirs: &action.output_dirs,
@@ -3046,7 +3226,10 @@ mod tests {
         };
 
         let primary_only = action(Vec::new(), Vec::new(), false);
-        assert!(matches!(action_key_argv(&primary_only), Cow::Borrowed(_)));
+        assert!(matches!(
+            action_key_argv(&primary_only, None),
+            Cow::Borrowed(_)
+        ));
         let jar = action(
             vec![vec!["jar".into(), "classes".into()]],
             vec![".frost/tmp/debug/java".into()],

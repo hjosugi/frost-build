@@ -65,6 +65,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   CI job runs it on `sample_multi`, so the rendering is something you can look at
   rather than something the documentation asserts.
 
+- Build stamping: a `[stamp]` section whose `command` prints `KEY=VALUE` lines,
+  and `${stamp.KEY}` expansion in a command target's `args` and `env`. The split
+  is by rate of change and is decided by the key's *name*, so frost can classify
+  a reference without running the command and the graph stays a pure function of
+  the manifest. `STABLE_*` values are action-key material — a new commit
+  rebuilding the binary that embeds its SHA is the correct answer, not cache
+  thrash. Everything else is not: a wall clock in an action key would rebuild the
+  workspace every second, so an action that reads one is re-executed
+  unconditionally instead, costing one action rather than the graph above it.
+  A volatile value that reaches a *compile* is rejected when the graph loads,
+  since that turns one unconditional action into a full rebuild — the symptom
+  ("our builds stopped being incremental") otherwise appears months later and
+  nowhere near the manifest that caused it. The command runs only when something
+  in the closure reads a stamp, fails the build when it fails, and is skipped by
+  `--no-stamp` or downgraded to a warning by `--stamp-optional`.
+
 ### Changed
 
 - `ProgressState` gained a `Flaky` variant. A retried-and-passed test was

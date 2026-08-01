@@ -5218,3 +5218,254 @@ fn a_corrupt_cas_object_is_rebuilt_rather_than_handed_back() {
     // an undeclared determinism test.
     assert_eq!(ws.run_app(), "frost: 42\n");
 }
+
+// ---------------------------------------------------------------------------
+// Build stamping (#138). The split is by rate of change: a stable value is
+// action-key material and rebuilds what embeds it; a volatile one is not, and
+// re-executes only the action that reads it.
+// ---------------------------------------------------------------------------
+
+/// A workspace whose stamp command prints the two values given, and whose
+/// targets read them.
+///
+/// The status script is rewritten to change a value rather than reading one
+/// from a file. That is not only simpler: the script is not a declared input
+/// of anything, so rewriting it proves the rerun came from the *value* rather
+/// than from frost noticing a file change.
+fn stamp_workspace(name: &str, stable: &str, volatile: &str) -> Workspace {
+    let ws = Workspace::empty(name);
+    std::fs::create_dir_all(ws.dir.join("tools")).unwrap();
+    write_stamp_script(&ws, stable, volatile);
+    let command = match cfg!(windows) {
+        true => r#"["cmd", "/C", "tools\\status.cmd"]"#,
+        false => r#"["tools/status"]"#,
+    };
+    ws.write(
+        "frost.toml",
+        &format!(
+            r#"
+[toolchain.tools]
+copy = "{shell}"
+
+[stamp]
+command = {command}
+
+# Reads both halves: it must re-execute every build.
+[target.both]
+kind = "command"
+tool = "copy"
+args = [{args_both}]
+inputs = []
+outputs = ["gen/${{config}}/both.txt"]
+sandbox = false
+
+# Reads only the stable half: it must be cached until that value changes.
+[target.stable_only]
+kind = "command"
+tool = "copy"
+args = [{args_stable}]
+inputs = []
+outputs = ["gen/${{config}}/stable.txt"]
+sandbox = false
+"#,
+            shell = match cfg!(windows) {
+                true => "cmd",
+                false => "sh",
+            },
+            command = command,
+            args_both = write_line_args("${stamp.STABLE_VERSION} ${stamp.BUILD_TIME}", "both.txt"),
+            args_stable = write_line_args("${stamp.STABLE_VERSION}", "stable.txt"),
+        ),
+    );
+    ws
+}
+
+/// Arguments for "write this text to this output", in the host's shell.
+fn write_line_args(text: &str, name: &str) -> String {
+    match cfg!(windows) {
+        true => format!(r#""/C", "echo {text}> gen\\${{config}}\\{name}""#),
+        false => format!(r#""-c", "echo '{text}' > gen/${{config}}/{name}""#),
+    }
+}
+
+fn write_stamp_script(ws: &Workspace, stable: &str, volatile: &str) {
+    if cfg!(windows) {
+        ws.write(
+            "tools/status.cmd",
+            &format!("@echo off\necho STABLE_VERSION={stable}\necho BUILD_TIME={volatile}\n"),
+        );
+    } else {
+        ws.write(
+            "tools/status",
+            &format!("#!/bin/sh\necho STABLE_VERSION={stable}\necho BUILD_TIME={volatile}\n"),
+        );
+        make_executable(&ws.dir.join("tools/status"));
+    }
+}
+
+fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+fn stamped(ws: &Workspace, name: &str) -> String {
+    std::fs::read_to_string(ws.dir.join(format!("gen/debug/{name}")))
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn a_volatile_stamp_reruns_the_target_that_reads_it_and_nothing_else() {
+    let ws = stamp_workspace("stamp-volatile", "1.0.0", "100");
+    let (ok, out) = ws.frost(&["build", "both", "stable_only", "--no-tui"]);
+    assert!(ok, "{out}");
+    assert_eq!(stamped(&ws, "both.txt"), "1.0.0 100");
+
+    // Only the clock moves.
+    write_stamp_script(&ws, "1.0.0", "200");
+    let (ok, out) = ws.frost(&["build", "both", "stable_only", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    // The action that reads it re-executes, and says why.
+    assert!(
+        out.contains("ran command:both :: volatile stamp value"),
+        "{out}"
+    );
+    // Everything that does not read it stays cached. This is the whole point:
+    // putting a wall clock in an action key would rebuild the workspace every
+    // second, so a volatile value costs exactly one action.
+    assert!(out.contains("cached command:stable_only"), "{out}");
+    assert_eq!(stamped(&ws, "both.txt"), "1.0.0 200");
+    assert_eq!(stamped(&ws, "stable.txt"), "1.0.0");
+}
+
+#[test]
+fn a_stable_stamp_is_action_key_material_and_a_volatile_one_is_not() {
+    let ws = stamp_workspace("stamp-stable", "1.0.0", "100");
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui"]);
+    assert!(ok, "{out}");
+    assert_eq!(stamped(&ws, "stable.txt"), "1.0.0");
+
+    // A volatile change must not touch it...
+    write_stamp_script(&ws, "1.0.0", "999");
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("cached command:stable_only"), "{out}");
+
+    // ...and a stable change must, because a binary that reports the wrong
+    // version is worse than a rebuild.
+    write_stamp_script(&ws, "2.0.0", "999");
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("ran command:stable_only"), "{out}");
+    assert_eq!(stamped(&ws, "stable.txt"), "2.0.0");
+}
+
+#[test]
+fn a_volatile_stamp_that_reaches_a_compile_is_refused_when_the_graph_loads() {
+    let ws = Workspace::new("stamp-poison");
+    std::fs::create_dir_all(ws.dir.join("tools")).unwrap();
+    write_stamp_script(&ws, "1", "2");
+    let command = match cfg!(windows) {
+        true => r#"["cmd", "/C", "tools\\status.cmd"]"#,
+        false => r#"["tools/status"]"#,
+    };
+    ws.append(
+        "frost.toml",
+        &format!(
+            r#"
+[toolchain.tools]
+{tool} = "{tool}"
+
+[stamp]
+command = {command}
+
+[target.version_header]
+kind = "command"
+tool = "{tool}"
+args = [{args}]
+inputs = []
+outputs = ["gen/${{config}}/version.h"]
+sandbox = false
+"#,
+            command = command,
+            tool = match cfg!(windows) {
+                true => "cmd",
+                false => "sh",
+            },
+            args = write_line_args("#define BUILT ${stamp.BUILD_TIME}", "version.h"),
+        ),
+    );
+    // A source that includes the generated header is what puts the header in a
+    // compile's input set.
+    ws.write(
+        "src/stamped.c",
+        "#include \"gen/debug/version.h\"\nint frost_stamped(void) { return 0; }\n",
+    );
+    ws.append(
+        "frost.toml",
+        "\n[target.stamped]\nkind = \"cc_library\"\nsrcs = [\"src/stamped.c\"]\ndeps = [\"version_header\"]\n",
+    );
+
+    let (code, out) = ws.frost_code(&["build", "stamped", "--no-tui"]);
+    assert_eq!(code, 2, "{out}");
+    // The message has to name the value, the file and the way out, because the
+    // symptom — "my builds stopped being incremental" — appears months later
+    // and nowhere near this manifest.
+    assert!(out.contains("${stamp.BUILD_TIME}"), "{out}");
+    assert!(out.contains("version.h"), "{out}");
+    assert!(out.contains("rename the key to a stable one"), "{out}");
+}
+
+#[test]
+fn a_failing_stamp_command_fails_the_build_unless_it_is_asked_not_to() {
+    let ws = stamp_workspace("stamp-failure", "1.0.0", "100");
+    if cfg!(windows) {
+        ws.write("tools/status.cmd", "@echo off\necho boom 1>&2\nexit /b 3\n");
+    } else {
+        ws.write("tools/status", "#!/bin/sh\necho boom >&2\nexit 3\n");
+        make_executable(&ws.dir.join("tools/status"));
+    }
+
+    // Failing by default: a status script that quietly stopped working is how
+    // a release binary ends up reporting no version at all, in a build that
+    // looked green.
+    let (code, out) = ws.frost_code(&["build", "stable_only", "--no-tui"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("[stamp]"), "{out}");
+    assert!(
+        out.contains("boom"),
+        "the script's own diagnostic is kept: {out}"
+    );
+    assert!(out.contains("--stamp-optional"), "{out}");
+
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui", "--stamp-optional"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        stamped(&ws, "stable.txt"),
+        "",
+        "an optional stamp that failed leaves the value empty"
+    );
+}
+
+#[test]
+fn no_stamp_builds_without_the_values_rather_than_refusing_to_build() {
+    let ws = stamp_workspace("stamp-off", "1.0.0", "100");
+    // The flag would be useless to every workspace that has a [stamp] section
+    // if a reference to one were an error while it is off.
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui", "--no-stamp"]);
+    assert!(ok, "{out}");
+    assert_eq!(stamped(&ws, "stable.txt"), "");
+
+    // And a stamped build is a different build: the value is key material, so
+    // the empty one cannot satisfy a request for the real one.
+    let (ok, out) = ws.frost(&["build", "stable_only", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("ran command:stable_only"), "{out}");
+    assert_eq!(stamped(&ws, "stable.txt"), "1.0.0");
+}
