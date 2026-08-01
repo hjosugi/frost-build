@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use frostbuild_core::graph::BuildGraph;
 use frostbuild_core::graph_store::GraphStore;
-use frostbuild_core::manifest::{Manifest, TargetKind, MANIFEST_FILE};
+use frostbuild_core::manifest::{Manifest, ManifestError, TargetKind, MANIFEST_FILE};
 
 use super::locate::{byte_to_utf16, Cursor};
 
@@ -247,9 +247,20 @@ impl Workspace {
         // The buffer first: it is what is on screen, it may not be saved, and
         // its own syntax and per-target errors need nothing else to be found.
         if let Err(error) = Manifest::parse_document(path, text) {
+            // A `ManifestError` already carries the span the parser recorded
+            // and a message with no position in it, which is exactly the split
+            // an editor wants: it draws the range itself and shows the sentence.
+            if let Some(manifest) = error.downcast_ref::<ManifestError>() {
+                return vec![Diagnostic {
+                    span: span_of_manifest_error(text, manifest),
+                    message: manifest.message(),
+                }];
+            }
             let message = format!("{error:#}");
             return vec![Diagnostic {
-                span: locate_error(text, &error, &message),
+                span: locate_message(text, &message).unwrap_or_else(|| {
+                    Span::whole_line(0, text.lines().next().unwrap_or_default())
+                }),
                 message,
             }];
         }
@@ -530,22 +541,19 @@ fn find_target_header(text: &str, name: &str) -> Option<Span> {
     })
 }
 
-/// Place a parse failure using the span the TOML parser recorded.
+/// The range a `ManifestError` describes, in LSP coordinates.
 ///
-/// A syntax error knows exactly where it is, so use that. Everything else
-/// falls back to naming a token from the message.
-fn locate_error(text: &str, error: &anyhow::Error, message: &str) -> Span {
-    if let Some(span) = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<toml::de::Error>())
-        .and_then(|toml| toml.span())
-    {
-        if let Some(located) = span_of_byte(text, span.start, span.end) {
-            return located;
-        }
-    }
-    locate_message(text, message)
-        .unwrap_or_else(|| Span::whole_line(0, text.lines().next().unwrap_or_default()))
+/// The parser's byte span is the authority; its line and column are already
+/// computed but are 1-based for humans, and an editor counts from zero.
+fn span_of_manifest_error(text: &str, error: &ManifestError) -> Span {
+    error
+        .span
+        .as_ref()
+        .and_then(|span| span_of_byte(text, span.start, span.end))
+        .unwrap_or_else(|| {
+            let line = error.line.saturating_sub(1);
+            Span::whole_line(line, text.lines().nth(line).unwrap_or_default())
+        })
 }
 
 /// Find where a diagnostic belongs by looking for a token it names.
@@ -701,11 +709,31 @@ deps = [\"//core:missing\"]
     fn a_syntax_error_is_placed_where_the_parser_saw_it() {
         let text = "[target.app]\nkind = \"cc_binary\"\nsrcs = [\n";
         let error = Manifest::parse_document(Path::new("frost.toml"), text).unwrap_err();
-        let span = locate_error(text, &error, &format!("{error:#}"));
-        assert!(
-            span.line >= 2,
-            "the unterminated array is on line 2: {span:?}"
-        );
+        let manifest = error
+            .downcast_ref::<ManifestError>()
+            .expect("a parse failure carries its position");
+        assert_eq!(span_of_manifest_error(text, manifest).line, 2);
+    }
+
+    #[test]
+    fn an_editors_message_carries_no_position_of_its_own() {
+        // The range says where; repeating it in the sentence is noise in an
+        // editor and the whole point in a terminal, so the two differ on
+        // purpose and this is where that is written down.
+        let text = "[target.app]\nkind = \"cc_binary\"\nsrc = [\"a.c\"]\n";
+        let error = Manifest::parse_document(Path::new("core/frost.toml"), text).unwrap_err();
+        let manifest = error.downcast_ref::<ManifestError>().unwrap();
+
+        let editor = manifest.message();
+        assert!(editor.starts_with("unknown field `src`"), "{editor}");
+        assert!(editor.contains("did you mean `srcs`?"), "{editor}");
+        assert!(!editor.contains("core/frost.toml"), "{editor}");
+        assert!(!editor.contains('\n'), "an editor shows one line: {editor}");
+
+        let terminal = format!("{error:#}");
+        assert!(terminal.starts_with("core/frost.toml:3:1:"), "{terminal}");
+        assert!(terminal.contains("\n3 | src = [\"a.c\"]"), "{terminal}");
+        assert!(terminal.contains("^^^"), "{terminal}");
     }
 
     /// macOS reaches every temp directory through `/var`, whose real path is

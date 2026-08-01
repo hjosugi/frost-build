@@ -61,6 +61,47 @@ pub fn default_arflags() -> &'static [String] {
 
 /// The closest candidate to `input`, when one is close enough to be worth
 /// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
+/// Up to `limit` candidates similar enough to `input` to be worth offering,
+/// nearest first.
+///
+/// One suggestion is enough when a name was mistyped; a label is different,
+/// because `cli` in a workspace with `//apps/cli:cli` and `//tools/cli:cli` has
+/// two right answers and picking one silently is worse than showing both.
+pub fn closest_several<'a>(
+    input: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+    limit: usize,
+) -> Vec<&'a str> {
+    let budget = suggestion_budget(input);
+    let mut ranked: Vec<(usize, &str)> = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            // A label is matched on its whole spelling and on the name after
+            // the colon, whichever is closer: someone typing `cli` means
+            // `//apps/cli:cli`, and the edit distance between those is large.
+            let whole = edit_distance(input, candidate);
+            let local = candidate
+                .rsplit_once(':')
+                .map(|(_, name)| edit_distance(input, name))
+                .unwrap_or(usize::MAX);
+            let distance = whole.min(local);
+            (distance <= budget).then_some((distance, candidate))
+        })
+        .collect();
+    // Nearest first, and alphabetical within a distance so the list does not
+    // depend on the order the graph happened to hand them over in.
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    ranked.truncate(limit);
+    ranked.into_iter().map(|(_, name)| name).collect()
+}
+
+/// One edit per three characters: short names need a near-exact match, longer
+/// ones tolerate a typo or two. A suggestion that is not actually similar is
+/// worse than no suggestion.
+fn suggestion_budget(input: &str) -> usize {
+    1 + input.chars().count() / 3
+}
+
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     let mut best: Option<(usize, &str)> = None;
     for candidate in candidates {
@@ -69,11 +110,7 @@ pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -
             best = Some((distance, candidate));
         }
     }
-    // One edit per three characters: short names need a near-exact match,
-    // longer ones tolerate a typo or two. A suggestion that is not actually
-    // similar is worse than no suggestion.
-    let budget = 1 + input.chars().count() / 3;
-    best.filter(|&(distance, _)| distance <= budget)
+    best.filter(|&(distance, _)| distance <= suggestion_budget(input))
         .map(|(_, name)| name)
 }
 
@@ -366,6 +403,154 @@ pub struct Manifest {
     pub manifest_paths: Vec<String>,
 }
 
+/// A manifest that would not load, and exactly where.
+///
+/// The TOML parser records a byte span for every syntax and shape error.
+/// Throwing that away is what turns "this file is wrong" into a hunt, so it is
+/// carried on a type of our own rather than only inside a formatted string:
+/// `frost` prints the position and a snippet, and `frost lsp` puts the squiggle
+/// on the same bytes without re-deriving them from the text.
+#[derive(Debug)]
+pub struct ManifestError {
+    /// The manifest as it was named to the reader, so the message points at a
+    /// path they can open.
+    pub path: PathBuf,
+    /// Byte range in the document, when the parser recorded one.
+    pub span: Option<std::ops::Range<usize>>,
+    /// 1-based position of the span's start.
+    pub line: usize,
+    pub column: usize,
+    /// What is wrong, with no position and no notes attached.
+    pub headline: String,
+    /// Supporting lines: the valid alternatives, and a suggestion when one of
+    /// them is close enough to what was written to be what was meant.
+    pub notes: Vec<String>,
+    /// The offending line, for the snippet.
+    source_line: Option<String>,
+}
+
+impl ManifestError {
+    fn from_toml(path: &Path, text: &str, error: &toml::de::Error) -> Self {
+        let span = error.span();
+        let (line, column, source_line) = match &span {
+            Some(span) => position_of(text, span.start),
+            None => (1, 1, None),
+        };
+        // "unknown field `src`, expected one of `kind`, `srcs`, …" is one
+        // sentence carrying two different things: what is wrong, and what would
+        // have been right. Split so the first is the headline a reader acts on
+        // and the second is a note they consult.
+        let message = error.message();
+        let (headline, alternatives) = match message.split_once(", expected one of ") {
+            Some((headline, rest)) => (headline.to_string(), Some(rest.to_string())),
+            None => (message.to_string(), None),
+        };
+        let mut notes = Vec::new();
+        if let Some(alternatives) = &alternatives {
+            if let Some(suggestion) = suggest_from(&headline, alternatives) {
+                notes.push(format!("did you mean `{suggestion}`?"));
+            }
+            notes.push(format!("expected one of {alternatives}"));
+        }
+        Self {
+            path: path.to_path_buf(),
+            span,
+            line,
+            column,
+            headline,
+            notes,
+            source_line,
+        }
+    }
+
+    /// The problem and its notes, without the position or the snippet.
+    ///
+    /// This is what an editor shows: it already knows which file and which
+    /// line, and repeating them inside the message is noise there while being
+    /// the whole point in a terminal.
+    pub fn message(&self) -> String {
+        let mut message = self.headline.clone();
+        for note in &self.notes {
+            message.push_str("; ");
+            message.push_str(note);
+        }
+        message
+    }
+}
+
+impl std::fmt::Display for ManifestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `path:line:column: message` first, because that is the form every
+        // editor and every `grep` already knows how to jump to.
+        write!(
+            f,
+            "{}:{}:{}: {}",
+            self.path.display(),
+            self.line,
+            self.column,
+            self.headline
+        )?;
+        if let (Some(source), Some(span)) = (&self.source_line, &self.span) {
+            let gutter = " ".repeat(self.line.to_string().len());
+            // The caret covers the span, clamped to the line: a span that runs
+            // to the end of the input would otherwise draw past it.
+            let width = span.len().max(1).min(
+                source
+                    .chars()
+                    .count()
+                    .saturating_sub(self.column - 1)
+                    .max(1),
+            );
+            write!(
+                f,
+                "\n{gutter} |\n{} | {source}\n{gutter} | {}{}",
+                self.line,
+                " ".repeat(self.column - 1),
+                "^".repeat(width),
+            )?;
+        }
+        for note in &self.notes {
+            write!(f, "\n  = {note}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ManifestError {}
+
+/// 1-based line and column of a byte offset, with the line it lands on.
+fn position_of(text: &str, offset: usize) -> (usize, usize, Option<String>) {
+    let mut start = 0usize;
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let end = start + line.len();
+        if offset < end || end == text.len() {
+            let within = offset.saturating_sub(start);
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            // Columns count characters, not bytes: a caret under a multi-byte
+            // character otherwise lands in the middle of it.
+            let column = trimmed
+                .get(..within.min(trimmed.len()))
+                .map_or(within, |prefix| prefix.chars().count());
+            return (index + 1, column + 1, Some(trimmed.to_string()));
+        }
+        start = end;
+    }
+    (1, 1, None)
+}
+
+/// The alternative closest to the name a message says is unknown.
+fn suggest_from(headline: &str, alternatives: &str) -> Option<String> {
+    let wrong = backticked(headline)?;
+    let candidates: Vec<&str> = alternatives.split(", ").filter_map(backticked).collect();
+    closest(wrong, candidates.iter().copied()).map(str::to_string)
+}
+
+fn backticked(text: &str) -> Option<&str> {
+    let (_, rest) = text.split_once('`')?;
+    let (inner, _) = rest.split_once('`')?;
+    Some(inner)
+}
+
 /// A workspace load with the manifest and the verdict kept apart.
 ///
 /// A build wants only the verdict: an unknown dependency means it must not
@@ -421,8 +606,12 @@ impl Manifest {
                 workspace_root.display()
             )
         })?;
-        let raw: RawManifest =
-            toml::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))?;
+        // Workspace-relative, like the package manifests below it and like
+        // every path the manifest itself declares. It is also what keeps the
+        // message identical on every machine, which is what makes it something
+        // a snapshot can hold.
+        let raw: RawManifest = toml::from_str(&text)
+            .map_err(|error| ManifestError::from_toml(Path::new(MANIFEST_FILE), &text, &error))?;
         let root_has_workspace = toml::from_str::<toml::Value>(&text)
             .ok()
             .and_then(|v| v.get("workspace").cloned())
@@ -459,7 +648,7 @@ impl Manifest {
                 let package_text = std::fs::read_to_string(workspace_root.join(&rel))
                     .with_context(|| format!("failed to read {}", rel.display()))?;
                 let package_raw: RawManifest = toml::from_str(&package_text)
-                    .with_context(|| format!("failed to parse {}", rel.display()))?;
+                    .map_err(|error| ManifestError::from_toml(&rel, &package_text, &error))?;
                 let mut child = Self::from_raw_unvalidated(package_raw)?;
                 expand_manifest_paths(&mut child, workspace_root, &package)?;
                 for (local, mut target) in child.targets {
@@ -486,7 +675,8 @@ impl Manifest {
     }
 
     pub fn parse_str(text: &str) -> Result<Self> {
-        let raw: RawManifest = toml::from_str(text).context("failed to parse manifest")?;
+        let raw: RawManifest = toml::from_str(text)
+            .map_err(|error| ManifestError::from_toml(Path::new(MANIFEST_FILE), text, &error))?;
         Self::from_raw(raw)
     }
 
@@ -502,7 +692,7 @@ impl Manifest {
     /// the one a build prints for the same mistake.
     pub fn parse_document(path: &Path, text: &str) -> Result<Self> {
         let raw: RawManifest =
-            toml::from_str(text).with_context(|| format!("failed to parse {}", path.display()))?;
+            toml::from_str(text).map_err(|error| ManifestError::from_toml(path, text, &error))?;
         Self::from_raw_unvalidated(raw)
     }
 

@@ -5337,3 +5337,206 @@ fn frost_lsp_answers_about_a_document_opened_through_a_symlink() {
 
     let _ = std::fs::remove_file(&link);
 }
+
+// ---------------------------------------------------------------------------
+// Diagnostics: where the mistake is, what was probably meant, what to do next.
+//
+// The failure path is the output read most often and the one a competitor is
+// judged against, so these hold its shape rather than only its exit code.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_unknown_target_offers_the_targets_it_might_have_been() {
+    let ws = Workspace::multi("diagnostic-target");
+
+    // A bare name in a multi-package workspace: the label is what has to come
+    // back, because that is what would actually have worked.
+    let (ok, out) = ws.frost(&["build", "cli"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("unknown target \"cli\""), "{out}");
+    assert!(out.contains("did you mean \"//apps/cli:cli\"?"), "{out}");
+
+    // A typo inside a label stays inside its package.
+    let (ok, out) = ws.frost(&["build", "//core:cor"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("did you mean \"//core:core\"?"), "{out}");
+
+    // Nothing close: the known set, since this workspace is small enough to
+    // print. A suggestion that is not actually similar is worse than none.
+    let (ok, out) = ws.frost(&["build", "qqqqqqqq"]);
+    assert!(!ok, "{out}");
+    assert!(!out.contains("did you mean"), "{out}");
+    assert!(out.contains("//core:core"), "{out}");
+}
+
+#[test]
+fn a_broken_manifest_says_which_line_and_what_was_meant() {
+    let ws = Workspace::empty("diagnostic-manifest");
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/main.c", "int main(void) { return 0; }\n");
+
+    // A mistyped key. The suggestion is the whole point: `expected one of` on
+    // its own is a list of twenty-two names to read.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binary\"\nsrc = [\"src/main.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    // Workspace-relative and `path:line:column`, which is the form an editor
+    // and a `grep` both already know how to jump to — and which is identical
+    // on every machine, so it is a shape a test can hold.
+    assert!(
+        out.contains("frost.toml:3:1: unknown field `src`"),
+        "the position and the problem come first:\n{out}"
+    );
+    assert!(out.contains("3 | src = [\"src/main.c\"]"), "{out}");
+    assert!(
+        out.contains("^^^"),
+        "the caret covers the offending span:\n{out}"
+    );
+    assert!(out.contains("= did you mean `srcs`?"), "{out}");
+    assert!(out.contains("= expected one of `kind`, `srcs`"), "{out}");
+
+    // A mistyped value of a closed set gets the same treatment.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binry\"\nsrcs = [\"src/main.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("frost.toml:2:8: unknown variant `cc_binry`"),
+        "{out}"
+    );
+    assert!(out.contains("= did you mean `cc_binary`?"), "{out}");
+
+    // Syntax, where the parser's own span is the authority.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binary\"\nsrcs = [\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("frost.toml:3:9:"), "{out}");
+    assert!(out.contains("unclosed array"), "{out}");
+
+    // A package manifest names itself, not the root.
+    ws.write(
+        "frost.toml",
+        "[workspace]\ndefault_targets = [\"//core:core\"]\n",
+    );
+    std::fs::create_dir_all(ws.dir.join("core/src")).unwrap();
+    ws.write("core/src/core.c", "int core(void) { return 1; }\n");
+    ws.write(
+        "core/frost.toml",
+        "[target.core]\nkind = \"cc_library\"\nsrc = [\"src/core.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("core/frost.toml:3:1:"), "{out}");
+}
+
+#[test]
+fn a_missing_tool_says_where_it_looked_and_what_it_blocks() {
+    let ws = Workspace::empty("diagnostic-tool");
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/a.in", "input\n");
+    ws.write(
+        "frost.toml",
+        "[toolchain.tools]\n\
+         absent = \"frost-e2e-definitely-absent-tool\"\n\
+         \n\
+         [target.first]\n\
+         kind = \"command\"\n\
+         tool = \"absent\"\n\
+         args = [\"${in}\"]\n\
+         inputs = [\"src/a.in\"]\n\
+         outputs = [\".frost/out/${config}/first.out\"]\n\
+         \n\
+         [target.second]\n\
+         kind = \"command\"\n\
+         tool = \"absent\"\n\
+         args = [\"${in}\"]\n\
+         inputs = [\"src/a.in\"]\n\
+         outputs = [\".frost/out/${config}/second.out\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["build", "first", "second"]);
+    assert!(!ok, "{out}");
+    // One message carrying all four things a reader needs: which key asked for
+    // it, what it named, where frost looked, and what stops working until it
+    // is there. Any one of them alone leaves the next step a guess.
+    assert!(out.contains("[toolchain.tools] absent"), "{out}");
+    assert!(out.contains("frost-e2e-definitely-absent-tool"), "{out}");
+    assert!(out.contains("looked for it on PATH"), "{out}");
+    assert!(out.contains("needed by first, second"), "{out}");
+    assert!(out.contains("frost doctor"), "{out}");
+}
+
+#[test]
+fn exit_codes_separate_a_bad_invocation_from_a_bad_build() {
+    // The distinction a script acts on: 1 is an answer about your code, 2 is
+    // an answer about your command line or your environment. Both are in
+    // docs/28; this is the part that holds them to it.
+    let ws = Workspace::new("diagnostic-exit-codes");
+
+    let code = |args: &[&str]| -> i32 {
+        Command::new(frost_bin())
+            .arg("-C")
+            .arg(&ws.dir)
+            .args(args)
+            .output()
+            .expect("spawn frost")
+            .status
+            .code()
+            .expect("frost exits rather than being signalled")
+    };
+
+    // A workspace with no `[profile.*]` sections gives any profile a bare
+    // tree on purpose, so declaring one is what makes an undeclared profile a
+    // mistake rather than a choice.
+    ws.append("frost.toml", "\n[profile.release]\ncflags = [\"-O2\"]\n");
+
+    assert_eq!(code(&["build"]), 0, "a build that succeeds");
+    assert_eq!(code(&["build"]), 0, "and again, from the cache");
+
+    // Frost could not run the work as asked: each of these asks for something
+    // that does not exist, and none of them is a result about the code. They
+    // run against a healthy tree so a compile failure cannot stand in for the
+    // exit code being tested.
+    for invocation in [
+        vec!["build", "no-such-target"],
+        vec!["build", "--profile", "no-such-profile"],
+        vec!["build", "--platform", "no-such-platform"],
+        vec!["query", "deps", "no-such-target"],
+    ] {
+        assert_eq!(
+            code(&invocation),
+            2,
+            "`frost {}` is a question frost cannot act on",
+            invocation.join(" ")
+        );
+    }
+
+    // The work ran and did not succeed.
+    ws.write(
+        "src/util.c",
+        "#include \"util.h\"\nint util(void) { return \"not an int\"; }\n",
+    );
+    assert_eq!(code(&["build"]), 1, "a compile that fails");
+
+    // A workspace that is not one at all.
+    let empty = Workspace::empty("diagnostic-exit-codes-empty");
+    let out = Command::new(frost_bin())
+        .arg("-C")
+        .arg(&empty.dir)
+        .arg("build")
+        .output()
+        .expect("spawn frost");
+    assert_eq!(out.status.code(), Some(2), "a directory with no manifest");
+    assert!(
+        normalized_output(&out.stderr).contains("frost init"),
+        "and it says what to do about it"
+    );
+}

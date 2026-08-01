@@ -2666,7 +2666,11 @@ pub fn toolchain_closure_fingerprint_cached(
         // A manifest may name a driver by a workspace-relative path (a
         // wrapper script for a cross toolchain, say), which only resolves
         // against the workspace root, not the process working directory.
-        let resolved = resolve_executable(tool)?;
+        let resolved = resolve_executable(tool).map_err(|_| MissingTool {
+            program: tool.clone(),
+            declared_as: declared_as(toolchain, tool),
+            needed_by: Vec::new(),
+        })?;
         let resolved = if resolved.is_absolute() {
             resolved
         } else {
@@ -2700,7 +2704,11 @@ pub fn toolchain_closure_fingerprint_cached(
         hasher.update(b"\0");
         hasher.update(
             frostbuild_core::hashcache::hash_file(resolved)
-                .with_context(|| format!("compiler {} not accessible", resolved.display()))?
+                .map_err(|_| MissingTool {
+                    program: tool.clone(),
+                    declared_as: declared_as(toolchain, tool),
+                    needed_by: Vec::new(),
+                })?
                 .as_bytes(),
         );
         hasher.update(b"\0");
@@ -2740,6 +2748,87 @@ fn resolve_executable(tool: &str) -> Result<PathBuf> {
     }
     frostbuild_core::paths::find_on_path(tool, |candidate| candidate.is_file())
         .with_context(|| format!("tool {tool:?} not found in PATH"))
+}
+
+/// A configured tool that could not be found, with everything needed to say
+/// why in one message.
+///
+/// "not found in PATH" answers the smallest part of the question. What a reader
+/// needs is which manifest key asked for it, where frost looked, and where to
+/// see the rest of the machine's state at once — otherwise the next step is
+/// guessing, and the guess is usually reinstalling something already installed.
+#[derive(Debug, Clone)]
+pub struct MissingTool {
+    /// The program as the manifest spells it.
+    pub program: String,
+    /// The manifest key that declared it: `[toolchain] cc`, `[toolchain.tools]
+    /// javac`, and so on.
+    pub declared_as: String,
+    /// Targets whose actions would have run it. Filled in by whoever holds the
+    /// graph — this is raised from the toolchain, which does not have one.
+    pub needed_by: Vec<String>,
+}
+
+impl std::fmt::Display for MissingTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} names {:?}, which is not executable",
+            self.declared_as, self.program
+        )?;
+        if self.program.contains('/') {
+            write!(
+                f,
+                "\n  = looked for it relative to the workspace root, because the \
+                 name contains a path separator"
+            )?;
+        } else {
+            write!(f, "\n  = looked for it on PATH")?;
+        }
+        if !self.needed_by.is_empty() {
+            // Named, then counted: five targets are worth listing and fifty are
+            // not, and the count is the part that says how much is blocked.
+            let listed = self.needed_by.len().min(5);
+            write!(f, "\n  = needed by {}", self.needed_by[..listed].join(", "))?;
+            if self.needed_by.len() > listed {
+                write!(f, " and {} more", self.needed_by.len() - listed)?;
+            }
+        }
+        write!(
+            f,
+            "\n  = `frost doctor` reports every required tool and every optional \
+             integration at once"
+        )
+    }
+}
+
+impl std::error::Error for MissingTool {}
+
+/// Which manifest key a configured program came from.
+fn declared_as(toolchain: &frostbuild_core::manifest::Toolchain, program: &str) -> String {
+    for (key, value) in [
+        ("cc", &toolchain.cc),
+        ("cxx", &toolchain.cxx),
+        ("ar", &toolchain.ar),
+    ] {
+        if value == program {
+            return format!("[toolchain] {key}");
+        }
+    }
+    if toolchain.kofunc.as_deref() == Some(program) {
+        return "[toolchain] kofunc".to_string();
+    }
+    match toolchain
+        .tools
+        .iter()
+        .find(|(_, value)| value.as_str() == program)
+    {
+        Some((name, _)) => format!("[toolchain.tools] {name}"),
+        // The shell is frost's own choice rather than anything the manifest
+        // declared, and saying otherwise would send the reader to a key that
+        // does not exist.
+        None => "the host shell frost runs genrules through".to_string(),
+    }
 }
 
 #[cfg(test)]

@@ -1381,7 +1381,7 @@ fn run(cli: Cli) -> Result<i32> {
             let graph = load_graph(&root, &profile, &platform)?;
             let requested = resolve_targets(&graph, targets)?;
             let closure = graph.action_closure(&requested)?;
-            let toolchain = toolchain_closure_fingerprint_cached(&root, &graph.toolchain)?;
+            let toolchain = toolchain_fingerprint(&root, &graph)?;
             let opts = BuildOptions {
                 jobs: default_jobs(),
                 keep_going: true,
@@ -1616,7 +1616,7 @@ fn run(cli: Cli) -> Result<i32> {
                 &root,
                 &graph,
                 closure,
-                toolchain_closure_fingerprint_cached(&root, &graph.toolchain)?,
+                toolchain_fingerprint(&root, &graph)?,
                 BuildOptions {
                     dry_run: true,
                     keep_going: true,
@@ -3735,7 +3735,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
     }
     let graph = load_graph(root, &request.profile, &request.platform)?;
-    let toolchain = toolchain_closure_fingerprint_cached(root, &graph.toolchain)?;
+    let toolchain = toolchain_fingerprint(root, &graph)?;
     let mut requested = if request.test_mode && (request.all || request.targets.is_empty()) {
         graph
             .targets
@@ -4052,6 +4052,43 @@ fn write_trace(
 
 /// Load the configured graph, taking the manifest-free warm path when the
 /// sources stamp proves the workspace inputs are unchanged; otherwise fall
+/// The configured toolchain's fingerprint, naming what needs a tool that is
+/// missing.
+///
+/// `frostbuild-exec` knows which manifest key declared a program and where it
+/// looked for it; only the graph knows which targets would have run it. A
+/// message carrying all three is the difference between "install something" and
+/// knowing what to install and what stops working until you do.
+fn toolchain_fingerprint(root: &std::path::Path, graph: &BuildGraph) -> Result<String> {
+    toolchain_closure_fingerprint_cached(root, &graph.toolchain).map_err(|error| {
+        let Some(missing) = error.downcast_ref::<frostbuild_exec::MissingTool>() else {
+            return error;
+        };
+        let mut needed: Vec<&str> = graph
+            .actions
+            .iter()
+            .filter(|action| {
+                action
+                    .argv
+                    .first()
+                    .is_some_and(|arg| arg == &missing.program)
+            })
+            .map(|action| action.target.as_str())
+            .collect();
+        needed.sort_unstable();
+        needed.dedup();
+        if needed.is_empty() {
+            return error;
+        }
+        // Rebuilt rather than wrapped: an anyhow context prepends, and this
+        // belongs among the other notes rather than ahead of the sentence they
+        // are notes on.
+        let mut attributed = missing.clone();
+        attributed.needed_by = needed.into_iter().map(str::to_string).collect();
+        anyhow::Error::new(attributed)
+    })
+}
+
 /// back to a full manifest load and (re)compile.
 fn load_graph(root: &std::path::Path, profile: &str, platform: &str) -> Result<BuildGraph> {
     if let Some(graph) = GraphStore::load_cached(root, profile, platform) {
@@ -4068,8 +4105,28 @@ fn resolve_targets(graph: &BuildGraph, requested: Vec<String>) -> Result<Vec<Str
     for name in &requested {
         if !graph.targets.contains_key(name) {
             let known: Vec<&str> = graph.targets.keys().map(String::as_str).collect();
-            if let Some(hint) = frostbuild_core::manifest::closest(name, known.iter().copied()) {
-                bail!("unknown target {name:?}. did you mean {hint:?}?");
+            // Up to three, because a bare name in a multi-package workspace can
+            // legitimately match more than one label, and picking one of them
+            // silently sends the reader to the wrong package.
+            let hints = frostbuild_core::manifest::closest_several(name, known.iter().copied(), 3);
+            if !hints.is_empty() {
+                bail!(
+                    "unknown target {name:?}. did you mean {}?",
+                    hints
+                        .iter()
+                        .map(|hint| format!("{hint:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            // Nothing was close. A long list of every target in a large
+            // workspace is not readable, so past a handful the answer is the
+            // query that prints them.
+            if known.len() > 12 {
+                bail!(
+                    "unknown target {name:?}. this workspace declares {} targets;                      `frost query deps //...` lists them",
+                    known.len()
+                );
             }
             bail!(
                 "unknown target {name:?}. known targets: {}",

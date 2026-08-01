@@ -28,14 +28,34 @@ end of this document.
 
 ### Exit codes
 
-| Code | Meaning | Examples |
-|---|---|---|
-| `0` | the requested work completed | build succeeded or was already up to date; `doctor` found everything |
-| `1` | the work ran and did not succeed | a compile failed; a test failed; `doctor` found a missing required tool |
-| `2` | frost could not run the work as asked | unusable command line, missing or invalid manifest, unreadable workspace, internal error |
+| Code | Class | Meaning | What falls in it |
+|---|---|---|---|
+| `0` | result | the requested work completed | a build, test or query that finished; a fully cached build; `doctor` finding everything it requires |
+| `1` | result | the work ran and did not succeed | a compile or link failed; a test failed; a determinism check found a difference; `doctor` found a missing required tool; a query whose answer is legitimately empty (`somepath` with no path) |
+| `2` | refusal | frost could not run the work as asked | an unparsable command line; an unknown target, profile or platform; a manifest that does not parse or does not validate; a missing or unreadable workspace; a configured tool that is not executable; an internal error |
 
 The distinction that matters to a script is `1` versus `2`: `1` is an answer
 about your code, `2` is an answer about your invocation or environment.
+`exit_codes_separate_a_bad_invocation_from_a_bad_build` runs one invocation
+from each row against a real workspace, so a new failure path has to choose a
+class rather than inherit one.
+
+### What a refusal says
+
+A `2` is frost declining to act, so it owes the reader the way forward. Each of
+these is enforced by a test rather than by intent:
+
+- an unknown target lists up to three targets it might have been, spelled as
+  labels, and points at `frost query deps //...` when the workspace is too
+  large to enumerate;
+- a manifest error is `path:line:column: problem`, workspace-relative, with the
+  offending line, a caret over the span the parser recorded, and — when a valid
+  alternative is close enough to what was written — `did you mean`;
+- a configured tool that is not executable names the manifest key that declared
+  it, where frost looked, which targets needed it, and `frost doctor`.
+
+The wording of any of it is [not contract](#not-contract). Which class an exit
+code falls in is.
 
 ## Not contract
 

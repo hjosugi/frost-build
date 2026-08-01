@@ -7,6 +7,23 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Changed
 
+- Failure messages say where and what next, not only what. A manifest error is
+  now `path:line:column: problem` — workspace-relative, so it is the same on
+  every machine — with the offending line, a caret over the span the parser
+  recorded, and `did you mean \`srcs\`?` when a valid alternative is close to
+  what was written. An unknown target offers up to three labels it might have
+  been rather than one, because a bare name in a multi-package workspace can
+  match several and choosing one silently sends the reader to the wrong
+  package; past a handful of targets it names `frost query deps //...` instead
+  of printing them all. A configured tool that is not executable says which
+  manifest key declared it, where frost looked, which targets needed it and to
+  run `frost doctor` — in one message, because any one of those alone leaves
+  the next step a guess. The position lives on a `ManifestError` rather than
+  inside a formatted string, so `frost lsp` puts its squiggle on the bytes the
+  parser identified and shows the sentence without the position repeated in it.
+  docs/28 gains the exit-code classification table, with a test that runs one
+  invocation from each row.
+
 - The site's stylesheet keeps its scales in one place. It held 51 font-size
   declarations with 26 distinct rem values, 12 letter-spacing declarations with
   12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
@@ -44,8 +61,9 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   analysis — references call `graph.rdeps_closure`, the function `frost query
   rdeps` calls, and hover reports the closure size `frost query deps` prints,
   with an E2E that compares them so a disagreement fails rather than ships. A
-  diagnostic's message is byte for byte the sentence a build prints for the
-  same mistake, placed on the token that message names. The workspace is
+  cross-package diagnostic carries the build's own sentence byte for byte,
+  placed on the token that sentence names; a parse error is placed on the span
+  the parser recorded. The workspace is
   re-read on save through the graph store's warm path, so an unchanged tree
   costs a stamp check; syntax and per-target errors are reported against the
   editor's buffer as it is typed. While a manifest does not parse, or a label

@@ -298,8 +298,11 @@ labels or kinds: a typo in `deps = ["//core:core"]` is valid TOML and stays
 silent until a build says otherwise — correctly, in a terminal, which is not
 where the cursor is. `frost lsp` provides:
 
-- **diagnostics** — the manifest loader's own errors, byte for byte the
-  sentence `frost build` prints, placed on the token the message names
+- **diagnostics** — the manifest loader's own errors. A parse or shape error is
+  placed on the span the parser recorded and shows the sentence without the
+  position repeated in it, since the editor draws the range itself; a
+  cross-package error, which has no span, carries the build's sentence byte for
+  byte and is placed on the token that sentence names
 - **completion** — labels across every package, `kind` values, `[toolchain.tools]`
   names, and the keys the target's kind accepts
 - **definition** — a label to the `[target.<name>]` line that declares it, in
