@@ -40,6 +40,26 @@ are all `2`; a compile or test that ran and failed is `1`.
 through the real binary, because a document that says so and a binary that does
 so are different claims.
 
+## What the VS Code extension depends on
+
+`tools/vscode/` is a consumer inside this repository, so the surfaces it parses
+are listed here rather than discovered by breaking it. Each is already covered
+by a row above; this says which ones an editor would notice first.
+
+| Surface | Used for |
+|---|---|
+| `frost info --json` | workspace root, `config`, and the output/bin directories a launch configuration needs |
+| `frost query targets --output label-kind` | the sidebar tree and every target picker |
+| `frost query owners <path> --output label-kind` | "build the target that owns this file" |
+| `frost query <fn> --json` | the `targets` array, for pickers that do not need kinds |
+| `<kind> target <label>`, the `--output label-kind` line shape | parsed with an anchored three-field pattern |
+| `frost build/test --no-tui` diagnostics, including the `(//pkg:target)` suffix | Problems entries attributed to the target frost blamed |
+| Exit code 1 from a query that matched nothing | an empty answer, distinguished from a failure |
+
+The `--output dot` shapes are **not** in this list. They encode target kind as
+a node shape, which is a rendering choice; the extension read them once and the
+workaround was deleted when `frost query targets` replaced it.
+
 ## Not contract
 
 These change whenever there is a reason, in any release, without a deprecation

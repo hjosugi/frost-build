@@ -16,6 +16,12 @@ import { TargetTreeProvider } from './tree';
 import { frostFolder, readSettings } from './workspace';
 
 export function activate(context: vscode.ExtensionContext): void {
+  // Gates the editor context menu. Activation is `workspaceContains:frost.toml`,
+  // so this is only ever true in a window that has one; without it the
+  // "Build File Owners" entry appears on every file in every window that
+  // happens to have activated the extension, which is a menu item that
+  // usually cannot work.
+  void vscode.commands.executeCommand('setContext', 'frostbuild.active', true);
   const output = vscode.window.createOutputChannel('FrostBuild');
   const diagnostics = vscode.languages.createDiagnosticCollection('frost');
   const status = createStatusReporter();

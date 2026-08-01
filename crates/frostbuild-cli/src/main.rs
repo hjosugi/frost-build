@@ -696,6 +696,17 @@ enum QueryCmd {
         #[command(flatten)]
         opts: QueryOpts,
     },
+    /// Every target in the workspace
+    ///
+    /// The one query with no starting point. `deps` and `rdeps` both need a
+    /// target to walk from, which makes "what is in this workspace" the
+    /// question they cannot answer — tooling was deriving it from the roots of
+    /// `--output dot`, which encodes kind in a node *shape* and is a rendering
+    /// choice rather than a contract.
+    Targets {
+        #[command(flatten)]
+        opts: QueryOpts,
+    },
     /// Targets that declare these files among their action inputs
     Owners {
         /// Workspace-relative paths or globs
@@ -4378,6 +4389,7 @@ impl QueryCmd {
             | QueryCmd::Rdeps { opts, .. }
             | QueryCmd::Somepath { opts, .. }
             | QueryCmd::Allpaths { opts, .. }
+            | QueryCmd::Targets { opts }
             | QueryCmd::Owners { opts, .. } => opts,
         }
     }
@@ -4558,6 +4570,12 @@ fn run_query(root: &std::path::Path, function: &QueryCmd) -> Result<i32> {
         QueryCmd::Owners { paths: files, .. } => (
             format!("owners({})", files.join(", ")),
             graph.owners(files)?,
+        ),
+        // Already sorted: `targets` is a BTreeMap, and a listing whose order
+        // changed between runs would be useless to diff.
+        QueryCmd::Targets { .. } => (
+            "targets()".to_string(),
+            graph.targets.keys().cloned().collect(),
         ),
     };
     let targets: Vec<String> = targets.into_iter().filter(keep).collect();
