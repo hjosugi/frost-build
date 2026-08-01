@@ -484,6 +484,65 @@ root are recorded workspace-relative, and the recorded list is sorted, so it doe
 not depend on which spelling the tool printed. `--sandbox` also requires every workspace input to be declared,
 so package managers that traverse a module cache normally use `sandbox = false`.
 
+## Visibility
+
+Multi-package labels let a workspace split into modules. Visibility is what
+makes those modules mean something: without it any target may depend on any
+other, so the boundary exists only in whatever discipline the team keeps, and
+the first deadline erases it.
+
+```toml
+[target.core]
+kind = "cc_library"
+srcs = ["src/core.c"]
+visibility = ["group:middle"]      # or ["//apps/...", "//tools/cli:cli"]
+```
+
+```toml
+# Root manifest only: a boundary shared by more than one target is written
+# down once, so widening it is a single reviewable edit.
+[visibility.middle]
+allow = ["//text/...", "//render/..."]
+```
+
+Four spellings, and nothing else:
+
+| entry | admits |
+|---|---|
+| `//...` | every package |
+| `//apps/...` | that package and everything under it |
+| `//apps/cli:cli` | that one target |
+| `group:NAME` | whatever the root manifest's `[visibility.NAME]` allows |
+
+`//apps` on its own is refused. It is one character from `//apps/...` and means
+something different, and a boundary that opens because frost guessed which was
+meant is worse than an error.
+
+**A target is always visible inside its own package.** A package is the unit
+people already treat as one thing; requiring a declaration to use your own
+neighbour would make the feature nothing but noise.
+
+**The default is public**, which is not what Bazel does. A private-by-default
+rule would break every existing workspace on upgrade, and a correctness feature
+that arrives as a wall of errors is one people turn off — after which it
+protects nothing. Instead `frost lint`'s `undeclared-visibility` names the
+targets where a boundary is *already being crossed*, so the migration is a list
+you can work through. `visibility = []` is how a target says "my own package
+only".
+
+Enforced when the manifest loads, not when something is built: a dependency
+that is not permitted is a statement about the manifest, and reporting it only
+when you happen to build that path would make the boundary depend on what you
+asked for. The error names both ends, the rule that applied, and the narrowest
+entry that would admit the dependent.
+
+Groups are one level deep — a group listing another group is refused. Query
+commands are unaffected: `frost query` answers what the graph *is*, and
+visibility is about what a build may ask for.
+
+Not action-key material (docs/16): visibility says who may ask for a target,
+not what building it produces, so declaring a boundary costs no rebuild.
+
 ## Build stamping
 
 A binary that reports its version has to get that version from outside the

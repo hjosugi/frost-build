@@ -65,6 +65,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   CI job runs it on `sample_multi`, so the rendering is something you can look at
   rather than something the documentation asserts.
 
+- `visibility` on targets, and named `[visibility.*]` groups in the root
+  manifest. Multi-package labels let a workspace split into modules; this is what
+  makes those modules mean something, enforced when the manifest loads rather
+  than when something is built. Four spellings — `//...`, `//pkg/...`,
+  `//pkg:target`, `group:NAME` — and `//pkg` on its own is refused, because it is
+  one character from `//pkg/...` and means something else. A target is always
+  visible inside its own package.
+
+  The default is public, unlike Bazel. A private-by-default rule would break
+  every existing workspace on upgrade, and a correctness feature that arrives as
+  a wall of errors is one people turn off, after which it protects nothing.
+  Instead a new `undeclared-visibility` lint names the targets where a boundary
+  is *already* being crossed, so the migration is a list rather than a flag day;
+  `sample_multi` now declares its own. Not action-key material, so declaring a
+  boundary costs no rebuild.
+
 - Build stamping: a `[stamp]` section whose `command` prints `KEY=VALUE` lines,
   and `${stamp.KEY}` expansion in a command target's `args` and `env`. The split
   is by rate of change and is decided by the key's *name*, so frost can classify

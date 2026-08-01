@@ -193,6 +193,16 @@ impl Workspace {
         std::fs::write(self.dir.join(rel), content).unwrap();
     }
 
+    /// Rewrite a manifest in place. A test that edits a declaration should say
+    /// which declaration it means, not reproduce the file.
+    fn write_in(&self, rel: &str, edit: impl Fn(String) -> String) {
+        let path = self.dir.join(rel);
+        let before = std::fs::read_to_string(&path).unwrap();
+        let after = edit(before.clone());
+        assert_ne!(before, after, "{rel}: the edit matched nothing");
+        std::fs::write(&path, after).unwrap();
+    }
+
     fn append(&self, rel: &str, content: &str) {
         let path = self.dir.join(rel);
         let mut text = std::fs::read_to_string(&path).unwrap();
@@ -5473,4 +5483,129 @@ fn no_stamp_builds_without_the_values_rather_than_refusing_to_build() {
     assert!(ok, "{out}");
     assert!(out.contains("ran command:stable_only"), "{out}");
     assert_eq!(stamped(&ws, "stable.txt"), "1.0.0");
+}
+
+// ---------------------------------------------------------------------------
+// Visibility (#139). Multi-package labels let a workspace split into modules;
+// visibility is what makes those modules mean something.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_dependency_a_package_does_not_export_fails_at_load_naming_both_ends() {
+    let ws = Workspace::multi("visibility-refused");
+    // sample_multi declares //core:core visible to group:middle, which is
+    // //text and //render. Reaching into it from the app layer is exactly the
+    // crossing the declaration exists to stop.
+    ws.write(
+        "apps/cli/src/reach.c",
+        "int frost_reach(void) { return 0; }\n",
+    );
+    ws.append(
+        "apps/cli/frost.toml",
+        "\n[target.reach]\nkind = \"cc_library\"\nsrcs = [\"src/reach.c\"]\ndeps = [\"//core:core\"]\n",
+    );
+    let (code, out) = ws.frost_code(&["build", "//apps/cli:reach", "--no-tui"]);
+    assert_eq!(code, 2, "{out}");
+    // Both ends and the rule that applied. The reader is usually the author of
+    // the dependent, who can see their own manifest and not the one that
+    // decided this.
+    assert!(out.contains("//apps/cli:reach"), "{out}");
+    assert!(out.contains("//core:core"), "{out}");
+    assert!(out.contains("group:middle"), "{out}");
+    // The narrowest rule that would admit this dependent, not the widest one
+    // that happens to contain it.
+    assert!(
+        out.contains("//apps/cli/..."),
+        "the way out is named: {out}"
+    );
+}
+
+#[test]
+fn a_subtree_rule_admits_the_package_and_what_is_under_it() {
+    let ws = Workspace::multi("visibility-subtree");
+    // //text:text is visible to //apps/..., and //apps/cli is under it.
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(ok, "{out}");
+
+    // Narrowing to a sibling subtree that does not contain //apps/cli must
+    // refuse, which is what proves the match was on the subtree and not on the
+    // package merely appearing in the string.
+    ws.write_in("text/frost.toml", |text| {
+        text.replace(
+            r#"visibility = ["//apps/..."]"#,
+            r#"visibility = ["//app/..."]"#,
+        )
+    });
+    let (code, out) = ws.frost_code(&["build", "--no-tui"]);
+    assert_eq!(code, 2, "//app must not admit //apps/cli: {out}");
+    assert!(out.contains("//text:text"), "{out}");
+}
+
+#[test]
+fn a_target_that_declares_nothing_is_visible_everywhere() {
+    // The default has to keep existing workspaces building. A correctness
+    // feature that arrives as a wall of errors on upgrade is one people turn
+    // off, and then it protects nothing.
+    let ws = Workspace::multi("visibility-default");
+    ws.write_in("core/frost.toml", |text| {
+        text.replace(r#"visibility = ["group:middle"]"#, "")
+    });
+    ws.write(
+        "apps/cli/src/reach.c",
+        "int frost_reach(void) { return 0; }\n",
+    );
+    ws.append(
+        "apps/cli/frost.toml",
+        "\n[target.reach]\nkind = \"cc_library\"\nsrcs = [\"src/reach.c\"]\ndeps = [\"//core:core\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build", "//apps/cli:reach", "--no-tui"]);
+    assert!(ok, "an undeclared target must stay public: {out}");
+}
+
+#[test]
+fn visibility_is_not_action_key_material() {
+    // It says who may *ask* for a target, not what building it produces. Two
+    // workspaces differing only in visibility build byte-identical outputs and
+    // must share cache entries — otherwise declaring a boundary would cost a
+    // full rebuild, and nobody would declare one.
+    let ws = Workspace::multi("visibility-not-keyed");
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(ok, "{out}");
+
+    ws.write_in("render/frost.toml", |text| {
+        text.replace(
+            r#"visibility = ["//apps/..."]"#,
+            r#"visibility = ["//..."]"#,
+        )
+    });
+    let (ok, out) = ws.frost(&["build", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("ran "),
+        "widening a boundary must not rebuild anything:\n{out}"
+    );
+}
+
+#[test]
+fn lint_names_the_boundaries_that_are_already_being_crossed() {
+    let ws = Workspace::multi("visibility-lint");
+    // The sample declares its boundaries, so there is nothing to report.
+    let (ok, out) = ws.frost(&["lint"]);
+    assert!(ok, "{out}");
+    assert!(!out.contains("undeclared-visibility"), "{out}");
+
+    ws.write_in("core/frost.toml", |text| {
+        text.replace(r#"visibility = ["group:middle"]"#, "")
+    });
+    // Nonzero, like every other finding: a lint that reports and exits 0 is
+    // one no CI job notices.
+    let (code, out) = ws.frost_code(&["lint"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("undeclared-visibility"), "{out}");
+    assert!(out.contains("//core:core"), "{out}");
+
+    // …but only where a boundary is actually crossed. //core:core_test depends
+    // on //core:core from inside the same package and is not reported, because
+    // "every target should declare visibility" is advice people switch off.
+    assert!(!out.contains("//core:core_test"), "{out}");
 }

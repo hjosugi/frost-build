@@ -4,4 +4,6 @@
 kind = "cc_library"
 srcs = ["src/text.c"]
 deps = ["//core:core"]
+# One of the two routes from //apps/cli to //core.
+visibility = ["//apps/..."]
 includes = ["include"]
