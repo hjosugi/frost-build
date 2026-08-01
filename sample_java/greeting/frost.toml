@@ -7,6 +7,10 @@ kind = "command"
 tool = "javac"
 args = ["-d", "${clean_dir}", "${in}"]
 inputs = ["src/main/java/com/example/greeting/Greeting.java"]
+# The jar is this package's whole surface, and //app is the only thing meant to
+# put it on a classpath. A second consumer should be a decision someone makes
+# here rather than one they make in their own manifest.
+visibility = ["//app:app"]
 # Every command output must contain ${config}, which keeps debug, release and
 # cross-platform trees from colliding. Paths are package-relative, so this
 # resolves under greeting/.

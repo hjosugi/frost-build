@@ -5,4 +5,6 @@
 kind = "cc_library"
 srcs = ["src/render.c"]
 deps = ["//core:core"]
+# The other route from //apps/cli to //core.
+visibility = ["//apps/..."]
 includes = ["include"]

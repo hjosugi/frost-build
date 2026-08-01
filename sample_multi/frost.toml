@@ -27,5 +27,13 @@ cflags = ["-O2", "-Wall"]
 kind = "genrule"
 cmd = "tools${pathsep}gen_version ${out}"
 inputs = ["tools/gen_version", "tools/gen_version.cmd"]
+# Every package compiles against this header, so its visibility is the one that
+# is genuinely public rather than merely undeclared.
+visibility = ["//..."]
 includes = ["gen"]
 outputs = ["gen/version.h"]
+
+# A boundary shared by more than one target is written down once, so widening it
+# is a single reviewable edit rather than the same line pasted in two manifests.
+[visibility.middle]
+allow = ["//text/...", "//render/..."]
