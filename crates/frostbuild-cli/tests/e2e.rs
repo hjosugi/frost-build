@@ -5897,3 +5897,27 @@ fn plan_names_the_platform_section_that_shaped_the_build() {
     assert!(ok, "{out}");
     assert!(!out.contains("section applied"), "{out}");
 }
+
+#[test]
+fn explain_names_the_platform_it_is_talking_about() {
+    // `explain app` and `explain app --platform device` described two
+    // different builds with the same sentence, so a reader could not tell
+    // which one they had just been told about. The lookup was always right —
+    // a device query against a host-only build correctly reports no record —
+    // but the label named only the profile.
+    let ws = platform_workspace("explain-platform");
+    assert!(ws.frost(&["build", "lib", "--no-tui"]).0);
+
+    let (ok, host) = ws.frost(&["explain", "lib"]);
+    assert!(ok, "{host}");
+    assert!(host.contains("(debug)"), "{host}");
+
+    let (ok, device) = ws.frost(&["explain", "lib", "--platform", "device"]);
+    assert!(ok, "{device}");
+    // The same spelling the output tree and the journal already use.
+    assert!(device.contains("(device/debug)"), "{device}");
+    assert_ne!(
+        host, device,
+        "two configurations must not describe themselves identically"
+    );
+}
