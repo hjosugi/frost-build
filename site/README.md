@@ -8,6 +8,15 @@ uses relative asset URLs so it works at the repository's Pages base path.
 documentation hub and links to the authoritative Markdown files in the
 repository; the Markdown remains the source of truth.
 
+`styles.css` defines shared foundation tokens in `:root` and documentation
+semantic aliases on `.docs-page`. New documentation components should use the
+existing type scale, line heights, spacing, radii, and motion duration instead
+of introducing near-duplicate literal values.
+
+Run `python3 scripts/check_site.py` and `node --check site/script.js` before
+publishing. The Pages workflow runs the same checks before creating its
+artifact.
+
 Brand assets:
 
 - `assets/frostbuild-mark.png` — 1254 px transparent master;
