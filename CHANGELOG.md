@@ -5,6 +5,34 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- The site's stylesheet keeps its scales in one place. It held 51 font-size
+  declarations with 26 distinct rem values, 12 letter-spacing declarations with
+  12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
+  differing by as little as 0.01rem, which is accretion rather than intent.
+  Those are now a type scale, a radius scale, a tracking scale and named
+  leadings, verified against the rendered page: the largest move is 0.64px of
+  type, 0.14px of tracking and 2px of corner, and no element's leading ratio
+  changed. Display leadings and the negative tracking on large headings are
+  named rather than merged, because those are set by eye per size. A test keeps
+  it consolidated, since the next hurried change adds `0.77rem` and nothing
+  notices; the one literal that remains is an `em` that must scale with the
+  metric beside it, and it says so.
+
+### Added
+
+- A root `frost.toml`: the repository builds itself. `frost test --all` runs the
+  pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
+  suite and the extension's — each naming what it reads, so a stage that already
+  passed on those exact inputs is a cached success rather than a repeat.
+  Measured here, a second run of an unchanged tree is 1.6 s against 103 s, and
+  editing a `.rs` file reruns the three Rust stages while leaving the Python and
+  extension suites cached. `scripts/check.sh` stays: bootstrapping cannot depend
+  on the thing being bootstrapped. The manifest deliberately has no
+  `[workspace]` section, because that would make Frost discover the nested
+  sample manifests and pull every sample workspace in as a package of this one.
+
 ### Added
 
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It

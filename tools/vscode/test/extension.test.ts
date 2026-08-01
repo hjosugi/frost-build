@@ -76,7 +76,15 @@ test('activate registers exactly the commands package.json declares', () => {
   // "command not found", which is a bug no type checker can see.
   assert.deepEqual(
     [...recorded.commands.keys()].sort(),
-    ['frost.build', 'frost.buildFileOwners', 'frost.refreshTargets', 'frost.test'],
+    [
+      'frost.build',
+      'frost.buildFileOwners',
+      'frost.buildTarget',
+      'frost.debugTarget',
+      'frost.refreshTargets',
+      'frost.test',
+      'frost.testTarget',
+    ],
   );
   assert.ok(recorded.taskProviders.has('frost'), 'a frost task provider is registered');
   assert.ok(recorded.status.shown, 'the status item is visible from activation');
@@ -92,15 +100,18 @@ test('a save handler is registered and honours buildOnSave', async () => {
   assert.deepEqual(recorded.errors, []);
 });
 
-test('refreshTargets reports rather than failing silently', async () => {
+test('refreshTargets completes without announcing itself', async () => {
   activate();
   const handler = recorded.commands.get('frost.refreshTargets');
   assert.ok(handler);
   await handler();
-  assert.ok(
-    recorded.info.some((message) => message.includes('refreshed')),
-    `expected a confirmation, saw ${JSON.stringify(recorded.info)}`,
-  );
+  // The tree and the Test Explorer repopulate visibly, so a notification here
+  // would be noise for something the user can already see. What must hold is
+  // that the command resolves rather than leaving work in flight — the
+  // Test Explorer discovery is awaited, which is what makes a refresh
+  // followed by a look deterministic.
+  assert.deepEqual(recorded.info, [], 'no notification for a visible action');
+  assert.deepEqual(recorded.errors, [], 'and no failure either');
 });
 
 test('a missing binary is reported, not swallowed', async (t) => {
