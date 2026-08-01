@@ -430,6 +430,154 @@ outputs = [".frost/out/${config}/report.txt"]
 #[test]
 // POSIX shell command text; see docs/09_platform_support.md.
 #[cfg(unix)]
+fn runs_per_test_repeats_the_test_and_refuses_a_cached_single_pass() {
+    let ws = Workspace::empty("runs-per-test");
+    // Appends a line per execution, so the count is observed rather than
+    // inferred from what frost says it did.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["counted"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.counted]
+kind = "test"
+tool = "sh"
+args = ["-c", "echo run >> runs.txt"]
+inputs = ["cases.txt"]
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+    let runs = || {
+        std::fs::read_to_string(ws.dir.join("runs.txt"))
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    };
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "{out}");
+    assert_eq!(runs(), 1);
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok && out.contains("1 cached"), "{out}");
+    assert_eq!(runs(), 1, "a cached test must not run");
+
+    // The question "does this pass five times" cannot be answered by a
+    // recorded single pass, so the cache is not consulted.
+    let (ok, out) = ws.frost(&["test", "--runs-per-test", "5"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("1 cached"),
+        "must not reuse a single pass:\n{out}"
+    );
+    assert_eq!(runs(), 6, "five more executions");
+
+    // Failing on a later run is the result worth reporting: which run failed
+    // separates a flake from a broken test.
+    ws.write(
+        "frost.toml",
+        &std::fs::read_to_string(ws.dir.join("frost.toml"))
+            .unwrap()
+            .replace(
+                r#"args = ["-c", "echo run >> runs.txt"]"#,
+                r#"args = ["-c", "echo run >> runs.txt; test $(wc -l < runs.txt) -lt 9"]"#,
+            ),
+    );
+    let (ok, out) = ws.frost(&["test", "--runs-per-test", "5"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("failed on run 3 of 5"),
+        "the failing run must be named:\n{out}"
+    );
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn test_output_modes_choose_what_reaches_the_terminal() {
+    let ws = Workspace::empty("test-output-modes");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["chatty"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.chatty]
+kind = "test"
+tool = "sh"
+args = ["-c", "echo NOISE_FROM_A_PASSING_TEST"]
+inputs = ["cases.txt"]
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+
+    // The default hides what a passing test wrote: it is the noise that
+    // buries the one failure worth reading.
+    let (ok, out) = ws.frost(&["test", "--no-cache"]);
+    assert!(ok, "{out}");
+    assert!(!out.contains("NOISE_FROM_A_PASSING_TEST"), "{out}");
+    assert!(out.contains("1 passed"), "{out}");
+
+    let (ok, out) = ws.frost(&["test", "--no-cache", "--test-output", "all"]);
+    assert!(ok && out.contains("NOISE_FROM_A_PASSING_TEST"), "{out}");
+
+    let (ok, out) = ws.frost(&["test", "--no-cache", "--test-output", "summary"]);
+    assert!(ok && !out.contains("NOISE_FROM_A_PASSING_TEST"), "{out}");
+    assert!(
+        out.contains("1 passed"),
+        "the counts always survive:\n{out}"
+    );
+
+    // A failing test is replayed after the run, so the log that matters is the
+    // last thing on screen rather than scrolled away behind later work.
+    ws.write(
+        "frost.toml",
+        &std::fs::read_to_string(ws.dir.join("frost.toml"))
+            .unwrap()
+            .replace(
+                "echo NOISE_FROM_A_PASSING_TEST",
+                "echo WHY_IT_BROKE >&2; exit 1",
+            ),
+    );
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("--- test:chatty ---"), "replay header:\n{out}");
+    let replay = out.rfind("--- test:chatty ---").expect("replay");
+    assert!(
+        out[replay..].contains("WHY_IT_BROKE"),
+        "the failing log must be in the replay:\n{out}"
+    );
+
+    // `summary` stays quiet even for a failure: the exit code is the answer
+    // that mode asked for.
+    let (ok, out) = ws.frost(&["test", "--test-output", "summary"]);
+    assert!(!ok, "{out}");
+    assert!(
+        !out.contains("--- test:chatty ---"),
+        "summary must not replay:\n{out}"
+    );
+    assert!(out.contains("1 failed"), "{out}");
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
 fn command_line_test_options_are_separate_results_not_shared_ones() {
     let ws = Workspace::empty("test-options");
     // The test writes what it was told, so the assertions read what actually

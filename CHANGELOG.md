@@ -29,6 +29,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost test --runs-per-test N` runs every test N times and requires all of
+  them to pass. It does not read the cache — a recorded single pass cannot
+  answer "does this pass N times", which is the only question worth asking N
+  runs — and it suppresses `flaky_retries`, since hunting for a flake and hiding
+  one are opposite tools. A failure says which run failed, because failing on
+  run 7 of 10 is a flake and failing on run 1 is a broken test.
+
+- `frost test --test-output=summary|errors|all` chooses what reaches the
+  terminal. The default, `errors`, hides what passing tests wrote — that is the
+  noise which buries the one failure worth reading — and replays failing tests
+  in full after the run, because during the run a failure scrolls away behind
+  the tests that were still going. `summary` prints the counts alone; `all`
+  prints everything.
+
 - `frost test --test-filter PATTERN`, `--test-env KEY=VALUE` and `--test-arg ARG`
   supply from the command line what the manifest supplies statically. The filter
   travels as `TESTBRIDGE_TEST_ONLY` and `GTEST_FILTER` rather than as a flag,
