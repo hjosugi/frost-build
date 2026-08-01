@@ -1910,13 +1910,24 @@ fn run(cli: Cli) -> Result<i32> {
                 },
             )
             .run()?;
+            // Name the configuration the way the journal keys it. Reporting
+            // only the profile made `explain app` and
+            // `explain app --platform device` print the same sentence for two
+            // different builds, so a reader could not tell which one they had
+            // just been told about. The lookup was always right; the label was
+            // not.
+            let configuration = match platform.as_str() {
+                frostbuild_core::manifest::HOST_PLATFORM => profile.clone(),
+                other => format!("{other}/{profile}"),
+            };
             if current
                 .results
                 .iter()
                 .all(|result| matches!(result.outcome, Outcome::Cached))
             {
                 println!(
-                    "frost: no execution required for {target} ({profile}); all actions cached"
+                    "frost: no execution required for {target} ({configuration}); \
+                     all actions cached"
                 );
                 return Ok(0);
             }
@@ -1937,7 +1948,7 @@ fn run(cli: Cli) -> Result<i32> {
                 }
             }
             if found == 0 {
-                println!("frost: no recorded execution for {target} ({profile})");
+                println!("frost: no recorded execution for {target} ({configuration})");
             }
             Ok(0)
         }

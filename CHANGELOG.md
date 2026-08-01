@@ -119,6 +119,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   in the closure reads a stamp, fails the build when it fails, and is skipped by
   `--no-stamp` or downgraded to a warning by `--stamp-optional`.
 
+### Fixed
+
+- `frost explain TARGET --platform NAME` names the platform it is describing.
+  It reported only the profile, so `explain app` and
+  `explain app --platform device` printed the same sentence for two different
+  builds and a reader could not tell which one they had been told about. The
+  lookup was always correct — a device query against a host-only build reports
+  no record, as it should — only the label was incomplete. It now reads
+  `(device/debug)`, the spelling the output tree and the journal already use.
+
 ### Changed
 
 - `ProgressState` gained a `Flaky` variant. A retried-and-passed test was
