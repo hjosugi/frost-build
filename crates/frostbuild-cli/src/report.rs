@@ -194,7 +194,9 @@ fn critical_path(html: &mut String, build: &Build) {
         .iter()
         .filter_map(|id| by_id.get(id.as_str()))
         .filter_map(|result| match result.outcome {
-            Outcome::Executed { duration_ms, .. } => Some(duration_ms),
+            Outcome::Executed { duration_ms, .. } | Outcome::Flaky { duration_ms, .. } => {
+                Some(duration_ms)
+            }
             _ => None,
         })
         .sum();
@@ -233,7 +235,9 @@ fn slowest(html: &mut String, build: &Build) {
         .results
         .iter()
         .filter_map(|result| match result.outcome {
-            Outcome::Executed { duration_ms, .. } => Some((duration_ms, result)),
+            Outcome::Executed { duration_ms, .. } | Outcome::Flaky { duration_ms, .. } => {
+                Some((duration_ms, result))
+            }
             _ => None,
         })
         .collect();
@@ -265,7 +269,7 @@ fn slowest(html: &mut String, build: &Build) {
     );
     for (duration_ms, result) in ran.iter().take(shown) {
         let reason = match &result.outcome {
-            Outcome::Executed { reason, .. } => reason.as_str(),
+            Outcome::Executed { reason, .. } | Outcome::Flaky { reason, .. } => reason.as_str(),
             _ => "",
         };
         let _ = writeln!(
@@ -283,6 +287,7 @@ fn slowest(html: &mut String, build: &Build) {
 #[derive(Default)]
 struct KindTally {
     ran: usize,
+    flaky: usize,
     cached: usize,
     failed: usize,
     skipped: usize,
@@ -296,6 +301,14 @@ fn by_kind(html: &mut String, build: &Build) {
         match &result.outcome {
             Outcome::Executed { duration_ms, .. } => {
                 tally.ran += 1;
+                tally.ms += duration_ms;
+            }
+            // A flake ran, and its duration is real. It is counted apart from
+            // `ran` because its success was not journalled, so the next build
+            // executes it again and a reader comparing the two needs to know
+            // which row will not repeat.
+            Outcome::Flaky { duration_ms, .. } => {
+                tally.flaky += 1;
                 tally.ms += duration_ms;
             }
             Outcome::Cached => tally.cached += 1,
@@ -317,14 +330,15 @@ fn by_kind(html: &mut String, build: &Build) {
     );
     html.push_str(
         "<table>\n<thead><tr><th>kind</th><th class=\"num\">ran</th>\
-         <th class=\"num\">cached</th><th class=\"num\">failed</th>\
-         <th class=\"num\">skipped</th><th class=\"num\">hit rate</th>\
-         <th class=\"num\">ms</th></tr></thead>\n<tbody>\n",
+         <th class=\"num\">flaky</th><th class=\"num\">cached</th>\
+         <th class=\"num\">failed</th><th class=\"num\">skipped</th>\
+         <th class=\"num\">hit rate</th><th class=\"num\">ms</th>\
+         </tr></thead>\n<tbody>\n",
     );
     for (kind, tally) in &tallies {
         // A cache hit is only meaningful against work that could have run.
         // Skipped actions never reached the question.
-        let decided = tally.ran + tally.cached + tally.failed;
+        let decided = tally.ran + tally.flaky + tally.cached + tally.failed;
         let hit_rate = if decided == 0 {
             "—".to_string()
         } else {
@@ -332,10 +346,11 @@ fn by_kind(html: &mut String, build: &Build) {
         };
         let _ = writeln!(
             html,
-            "<tr><td>{kind}</td><td class=\"num\">{}</td><td class=\"num\">{}</td>\
-             <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{hit_rate}</td>\
-             <td class=\"num\">{}</td></tr>",
-            tally.ran, tally.cached, tally.failed, tally.skipped, tally.ms
+            "<tr><td>{kind}</td><td class=\"num\">{}</td>\
+             <td class=\"num\">{}</td><td class=\"num\">{}</td>\
+             <td class=\"num\">{}</td><td class=\"num\">{}</td>\
+             <td class=\"num\">{hit_rate}</td><td class=\"num\">{}</td></tr>",
+            tally.ran, tally.flaky, tally.cached, tally.failed, tally.skipped, tally.ms
         );
     }
     html.push_str("</tbody>\n</table>\n</section>\n");
@@ -401,7 +416,11 @@ fn tests(html: &mut String, build: &Build) {
         .iter()
         .filter(|t| matches!(t.outcome, Outcome::Cached))
         .count();
-    let failed = tests.len() - passed - cached;
+    let flaky = tests
+        .iter()
+        .filter(|t| matches!(t.outcome, Outcome::Flaky { .. }))
+        .count();
+    let failed = tests.len() - passed - cached - flaky;
 
     html.push_str("<section>\n<h2>Tests</h2>\n");
     let _ = writeln!(
@@ -410,6 +429,17 @@ fn tests(html: &mut String, build: &Build) {
          A cached test passed on inputs identical to these; it is a result, not \
          a skip.</p>"
     );
+    if flaky > 0 {
+        // Counted apart from both passed and failed on purpose: the build is
+        // green and the result is not trustworthy, and folding it either way
+        // loses the signal `flaky_retries` exists to surface.
+        let _ = writeln!(
+            html,
+            "<p class=\"note\"><span class=\"flaky\">{flaky} flaky</span> — passed only \
+             on a retry. That success was not recorded, so the next build runs \
+             it again rather than reporting a cached pass.</p>"
+        );
+    }
     html.push_str(
         "<table>\n<thead><tr><th>test</th><th>shard</th><th class=\"num\">ms</th>\
          <th>outcome</th></tr></thead>\n<tbody>\n",
@@ -531,7 +561,9 @@ fn kind_name(kind: ActionKind) -> &'static str {
 
 fn duration_cell(outcome: &Outcome) -> String {
     match outcome {
-        Outcome::Executed { duration_ms, .. } => duration_ms.to_string(),
+        Outcome::Executed { duration_ms, .. } | Outcome::Flaky { duration_ms, .. } => {
+            duration_ms.to_string()
+        }
         _ => "—".to_string(),
     }
 }
@@ -539,6 +571,9 @@ fn duration_cell(outcome: &Outcome) -> String {
 fn outcome_cell(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Executed { .. } => "<span class=\"ran\">ran</span>".to_string(),
+        Outcome::Flaky { attempts, .. } => {
+            format!("<span class=\"flaky\">flaky — passed on attempt {attempts}</span>")
+        }
         Outcome::Cached => "<span class=\"hit\">cached</span>".to_string(),
         Outcome::Failed { .. } => "<span class=\"fail\">failed</span>".to_string(),
         Outcome::Skipped { reason } => {
@@ -617,12 +652,12 @@ const STYLE: &str = r#"<style>
 :root {
   color-scheme: light dark;
   --bg: #fbfbfd; --fg: #16161a; --dim: #6b6b76; --line: #e3e3e9;
-  --card: #ffffff; --ran: #7a4bd0; --hit: #1f7a53; --fail: #c0392b;
+  --card: #ffffff; --ran: #7a4bd0; --hit: #1f7a53; --fail: #c0392b; --flaky: #a2661a;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16161a; --fg: #ececf1; --dim: #9a9aa6; --line: #2c2c34;
-    --card: #1e1e24; --ran: #b79cf0; --hit: #5ec99a; --fail: #ff8b7d;
+    --card: #1e1e24; --ran: #b79cf0; --hit: #5ec99a; --fail: #ff8b7d; --flaky: #e0a44e;
   }
 }
 * { box-sizing: border-box; }
@@ -659,6 +694,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums;
 .ran { color: var(--ran); }
 .hit { color: var(--hit); }
 .fail { color: var(--fail); }
+.flaky { color: var(--flaky); }
 pre {
   overflow-x: auto; padding: 0.75rem 0.9rem; border: 1px solid var(--line);
   border-radius: 8px; background: var(--card); font-size: 0.82rem;

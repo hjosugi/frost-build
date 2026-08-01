@@ -180,15 +180,21 @@ pass_env = ["PYTHONPATH"]
 sandbox = false
 ```
 
-Genrule substitutions are `${in}`, `${out}`, `${outs}` and `${pathsep}`. The
+Genrule substitutions are `${in}`, `${out}`, `${outs}`, `${pathsep}`,
+`${dep:LABEL}` and `${deps:LABEL}`. The
 last expands to the host path separator, so an extension-neutral launcher such
 as `tools${pathsep}generate` can select `tools/generate` on POSIX and
 `tools\generate.cmd` through `PATHEXT` on Windows. Genrules execute through the
 host command shell (`/bin/sh -c` on Unix, `cmd.exe /C` on Windows) at the
 workspace root. Authors must quote for that host shell intentionally.
 All genrule outputs must exist after success and output ownership is unique.
+A genrule `cmd` is one shell string, so `${deps:LABEL}` joins its paths with a
+space — the separator `${in}` and `${outs}` already use there. That convention
+belongs to the shell, which is why `env` refuses the same form rather than
+borrowing a separator it has no basis for.
 Tests choose exactly one of `cmd` or `tool`. A named-tool test uses direct argv
-and supports `${in}`, `${deps}`, `${config}`, `${profile}` and `${platform}`;
+and supports `${in}`, `${deps}`, `${dep:LABEL}`, `${deps:LABEL}`, `${config}`,
+`${profile}` and `${platform}`;
 the multi-value forms occupy a whole argument. Its tool, args, declared inputs,
 dependency outputs, `env` and `pass_env` are action-key material. Both forms
 write the same Frost-owned success stamp only after a zero exit, so result
@@ -221,6 +227,48 @@ invalidated leaves the others cached. Omitting the field, or writing
 Frost has always used, so adding the field to a workspace does not invalidate an
 existing journal. Declaring any of the variables above in `env` or `pass_env`
 alongside `shard_count` is an error rather than a silent override.
+
+A test or `cc_test` target may also declare `flaky_retries = N` (default 0,
+maximum 9), which gives a failing test that many more attempts before the
+failure is its verdict. Each retry starts from the state a first attempt would
+see: the partial success stamp is removed and clean directories are reset, so
+attempt two does not run in the world attempt one left behind.
+
+A test that passes only on a retry is reported as **flaky** and its success is
+**not recorded** — not in the journal, not in the remote cache. The build is
+green and dependents proceed, but the next run executes the test again. Caching
+a verdict the test reached only on the second try would hide the flake from
+every later build, including the one that would have caught it; the summary
+line gains `N flaky` so the cost is visible instead. A test that fails every
+attempt fails, and its output says `failed all N attempts` so the retries are
+not mistaken for a single run.
+
+Three options supply the same kinds of value from the command line instead of
+the manifest: `--test-filter PATTERN`, `--test-env KEY=VALUE` and `--test-arg
+ARG`, each repeatable except the filter. They are folded into every test action
+of that invocation, and the command line wins over a manifest value of the same
+name — it is the person typing now, and the override is visible because it
+lands in the action key.
+
+`--test-filter` travels as `TESTBRIDGE_TEST_ONLY` and `GTEST_FILTER` rather
+than as a flag. Frost cannot know a runner's filter syntax, and inventing one
+spelling per language is how a build tool acquires a table of special cases;
+the environment is the protocol runners already implement, exactly as with
+sharding.
+
+Nothing new enters the action key to make these safe. `argv` and `env` are
+already key material, so a filtered run simply *is* a different action and
+cannot be served an unfiltered result. The converse cost is worth knowing: the
+journal keeps one entry per action, so a filtered run replaces the unfiltered
+one and alternating between the two re-executes each time. That is a cost, not
+a correctness problem — what never happens is being handed the other question's
+answer.
+
+`flaky_retries` is deliberately **not** action-key material. It describes how
+hard to look for a verdict, not what the test does, so turning it on does not
+invalidate a result that already passed cleanly. It applies to test kinds only:
+on anything else the field would parse and do nothing, and retrying a failed
+compile is a different and much worse idea than retrying a test.
 
 ## Language-neutral command targets
 
@@ -294,9 +342,25 @@ directory is its record of the contents, not a path for a tool. Reference the
 directory through the producing target's own `${output_dir}`, or declare a file
 output.
 
-The expansion lands in argv, which is action-key material, so a dependency that
-moves its output rebuilds its consumers rather than replaying a command naming
-a path that no longer exists.
+Both forms are also available in a genrule's `cmd`. `env` values take the
+single-valued `${dep:LABEL}` only: an environment variable is one string, and
+choosing a separator for several paths — `:`, `;`, a space — would be the
+string-expression language this deliberately is not, so `${deps:LABEL}` in an
+`env` value is an error saying so. Everything else in an `env` value passes
+through untouched, because that value is handed to another program and `${...}`
+in one is routinely that program's own syntax rather than a mistake:
+
+```toml
+[target.app]
+kind = "command"
+tool = "packager"
+deps = ["//greeting:greeting"]
+env = { GREETING_JAR = "${dep://greeting:greeting}", PS1 = "${HOME} $ " }
+```
+
+The expansion lands in argv and `env`, both action-key material, so a
+dependency that moves its output rebuilds its consumers rather than replaying a
+command naming a path that no longer exists.
 
 The multi-value forms `${in}`, `${deps}`, `${deps:LABEL}`, `${outs}`,
 `${output_dirs}` and `${clean_dirs}` must occupy a complete argument.

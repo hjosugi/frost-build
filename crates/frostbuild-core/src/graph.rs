@@ -88,6 +88,14 @@ pub struct ActionNode {
     /// Format of that report; see `depfile::Format`.
     #[serde(default)]
     pub depfile_format: crate::depfile::Format,
+    /// Extra attempts a failing test gets before the failure is the verdict.
+    ///
+    /// Not action-key material on purpose: it says how hard to look for a
+    /// verdict, not what the test does, so raising it must not invalidate a
+    /// result that already passed. Non-test actions leave it at 0 — a compile
+    /// that failed does not deserve another try.
+    #[serde(default)]
+    pub flaky_retries: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -159,6 +167,71 @@ pub struct BuildGraph {
     pub default_targets: Vec<String>,
     #[serde(skip)]
     file_ids: HashMap<String, FileId>,
+}
+
+/// Test options supplied on the command line rather than in the manifest.
+///
+/// These are applied to the loaded graph in memory, never to the stored one:
+/// a graph compiled with `--test-filter parse` must not be reused by the next
+/// invocation without it.
+#[derive(Debug, Default, Clone)]
+pub struct TestOptions {
+    /// Which cases to run, passed to the runner through the environment.
+    pub filter: Option<String>,
+    /// Extra environment for every test action.
+    pub env: Vec<(String, String)>,
+    /// Extra arguments appended to every test's argv.
+    pub args: Vec<String>,
+}
+
+impl TestOptions {
+    pub fn is_empty(&self) -> bool {
+        self.filter.is_none() && self.env.is_empty() && self.args.is_empty()
+    }
+}
+
+/// The variable Bazel-compatible runners read to learn which cases to run, and
+/// googletest's own spelling of it — the same pair sharding already passes, for
+/// the same reason: Frost cannot know a runner's filter flag, and guessing one
+/// per language is how a build tool acquires a table of special cases.
+pub const TEST_FILTER_VARS: [&str; 2] = ["TESTBRIDGE_TEST_ONLY", "GTEST_FILTER"];
+
+impl BuildGraph {
+    /// Fold command-line test options into every test action.
+    ///
+    /// Nothing new has to enter the action key for these to be safe: argv and
+    /// env are already key material, so a filtered run keys differently from an
+    /// unfiltered one and cannot satisfy it from cache. That is the behaviour
+    /// #142 asked for, and it falls out rather than being bolted on.
+    ///
+    /// The command line wins over a manifest value of the same name. It is the
+    /// person typing now, and because the override lands in the key it changes
+    /// the result visibly instead of silently.
+    pub fn apply_test_options(&mut self, options: &TestOptions) {
+        if options.is_empty() {
+            return;
+        }
+        for action in &mut self.actions {
+            if action.kind != ActionKind::Test {
+                continue;
+            }
+            action.argv.extend(options.args.iter().cloned());
+            if let Some(filter) = &options.filter {
+                for name in TEST_FILTER_VARS {
+                    action.env.insert(name.to_string(), filter.clone());
+                }
+            }
+            for (key, value) in &options.env {
+                action.env.insert(key.clone(), value.clone());
+            }
+            // A name given a value here is no longer inherited from the host,
+            // and leaving it in `pass_env` would put the host's value in the
+            // key beside the one that actually applies.
+            action
+                .pass_env
+                .retain(|name| !action.env.contains_key(name));
+        }
+    }
 }
 
 impl BuildGraph {
@@ -252,17 +325,27 @@ impl BuildGraph {
             match target.kind {
                 TargetKind::Genrule => {
                     let cmd = target.cmd.as_deref().unwrap();
-                    let expanded = expand_genrule_cmd(cmd, &target.inputs, &target.outputs)?;
                     let mut inputs = Vec::new();
                     for p in &target.inputs {
                         inputs.push(graph.file(p));
                     }
-                    // Order after dep targets by consuming their outputs.
+                    // Order after dep targets by consuming their outputs, and
+                    // keep them keyed by label so the cmd can name one without
+                    // writing out that dependency's layout convention.
+                    let mut dependency_map: Vec<(String, Vec<String>)> = Vec::new();
                     for dep in &target.deps {
                         for out in dep_outputs(&graph, dep) {
                             inputs.push(out);
                         }
+                        dependency_map.push((dep.clone(), dep_output_paths(&graph, dep)));
                     }
+                    let expanded = expand_genrule_cmd(
+                        cmd,
+                        &target.inputs,
+                        &target.outputs,
+                        &dependency_map,
+                        name,
+                    )?;
                     let mut outputs = Vec::new();
                     for p in &target.outputs {
                         outputs.push(graph.file(p));
@@ -285,6 +368,7 @@ impl BuildGraph {
                         output_dirs: Vec::new(),
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = outputs;
@@ -352,7 +436,7 @@ impl BuildGraph {
                             (
                                 argv,
                                 Vec::new(),
-                                target.env.clone(),
+                                expand_env_dep_refs(&target.env, &dependency_map, name)?,
                                 target.pass_env.clone(),
                             )
                         } else {
@@ -395,6 +479,7 @@ impl BuildGraph {
                             output_dirs: Vec::new(),
                             depfile: None,
                             depfile_format: crate::depfile::Format::Make,
+                            flaky_retries: target.flaky_retries,
                         })?;
                         target_node.actions.push(action);
                         stamp_ids.push(stamp_id);
@@ -547,7 +632,7 @@ impl BuildGraph {
                         followup_argv,
                         clean_dirs,
                         preserve_outputs: target.preserve_outputs,
-                        env: target.env.clone(),
+                        env: expand_env_dep_refs(&target.env, &dependency_map, name)?,
                         pass_env: target.pass_env.clone(),
                         inputs,
                         order_only_inputs: Vec::new(),
@@ -555,6 +640,7 @@ impl BuildGraph {
                         output_dirs,
                         depfile,
                         depfile_format: target.depfile_format,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = output_ids;
@@ -616,6 +702,7 @@ impl BuildGraph {
                         output_dirs: Vec::new(),
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![bin_id];
@@ -685,6 +772,7 @@ impl BuildGraph {
                             output_dirs: Vec::new(),
                             depfile: Some(depfile),
                             depfile_format: crate::depfile::Format::Make,
+                            flaky_retries: 0,
                         })?;
                         target_node.actions.push(action);
                         objs.push(obj);
@@ -717,6 +805,7 @@ impl BuildGraph {
                                 output_dirs: Vec::new(),
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
+                                flaky_retries: 0,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![lib_id];
@@ -762,6 +851,7 @@ impl BuildGraph {
                                 output_dirs: Vec::new(),
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
+                                flaky_retries: 0,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![bin_id];
@@ -791,6 +881,7 @@ impl BuildGraph {
                                         output_dirs: Vec::new(),
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
+                                        flaky_retries: target.flaky_retries,
                                     })?;
                                     target_node.actions.push(test);
                                     stamp_ids.push(stamp_id);
@@ -1163,15 +1254,20 @@ fn dep_output_paths(graph: &BuildGraph, dep: &str) -> Vec<String> {
 /// Only declared dependencies resolve. Reaching an arbitrary target would make
 /// the argv depend on a target this one has no edge to, so the build could run
 /// before that output existed.
+///
+/// `context` names the place the reference was written — an argv item, a
+/// genrule `cmd`, an `env` value. The same three mistakes are possible in all
+/// of them and a message that always said "command arg" would point at the
+/// wrong line for two of the three.
 fn dep_reference<'a>(
     map: &'a [(String, Vec<String>)],
     label: &str,
-    arg: &str,
+    context: &str,
 ) -> Result<&'a [String]> {
     let Some((_, outputs)) = map.iter().find(|(name, _)| name == label) else {
         let declared: Vec<&str> = map.iter().map(|(name, _)| name.as_str()).collect();
         bail!(
-            "command arg {arg:?} references {label:?}, which is not a declared dependency \
+            "{context} references {label:?}, which is not a declared dependency \
              (declared: {})",
             if declared.is_empty() {
                 "none".to_string()
@@ -1182,31 +1278,31 @@ fn dep_reference<'a>(
     };
     if outputs.is_empty() {
         bail!(
-            "command arg {arg:?} references {label:?}, which declares no file outputs; \
+            "{context} references {label:?}, which declares no file outputs; \
              a target that owns only output_dirs has no path to substitute"
         );
     }
     Ok(outputs)
 }
 
-/// Replace every `${dep:LABEL}` in one argument. Single-valued by definition:
+/// Replace every `${dep:LABEL}` in one string. Single-valued by definition:
 /// a dependency with several outputs has no one path this could mean, so it is
 /// an error rather than a silent first-wins pick.
-fn expand_dep_singles(arg: &str, map: &[(String, Vec<String>)]) -> Result<String> {
+fn expand_dep_singles(text: &str, map: &[(String, Vec<String>)], context: &str) -> Result<String> {
     const OPEN: &str = "${dep:";
     let mut out = String::new();
-    let mut rest = arg;
+    let mut rest = text;
     while let Some(start) = rest.find(OPEN) {
         out.push_str(&rest[..start]);
         let after = &rest[start + OPEN.len()..];
         let Some(end) = after.find('}') else {
-            bail!("unterminated ${{dep:...}} in command arg {arg:?}");
+            bail!("unterminated ${{dep:...}} in {context}");
         };
         let label = &after[..end];
-        let outputs = dep_reference(map, label, arg)?;
+        let outputs = dep_reference(map, label, context)?;
         if outputs.len() != 1 {
             bail!(
-                "command arg {arg:?} uses ${{dep:{label}}} but {label:?} declares {} outputs; \
+                "{context} uses ${{dep:{label}}} but {label:?} declares {} outputs; \
                  use ${{deps:{label}}} as a whole argument to pass all of them",
                 outputs.len()
             );
@@ -1216,6 +1312,39 @@ fn expand_dep_singles(arg: &str, map: &[(String, Vec<String>)]) -> Result<String
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// Resolve `${dep:LABEL}` inside `env` values.
+///
+/// Only the single-valued form. An argv item that expands to several paths
+/// becomes several arguments, which is a thing argv can express; an
+/// environment variable is one string, and choosing a separator for it — `:`,
+/// `;`, a space — would be the string-function language this deliberately is
+/// not. So `${deps:LABEL}` says so here rather than inventing one.
+///
+/// Everything else passes through untouched. An `env` value is an opaque
+/// string handed to another program, and programs legitimately want `${...}`
+/// in one: rejecting unknown variables the way argv does would break values
+/// that were never addressed to Frost.
+fn expand_env_dep_refs(
+    env: &BTreeMap<String, String>,
+    map: &[(String, Vec<String>)],
+    target: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut expanded = BTreeMap::new();
+    for (key, value) in env {
+        let context = format!("env {key:?} of target {target:?}");
+        if value.contains("${deps:") {
+            bail!(
+                "{context} uses ${{deps:...}}, which can name several paths; \
+                 an environment variable is one string and Frost does not choose \
+                 a separator for you — pass them as arguments, or name one output \
+                 with ${{dep:LABEL}}"
+            );
+        }
+        expanded.insert(key.clone(), expand_dep_singles(value, map, &context)?);
+    }
+    Ok(expanded)
 }
 
 /// One slice of a sharded test: its action identity, its success stamp, and
@@ -1402,8 +1531,34 @@ fn toposort_targets(manifest: &Manifest) -> Result<Vec<String>> {
     Ok(order)
 }
 
-fn expand_genrule_cmd(cmd: &str, inputs: &[String], outputs: &[String]) -> Result<String> {
-    let expanded = cmd
+fn expand_genrule_cmd(
+    cmd: &str,
+    inputs: &[String],
+    outputs: &[String],
+    dependency_map: &[(String, Vec<String>)],
+    target: &str,
+) -> Result<String> {
+    let context = format!("genrule cmd of target {target:?}");
+    // `cmd` is one shell string, so the plural forms join on a space the way
+    // `${in}` and `${outs}` already do. That is the shell's own separator here,
+    // not a joiner Frost invented — which is why the same form is refused in
+    // `env`, where there is no such convention to borrow.
+    let mut expanded = String::new();
+    let mut rest = cmd;
+    while let Some(start) = rest.find("${deps:") {
+        expanded.push_str(&rest[..start]);
+        let after = &rest[start + "${deps:".len()..];
+        let Some(end) = after.find('}') else {
+            bail!("unterminated ${{deps:...}} in {context}");
+        };
+        let paths = dep_reference(dependency_map, &after[..end], &context)?;
+        expanded.push_str(&paths.join(" "));
+        rest = &after[end + 1..];
+    }
+    expanded.push_str(rest);
+
+    let expanded = expand_dep_singles(&expanded, dependency_map, &context)?;
+    let expanded = expanded
         .replace("${in}", &inputs.join(" "))
         .replace("${outs}", &outputs.join(" "))
         .replace("${out}", &outputs[0])
@@ -1411,7 +1566,8 @@ fn expand_genrule_cmd(cmd: &str, inputs: &[String], outputs: &[String]) -> Resul
     if expanded.contains("${") {
         bail!(
             "genrule cmd has unknown variable: {cmd:?} \
-             (supported: ${{in}}, ${{out}}, ${{outs}}, ${{pathsep}})"
+             (supported: ${{in}}, ${{out}}, ${{outs}}, ${{pathsep}}, \
+             ${{dep:LABEL}}, ${{deps:LABEL}})"
         );
     }
     Ok(expanded)
@@ -1457,7 +1613,11 @@ fn expand_command_args(
             .strip_prefix("${deps:")
             .and_then(|rest| rest.strip_suffix('}'))
         {
-            argv.extend(dep_reference(dependency_map, label, arg)?.iter().cloned());
+            argv.extend(
+                dep_reference(dependency_map, label, &format!("command arg {arg:?}"))?
+                    .iter()
+                    .cloned(),
+            );
             continue;
         }
         match arg.as_str() {
@@ -1478,7 +1638,8 @@ fn expand_command_args(
                         "multi-value command variables must occupy one complete argument: {arg:?}"
                     );
                 }
-                let mut expanded = expand_dep_singles(arg, dependency_map)?;
+                let mut expanded =
+                    expand_dep_singles(arg, dependency_map, &format!("command arg {arg:?}"))?;
                 if expanded.contains("${out}") || expanded.contains("${out_dir}") {
                     // A target that only owns directories has no single output
                     // path to name, which is a manifest error rather than a
@@ -1547,7 +1708,11 @@ fn expand_test_args(
             .strip_prefix("${deps:")
             .and_then(|rest| rest.strip_suffix('}'))
         {
-            argv.extend(dep_reference(dependency_map, label, arg)?.iter().cloned());
+            argv.extend(
+                dep_reference(dependency_map, label, &format!("test arg {arg:?}"))?
+                    .iter()
+                    .cloned(),
+            );
             continue;
         }
         match arg.as_str() {
@@ -1557,7 +1722,8 @@ fn expand_test_args(
                 if arg.contains("${in}") || arg.contains("${deps}") || arg.contains("${deps:") {
                     bail!("multi-value test variables must occupy one complete argument: {arg:?}");
                 }
-                let expanded = expand_dep_singles(arg, dependency_map)?;
+                let expanded =
+                    expand_dep_singles(arg, dependency_map, &format!("test arg {arg:?}"))?;
                 let expanded = expand_config_template(&expanded, config, profile, platform)?;
                 argv.push(expanded);
             }
@@ -1611,8 +1777,14 @@ mod tests {
 
     #[test]
     fn genrule_path_separator_matches_the_host_shell() {
-        let expanded =
-            expand_genrule_cmd("tools${pathsep}generate ${out}", &[], &["out".into()]).unwrap();
+        let expanded = expand_genrule_cmd(
+            "tools${pathsep}generate ${out}",
+            &[],
+            &["out".into()],
+            &[],
+            "gen",
+        )
+        .unwrap();
         assert_eq!(
             expanded,
             format!("tools{}generate out", std::path::MAIN_SEPARATOR)
@@ -2064,6 +2236,8 @@ mod tests {
         id: String,
         stamp: String,
         env: BTreeMap<String, String>,
+        argv: Vec<String>,
+        flaky_retries: u32,
     }
 
     fn test_actions(manifest: &str) -> Result<Vec<TestAction>> {
@@ -2076,6 +2250,8 @@ mod tests {
                 id: action.id.clone(),
                 stamp: graph.files[action.outputs[0]].path.clone(),
                 env: action.env.clone(),
+                argv: action.argv.clone(),
+                flaky_retries: action.flaky_retries,
             })
             .collect())
     }
@@ -2196,6 +2372,249 @@ mod tests {
     }
 
     #[test]
+    fn command_line_test_options_reach_every_test_action() {
+        let manifest = r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            args = ["--quiet"]
+            env = { LEVEL = "manifest" }
+            "#;
+        let apply = |options: &TestOptions| {
+            let mut graph =
+                BuildGraph::from_manifest(&Manifest::parse_str(manifest).unwrap()).unwrap();
+            graph.apply_test_options(options);
+            let action = graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .expect("test action");
+            (action.argv.clone(), action.env.clone())
+        };
+
+        // Nothing supplied leaves the action exactly as the manifest wrote it.
+        let (argv, env) = apply(&TestOptions::default());
+        assert_eq!(argv, vec!["runner", "--quiet"]);
+        assert_eq!(env["LEVEL"], "manifest");
+
+        // A filter travels as the environment protocol runners already
+        // implement, under both spellings, because Frost cannot know a
+        // runner's filter flag.
+        let (_, env) = apply(&TestOptions {
+            filter: Some("parse::*".into()),
+            ..Default::default()
+        });
+        assert_eq!(env["TESTBRIDGE_TEST_ONLY"], "parse::*");
+        assert_eq!(env["GTEST_FILTER"], "parse::*");
+
+        // Extra argv is appended, so the manifest's own arguments keep their
+        // order and meaning.
+        let (argv, _) = apply(&TestOptions {
+            args: vec!["--verbose".into()],
+            ..Default::default()
+        });
+        assert_eq!(argv, vec!["runner", "--quiet", "--verbose"]);
+
+        // The command line wins over the manifest: it is the person typing
+        // now, and the override lands in the key rather than passing silently.
+        let (_, env) = apply(&TestOptions {
+            env: vec![("LEVEL".into(), "cli".into())],
+            ..Default::default()
+        });
+        assert_eq!(env["LEVEL"], "cli");
+    }
+
+    #[test]
+    fn a_filtered_run_cannot_be_served_an_unfiltered_result() {
+        // The property #142 asked for. Nothing new enters the action key to
+        // get it: argv and env are already key material, so the filtered
+        // action simply is a different action.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        let plain = BuildGraph::from_manifest(&manifest).unwrap();
+        let mut filtered = BuildGraph::from_manifest(&manifest).unwrap();
+        filtered.apply_test_options(&TestOptions {
+            filter: Some("only_this".into()),
+            ..Default::default()
+        });
+
+        let test_of = |graph: &BuildGraph| {
+            let action = graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .expect("test action");
+            (action.argv.clone(), action.env.clone())
+        };
+        assert_ne!(test_of(&plain), test_of(&filtered));
+        // Same action id and stamp, though: it is the same test, asked a
+        // narrower question. The key separates them through the environment.
+        let id = |graph: &BuildGraph| {
+            graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .unwrap()
+                .id
+                .clone()
+        };
+        assert_eq!(id(&plain), id(&filtered));
+    }
+
+    #[test]
+    fn a_value_given_on_the_command_line_stops_being_inherited() {
+        // `pass_env` puts the host's value in the key. Once the command line
+        // sets the same name, leaving it there would key on a value that no
+        // longer applies.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            pass_env = ["RUST_LOG"]
+            "#,
+        )
+        .unwrap();
+        let mut graph = BuildGraph::from_manifest(&manifest).unwrap();
+        graph.apply_test_options(&TestOptions {
+            env: vec![("RUST_LOG".into(), "debug".into())],
+            ..Default::default()
+        });
+        let action = graph
+            .actions
+            .iter()
+            .find(|action| action.kind == ActionKind::Test)
+            .unwrap();
+        assert_eq!(action.env["RUST_LOG"], "debug");
+        assert!(
+            action.pass_env.is_empty(),
+            "an overridden name must not also be inherited: {:?}",
+            action.pass_env
+        );
+    }
+
+    #[test]
+    fn flaky_retries_is_declared_where_it_can_mean_something() {
+        let actions = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.sometimes]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 2
+            "#,
+        )
+        .unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].flaky_retries, 2);
+
+        // Absent means one attempt, and every non-test action stays at zero:
+        // retrying a compile that failed is a different and much worse idea.
+        let actions = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.plain]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(actions[0].flaky_retries, 0);
+
+        let error = Manifest::parse_str(
+            r#"
+            [target.lib]
+            kind = "cc_library"
+            srcs = ["a.c"]
+            flaky_retries = 2
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("test and cc_test targets only"), "{error}");
+
+        // A ceiling, so a broken test cannot be made to look green by asking
+        // for enough attempts.
+        let error = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.desperate]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 50
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("at most 9"), "{error}");
+    }
+
+    #[test]
+    fn retry_policy_is_not_action_key_material() {
+        // Turning retries on must not invalidate a result that already passed
+        // cleanly: the policy says how hard to look for a verdict, not what
+        // the test does. The action id, argv, env and stamp are what the key
+        // is built from, so this pins that none of them moved.
+        let plain = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        let retried = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 3
+            "#,
+        )
+        .unwrap();
+        assert_eq!(plain.len(), retried.len());
+        assert_eq!(plain[0].id, retried[0].id);
+        assert_eq!(plain[0].argv, retried[0].argv);
+        assert_eq!(plain[0].env, retried[0].env);
+        assert_eq!(plain[0].stamp, retried[0].stamp);
+    }
+
+    #[test]
     fn dep_references_name_one_dependency_without_repeating_its_layout() {
         // The whole point: the referencing target never writes gen/one.txt.
         let argv = user_argv(r#"["--single", "${dep:one}"]"#).unwrap();
@@ -2272,6 +2691,159 @@ mod tests {
         assert_eq!(before, vec!["pack", "gen/one.txt"]);
         assert_eq!(after, vec!["pack", "gen/renamed/one.txt"]);
         assert_ne!(before, after);
+    }
+
+    /// The `user` target's manifest with `env_toml` added to it.
+    fn env_manifest(env_toml: &str) -> String {
+        format!(
+            "{}\n            env = {env_toml}\n",
+            dep_reference_manifest(r#"["--out", "${out}"]"#).trim_end()
+        )
+    }
+
+    /// The `user` target's env, with `env_toml` spliced in.
+    fn user_env(env_toml: &str) -> Result<BTreeMap<String, String>> {
+        let manifest = Manifest::parse_str(&env_manifest(env_toml))?;
+        let graph = BuildGraph::from_manifest(&manifest)?;
+        Ok(graph
+            .actions
+            .iter()
+            .find(|action| action.target == "user")
+            .expect("user action")
+            .env
+            .clone())
+    }
+
+    #[test]
+    fn dep_references_resolve_in_env_values() {
+        // The case this exists for: a tool configured by environment rather
+        // than by flags still should not have to write out where its
+        // dependency puts things.
+        let env = user_env(r#"{ ONE = "${dep:one}" }"#).unwrap();
+        assert_eq!(env["ONE"], "gen/one.txt");
+
+        // And composed, the way a `-D`-style value or a URL would be.
+        let env = user_env(r#"{ ONE = "path=${dep:one};" }"#).unwrap();
+        assert_eq!(env["ONE"], "path=gen/one.txt;");
+
+        // A value with nothing addressed to Frost survives byte for byte. An
+        // env value is handed to another program, and `${...}` in one is
+        // routinely that program's own syntax rather than a typo.
+        let env = user_env(r#"{ SHELLY = "${HOME}/x", LITERAL = "$notavar" }"#).unwrap();
+        assert_eq!(env["SHELLY"], "${HOME}/x");
+        assert_eq!(env["LITERAL"], "$notavar");
+    }
+
+    #[test]
+    fn env_refuses_the_plural_form_rather_than_choosing_a_separator() {
+        // `${deps:two}` is two paths. As argv that is two arguments; as one
+        // environment variable it is a joiner Frost would have to invent, and
+        // `:` versus `;` versus a space is exactly the platform-specific
+        // guess this feature is meant to remove.
+        let error = user_env(r#"{ MANY = "${deps:two}" }"#)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("one string"), "{error}");
+        assert!(error.contains("${dep:LABEL}"), "{error}");
+
+        // The other mistakes still report, and now say which env value.
+        let error = user_env(r#"{ NOPE = "${dep:absent}" }"#)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not a declared dependency"), "{error}");
+        assert!(error.contains(r#"env "NOPE""#), "{error}");
+
+        let error = user_env(r#"{ AMBIGUOUS = "${dep:two}" }"#)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("declares 2 outputs"), "{error}");
+    }
+
+    #[test]
+    fn a_dependency_that_moves_its_output_changes_the_referencing_env() {
+        // Same guarantee as argv: env is action-key material, so a dependency
+        // that relocates its output reruns the consumer instead of replaying a
+        // command configured with a path that no longer exists.
+        let before = user_env(r#"{ ONE = "${dep:one}" }"#).unwrap();
+        let moved = Manifest::parse_str(
+            &env_manifest(r#"{ ONE = "${dep:one}" }"#)
+                .replace("gen/one.txt", "gen/renamed/one.txt"),
+        )
+        .unwrap();
+        let after = BuildGraph::from_manifest(&moved)
+            .unwrap()
+            .actions
+            .iter()
+            .find(|action| action.target == "user")
+            .expect("user action")
+            .env
+            .clone();
+        assert_eq!(before["ONE"], "gen/one.txt");
+        assert_eq!(after["ONE"], "gen/renamed/one.txt");
+    }
+
+    #[test]
+    fn a_genrule_cmd_can_name_a_dependency_instead_of_its_layout() {
+        let cmd = |script: &str| -> Result<String> {
+            let manifest = Manifest::parse_str(&format!(
+                r#"
+                [target.one]
+                kind = "genrule"
+                cmd = "sh one.sh ${{out}}"
+                inputs = ["one.sh"]
+                outputs = ["gen/one.txt"]
+
+                [target.two]
+                kind = "genrule"
+                cmd = "sh two.sh ${{outs}}"
+                inputs = ["two.sh"]
+                outputs = ["gen/two-a.txt", "gen/two-b.txt"]
+
+                [target.bundle]
+                kind = "genrule"
+                cmd = "{script}"
+                inputs = ["bundle.sh"]
+                outputs = ["gen/bundle.txt"]
+                deps = ["one", "two"]
+                "#
+            ))?;
+            let graph = BuildGraph::from_manifest(&manifest)?;
+            let action = graph
+                .actions
+                .iter()
+                .find(|action| action.target == "bundle")
+                .expect("bundle action");
+            // argv is [shell, flag, script]; the script is what was expanded.
+            Ok(action.argv.last().expect("script").clone())
+        };
+
+        assert_eq!(
+            cmd("sh bundle.sh ${dep:one} -o ${out}").unwrap(),
+            "sh bundle.sh gen/one.txt -o gen/bundle.txt"
+        );
+
+        // A genrule cmd is one shell string, so the plural form joins on a
+        // space -- the separator `${in}` and `${outs}` already use here. That
+        // convention is the shell's, which is why `env` refuses the same form
+        // rather than borrowing a separator it has no basis for.
+        assert_eq!(
+            cmd("cat ${deps:two} > ${out}").unwrap(),
+            "cat gen/two-a.txt gen/two-b.txt > gen/bundle.txt"
+        );
+
+        // The undeclared and ambiguous cases report against the cmd, not
+        // against a "command arg" the author never wrote.
+        let error = cmd("cp ${dep:absent} ${out}").unwrap_err().to_string();
+        assert!(error.contains("not a declared dependency"), "{error}");
+        assert!(error.contains("genrule cmd"), "{error}");
+
+        let error = cmd("cp ${dep:two} ${out}").unwrap_err().to_string();
+        assert!(error.contains("declares 2 outputs"), "{error}");
+
+        // An unknown variable still names the supported set, now including
+        // the two reference forms.
+        let error = cmd("cp ${nonsense} ${out}").unwrap_err().to_string();
+        assert!(error.contains("${dep:LABEL}"), "{error}");
     }
 
     #[test]

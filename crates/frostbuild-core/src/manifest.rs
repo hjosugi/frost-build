@@ -15,6 +15,11 @@ pub const HOST_PLATFORM: &str = "host";
 /// The profile every workspace has without declaring one.
 pub const DEFAULT_PROFILE: &str = "debug";
 
+/// A ceiling on `flaky_retries`, so a genuinely broken test cannot be made to
+/// look green by asking for enough attempts. Bazel's `--flaky_test_attempts`
+/// caps at 10 total attempts for the same reason.
+pub const MAX_FLAKY_RETRIES: u32 = 9;
+
 /// C and C++ driver names a workspace gets without declaring any.
 ///
 /// `cc` and `c++` are the POSIX-conventional names and exist on Linux and
@@ -269,6 +274,9 @@ struct RawTarget {
     /// Test targets only: split this test into N independently cached and
     /// scheduled actions. Absent or 1 leaves the target a single action.
     shard_count: Option<u32>,
+    /// Test targets only: rerun a failing test up to N more times before
+    /// calling it failed. Absent or 0 means one attempt.
+    flaky_retries: Option<u32>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -372,6 +380,13 @@ pub struct Target {
     /// How many independently cached and scheduled actions this test becomes.
     /// Always at least 1; only test kinds may declare more.
     pub shard_count: u32,
+    /// How many extra attempts a failing test gets before it is reported as
+    /// failed. 0 means the first failure is the verdict.
+    ///
+    /// Deliberately not action-key material: it is a policy about how hard to
+    /// look for a verdict, not part of what the test does, so turning it on
+    /// must not invalidate a result that already passed cleanly.
+    pub flaky_retries: u32,
     pub depfile: Option<String>,
     /// How this action reports the inputs it read. `showincludes` is read from
     /// captured output, so it comes without a `depfile` path.
@@ -875,6 +890,22 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         }
     }
 
+    // Same reasoning as shard_count: on a non-test kind the field would parse
+    // and do nothing. Retrying a compile that failed is also a different and
+    // much worse idea than retrying a test, so the restriction is not just
+    // tidiness.
+    if let Some(retries) = spec.flaky_retries {
+        if !matches!(spec.kind, TargetKind::Test | TargetKind::CcTest) {
+            bail!("flaky_retries applies to test and cc_test targets only");
+        }
+        if retries > MAX_FLAKY_RETRIES {
+            bail!(
+                "flaky_retries must be at most {MAX_FLAKY_RETRIES}; \
+                 a test needing more attempts than that is broken, not flaky"
+            );
+        }
+    }
+
     let srcs = validate_paths(&spec.srcs).context("srcs")?;
     let includes = validate_paths(&spec.includes).context("includes")?;
     let inputs = validate_paths(&spec.inputs).context("inputs")?;
@@ -1123,6 +1154,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         preserve_outputs: spec.preserve_outputs,
         timeout_secs: spec.timeout,
         shard_count: spec.shard_count.unwrap_or(1),
+        flaky_retries: spec.flaky_retries.unwrap_or(0),
         depfile,
         depfile_format,
         inputs,

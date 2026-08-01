@@ -428,6 +428,248 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn command_line_test_options_are_separate_results_not_shared_ones() {
+    let ws = Workspace::empty("test-options");
+    // The test writes what it was told, so the assertions read what actually
+    // reached the runner rather than trusting the flags were plumbed.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["probe"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.probe]
+kind = "test"
+tool = "sh"
+args = ["-c", "printf 'filter=%s level=%s args=%s\n' \"$TESTBRIDGE_TEST_ONLY\" \"$LEVEL\" \"$*\" > seen.txt", "sh"]
+inputs = ["cases.txt"]
+env = { LEVEL = "manifest" }
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+    let seen = || std::fs::read_to_string(ws.dir.join("seen.txt")).unwrap();
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "plain run failed:\n{out}");
+    assert_eq!(seen(), "filter= level=manifest args=\n");
+
+    // Cached, because nothing about the question changed.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok && out.contains("1 cached"), "{out}");
+
+    // The property #142 asked for: a filtered run is a different question, so
+    // the unfiltered result must not answer it.
+    let (ok, out) = ws.frost(&["test", "--test-filter", "parse::*"]);
+    assert!(ok, "filtered run failed:\n{out}");
+    assert!(
+        !out.contains("1 cached"),
+        "a filtered run must not reuse an unfiltered result:\n{out}"
+    );
+    assert_eq!(seen(), "filter=parse::* level=manifest args=\n");
+
+    // Going back to unfiltered runs again rather than being answered from
+    // cache. The journal keeps one entry per action id, so the filtered run
+    // replaced the unfiltered one -- alternating between two questions always
+    // re-executes. That is a cost, not a correctness problem: what must never
+    // happen is being *served* the other question's answer, and it does not.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("1 cached"),
+        "one journal entry per action means the filtered run evicted this one:\n{out}"
+    );
+    assert_eq!(seen(), "filter= level=manifest args=\n");
+
+    // The command line overrides the manifest, and that override is keyed:
+    // it runs rather than reusing the manifest-valued result.
+    let (ok, out) = ws.frost(&["test", "--test-env", "LEVEL=cli"]);
+    assert!(ok && !out.contains("1 cached"), "{out}");
+    assert_eq!(seen(), "filter= level=cli args=\n");
+
+    // Extra argv reaches the runner and is keyed the same way.
+    let (ok, out) = ws.frost(&["test", "--test-arg", "--extra"]);
+    assert!(ok && !out.contains("1 cached"), "{out}");
+    assert_eq!(seen(), "filter= level=manifest args=--extra\n");
+
+    // A malformed pair is rejected rather than becoming a variable nothing
+    // can read.
+    let (ok, out) = ws.frost(&["test", "--test-env", "NOEQUALS"]);
+    assert!(!ok, "a KEY=VALUE without '=' must be refused:\n{out}");
+    assert!(out.contains("KEY=VALUE"), "{out}");
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn a_flaky_test_passes_on_a_retry_and_is_reported_rather_than_cached() {
+    let ws = Workspace::empty("flaky-retries");
+    // Fails once per `frost` invocation, then passes: the counter file makes
+    // the first attempt of each run fail and the second succeed, which is what
+    // a real flake looks like from the outside.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["sometimes"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.sometimes]
+kind = "test"
+tool = "sh"
+args = ["-c", "if [ -f .attempted ]; then rm -f .attempted; exit 0; else touch .attempted; echo 'first attempt always fails' >&2; exit 1; fi"]
+inputs = ["cases.txt"]
+flaky_retries = 1
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "a retry that passes must leave the build green:\n{out}");
+    assert!(
+        out.contains("1 flaky"),
+        "the summary must name the flake rather than fold it into passed:\n{out}"
+    );
+    assert!(
+        !out.contains("1 passed"),
+        "counting a flake as a clean pass erases the only signal:\n{out}"
+    );
+
+    // The point of the feature. A cached flake would hide itself from every
+    // later build, including the one that would have caught it, so the second
+    // run must execute again rather than report `cached`.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "second run failed:\n{out}");
+    assert!(
+        out.contains("1 flaky") && out.contains("0 cached"),
+        "a flaky success must not be cached:\n{out}"
+    );
+    assert!(
+        out.contains("1 built"),
+        "nothing was recorded, so the test must run again:\n{out}"
+    );
+
+    // And a test that fails every attempt still fails, with the count named
+    // so the retries are visible rather than looking like a single run.
+    let always = ws.dir.join("frost.toml");
+    let text = std::fs::read_to_string(&always).unwrap().replace(
+        r#""-c", "if [ -f .attempted ]; then rm -f .attempted; exit 0; else touch .attempted; echo 'first attempt always fails' >&2; exit 1; fi""#,
+        r#""-c", "exit 3""#,
+    );
+    std::fs::write(&always, text).unwrap();
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(!ok, "a test that never passes must fail:\n{out}");
+    assert!(
+        out.contains("failed all 2 attempts"),
+        "the retries must be visible in the failure:\n{out}"
+    );
+    assert!(out.contains("1 failed"), "{out}");
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn a_consumer_names_its_dependency_instead_of_that_dependency_s_layout() {
+    let ws = Workspace::empty("dep-references");
+    // Nothing below writes `gen/`, `.frost/out/` or a profile directory by
+    // hand. That is the whole claim: the producer owns where its output goes,
+    // and moving it is not a breaking change for the consumers.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["report"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.greeting]
+kind = "genrule"
+cmd = "printf hello > ${out}"
+inputs = ["seed.txt"]
+outputs = ["gen/greeting.txt"]
+
+[target.parts]
+kind = "genrule"
+cmd = "printf one > gen/a.txt; printf two > gen/b.txt"
+inputs = ["seed.txt"]
+outputs = ["gen/a.txt", "gen/b.txt"]
+
+# A genrule consuming another genrule, through the shell, with both forms.
+[target.bundle]
+kind = "genrule"
+cmd = "cat ${dep:greeting} ${deps:parts} > ${out}"
+deps = ["greeting", "parts"]
+outputs = ["gen/bundle.txt"]
+
+# A command consuming the same output through its environment rather than
+# through argv, which is the surface a tool configured by env needs.
+[target.report]
+kind = "command"
+tool = "sh"
+args = ["-c", "printf '%s' \"$(cat $GREETING) $(cat gen/bundle.txt)\" > ${out}"]
+env = { GREETING = "${dep:greeting}" }
+deps = ["greeting", "bundle"]
+outputs = [".frost/out/${config}/report.txt"]
+"#,
+    );
+    ws.write("seed.txt", "1");
+
+    let report = ws.dir.join(".frost/out/debug/report.txt");
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "dependency-reference build failed:\n{out}");
+    assert_eq!(read(&ws.dir.join("gen/bundle.txt")), "helloonetwo");
+    assert_eq!(read(&report), "hello helloonetwo");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // The point of the indirection: the producer relocates its output and no
+    // consumer is edited. Both the genrule cmd and the env value follow it,
+    // and because each expansion is action-key material the consumers rerun
+    // rather than replaying a command naming a path that no longer exists.
+    let moved = read(&ws.dir.join("frost.toml")).replace("gen/greeting.txt", "gen/text/hello.txt");
+    ws.write("frost.toml", &moved);
+    let (ok, out) = ws.frost(&["build", "--explain"]);
+    assert!(ok, "rebuild after the producer moved failed:\n{out}");
+    assert!(
+        ws.dir.join("gen/text/hello.txt").is_file(),
+        "the producer must write its new path:\n{out}"
+    );
+    assert_eq!(
+        read(&report),
+        "hello helloonetwo",
+        "consumers still resolve"
+    );
+    assert!(
+        out.contains("RUN report"),
+        "the env reference must be action-key material:\n{out}"
+    );
+}
+
+#[test]
 // A shell wrapper stands in for a tool whose dependency protocol is not
 // Makefile-shaped; `cmd.exe` adds nothing to what is tested here. The MSVC
 // `showincludes` path is covered by unit tests until Windows CI runs the E2E

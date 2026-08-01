@@ -24,6 +24,11 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   docs/28 gains the exit-code classification table, with a test that runs one
   invocation from each row.
 
+- The test summary counts a skipped test as skipped rather than failed. A test
+  that never ran because something upstream failed was reported as a failure,
+  which blames the wrong file; the exit code is unchanged, since a build with
+  skipped work still does not succeed.
+
 - The site's stylesheet keeps its scales in one place. It held 51 font-size
   declarations with 26 distinct rem values, 12 letter-spacing declarations with
   12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
@@ -65,6 +70,45 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   already are, it puts their values in the action key and stops two machines
   sharing a cache entry. The `binaries` target had a comment explaining exactly
   that; the stages above it did the opposite. They no longer do.
+
+- `frost test --test-filter PATTERN`, `--test-env KEY=VALUE` and `--test-arg ARG`
+  supply from the command line what the manifest supplies statically. The filter
+  travels as `TESTBRIDGE_TEST_ONLY` and `GTEST_FILTER` rather than as a flag,
+  because Frost cannot know a runner's filter syntax and inventing one spelling
+  per language is how a build tool acquires a table of special cases — the
+  environment is the protocol runners already implement, exactly as with
+  sharding. Nothing new enters the action key to make these safe: argv and env
+  are already key material, so a filtered run simply is a different action and
+  cannot be served an unfiltered result. The command line wins over a manifest
+  value of the same name, and an overridden name is dropped from `pass_env` so
+  the key does not also carry the host value that no longer applies.
+
+- `flaky_retries = N` on a test or `cc_test` target (default 0, maximum 9): a
+  failing test gets N more attempts before the failure is its verdict. Each
+  retry starts from the state a first attempt would see — the partial success
+  stamp is removed and clean directories are reset — so attempt two does not run
+  in the world attempt one left behind. A test that only passes on a retry is
+  reported as flaky and its success is **not recorded**, locally or remotely:
+  the build is green and dependents proceed, but the next run executes it again,
+  because caching a verdict the test reached only on the second try would hide
+  the flake from every later build. The summary line gains `N flaky` so the cost
+  is visible instead, and a test that fails every attempt says `failed all N
+  attempts` rather than looking like a single run. The field is deliberately not
+  action-key material — it says how hard to look for a verdict, not what the
+  test does, so turning it on does not invalidate a clean pass.
+
+- `${dep:LABEL}` and `${deps:LABEL}` now resolve in a command target's `env` and
+  in a genrule's `cmd`, not only in argv. A consumer names the dependency it
+  wants and Frost supplies that dependency's declared output path, so the
+  producer's layout convention stops being copied into every manifest that
+  reads from it — and moving an output stops being a breaking change. A genrule
+  `cmd` is one shell string, so the plural form joins on a space the way `${in}`
+  already does there; an `env` value is one string with no such convention, so
+  the plural form is an error rather than a separator Frost invents. Everything
+  else in an `env` value passes through untouched, because that value belongs to
+  another program and `${...}` in one is routinely its own syntax. Both
+  expansions are action-key material, so a dependency that relocates its output
+  reruns its consumers instead of replaying a command naming a path that is gone.
 
 - A root `frost.toml`: the repository builds itself. `frost test --all` runs the
   pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
