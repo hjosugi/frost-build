@@ -403,8 +403,12 @@ files belong there; stable final artifacts remain in `outputs`.
 
 `timeout = <seconds>` stops any action of that target once it has run that
 long: the process group is terminated, escalated to a kill if it ignores that,
-and the action is reported as failed. Nothing is journaled, so the next build
-runs it again. A limit is not action-key material — the same inputs produce the
+and the action is reported as failed. The *group*, not just the child frost
+waited on — killing only that pid would leave whatever it started running with
+no parent and no limit, which is the same hang moved somewhere nobody is
+looking. Declared outputs written before the limit expired are removed, since a
+file that exists but is incomplete is worse than none. Nothing is journaled, so
+the next build runs it again. A limit is not action-key material — the same inputs produce the
 same result whatever the clock says — and the precedence is deliberate: the
 target's own declaration wins over `--timeout`, which wins over the default
 that only test actions carry.
