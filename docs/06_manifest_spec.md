@@ -264,6 +264,21 @@ one and alternating between the two re-executes each time. That is a cost, not
 a correctness problem — what never happens is being handed the other question's
 answer.
 
+`--runs-per-test N` runs every test N times and requires all of them to pass.
+It does not read the cache: a recorded single pass cannot answer "does this
+pass N times", which is the only question worth asking N runs. It also
+suppresses `flaky_retries` — hunting for a flake and hiding one are opposite
+tools, and letting each run paper over its own failure would make the
+repetition prove nothing. A failure says which run failed, because failing on
+run 7 of 10 is a flake and failing on run 1 is a broken test.
+
+`--test-output` chooses what reaches the terminal: `summary` for the counts
+alone, `errors` (the default) for failing tests replayed in full after the run,
+`all` for everything including what passing tests wrote. The default hides a
+passing suite's output because that is the noise which buries the one failure
+worth reading, and it replays failures at the end because during the run a
+failure scrolls away behind the tests that were still going.
+
 `flaky_retries` is deliberately **not** action-key material. It describes how
 hard to look for a verdict, not what the test does, so turning it on does not
 invalidate a result that already passed cleanly. It applies to test kinds only:
