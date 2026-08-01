@@ -180,15 +180,21 @@ pass_env = ["PYTHONPATH"]
 sandbox = false
 ```
 
-Genrule substitutions are `${in}`, `${out}`, `${outs}` and `${pathsep}`. The
+Genrule substitutions are `${in}`, `${out}`, `${outs}`, `${pathsep}`,
+`${dep:LABEL}` and `${deps:LABEL}`. The
 last expands to the host path separator, so an extension-neutral launcher such
 as `tools${pathsep}generate` can select `tools/generate` on POSIX and
 `tools\generate.cmd` through `PATHEXT` on Windows. Genrules execute through the
 host command shell (`/bin/sh -c` on Unix, `cmd.exe /C` on Windows) at the
 workspace root. Authors must quote for that host shell intentionally.
 All genrule outputs must exist after success and output ownership is unique.
+A genrule `cmd` is one shell string, so `${deps:LABEL}` joins its paths with a
+space — the separator `${in}` and `${outs}` already use there. That convention
+belongs to the shell, which is why `env` refuses the same form rather than
+borrowing a separator it has no basis for.
 Tests choose exactly one of `cmd` or `tool`. A named-tool test uses direct argv
-and supports `${in}`, `${deps}`, `${config}`, `${profile}` and `${platform}`;
+and supports `${in}`, `${deps}`, `${dep:LABEL}`, `${deps:LABEL}`, `${config}`,
+`${profile}` and `${platform}`;
 the multi-value forms occupy a whole argument. Its tool, args, declared inputs,
 dependency outputs, `env` and `pass_env` are action-key material. Both forms
 write the same Frost-owned success stamp only after a zero exit, so result
@@ -294,9 +300,25 @@ directory is its record of the contents, not a path for a tool. Reference the
 directory through the producing target's own `${output_dir}`, or declare a file
 output.
 
-The expansion lands in argv, which is action-key material, so a dependency that
-moves its output rebuilds its consumers rather than replaying a command naming
-a path that no longer exists.
+Both forms are also available in a genrule's `cmd`. `env` values take the
+single-valued `${dep:LABEL}` only: an environment variable is one string, and
+choosing a separator for several paths — `:`, `;`, a space — would be the
+string-expression language this deliberately is not, so `${deps:LABEL}` in an
+`env` value is an error saying so. Everything else in an `env` value passes
+through untouched, because that value is handed to another program and `${...}`
+in one is routinely that program's own syntax rather than a mistake:
+
+```toml
+[target.app]
+kind = "command"
+tool = "packager"
+deps = ["//greeting:greeting"]
+env = { GREETING_JAR = "${dep://greeting:greeting}", PS1 = "${HOME} $ " }
+```
+
+The expansion lands in argv and `env`, both action-key material, so a
+dependency that moves its output rebuilds its consumers rather than replaying a
+command naming a path that no longer exists.
 
 The multi-value forms `${in}`, `${deps}`, `${deps:LABEL}`, `${outs}`,
 `${output_dirs}` and `${clean_dirs}` must occupy a complete argument.

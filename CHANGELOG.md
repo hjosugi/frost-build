@@ -24,6 +24,19 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `${dep:LABEL}` and `${deps:LABEL}` now resolve in a command target's `env` and
+  in a genrule's `cmd`, not only in argv. A consumer names the dependency it
+  wants and Frost supplies that dependency's declared output path, so the
+  producer's layout convention stops being copied into every manifest that
+  reads from it — and moving an output stops being a breaking change. A genrule
+  `cmd` is one shell string, so the plural form joins on a space the way `${in}`
+  already does there; an `env` value is one string with no such convention, so
+  the plural form is an error rather than a separator Frost invents. Everything
+  else in an `env` value passes through untouched, because that value belongs to
+  another program and `${...}` in one is routinely its own syntax. Both
+  expansions are action-key material, so a dependency that relocates its output
+  reruns its consumers instead of replaying a command naming a path that is gone.
+
 - A root `frost.toml`: the repository builds itself. `frost test --all` runs the
   pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
   suite and the extension's — each naming what it reads, so a stage that already
