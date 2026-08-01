@@ -78,3 +78,23 @@ requires the recorded output paths to match exactly.
 The remaining gaps have no test, because a test would assert the wrong
 behaviour. They are written down instead so that the next person to look does
 not have to rediscover them, and so that closing one is a deliberate change.
+
+## Comparing two builds
+
+Reading this document tells you what *may* differ. `frost journal export`
+writes down what actually did: every key component of every action this
+workspace has recorded — argv, environment, input digests, toolchain
+fingerprint, profile, platform and the action-key schema version — in a stable
+order, so two exports of one build are byte-identical.
+
+`frost journal diff A B` then reports the first field that differs, per action,
+rather than every field that does. A changed compiler makes every input digest
+differ too, so a build-wide difference is reported once and alone: four
+thousand consequences hide the one cause. Within an action the order is
+argv, env, pass_env, inputs, outputs — decisions before their effects.
+
+That is the tool for "CI rebuilt what my machine had cached". `frost build
+--explain` answers the narrower question of why one action reran here.
+
+The export carries a format version, and a mismatch refuses rather than
+comparing fields that may since have changed meaning.

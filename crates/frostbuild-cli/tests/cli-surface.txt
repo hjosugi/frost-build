@@ -23,6 +23,9 @@ frost import-ninja <ninja> --output=VALUE
 frost import-npm --dry-run --node=VALUE --npm=VALUE --script=VALUE --vite-builds
 frost info <key> --json --platform=VALUE --profile=VALUE
 frost init --dry-run --language=VALUE
+frost journal
+frost journal diff <first> <second>
+frost journal export --out=VALUE --platform=VALUE --profile=VALUE
 frost pack-jar --input=VALUE --main-class=VALUE --output=VALUE
 frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VALUE
 frost pick --platform=VALUE --print --profile=VALUE --tests

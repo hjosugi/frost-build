@@ -5,6 +5,7 @@ pub mod graph;
 pub mod graph_store;
 pub mod hashcache;
 pub mod journal;
+pub mod journal_export;
 pub mod manifest;
 pub mod paths;
 pub mod remote;
