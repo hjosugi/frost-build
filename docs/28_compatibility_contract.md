@@ -22,6 +22,7 @@ end of this document.
 | Exit codes | The three outcomes below stay distinguishable | `cli_surface_tests::exit_codes_keep_their_documented_meanings` |
 | `--json` output of `doctor`, `info`, `query`, `cache stats` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
 | `frost info` keys | A key keeps naming the same thing. New keys are added | `info_answers_path_questions_without_a_graph` |
+| `--build-event-json` events | Every line carries `schema`. Fields are added, never removed or retyped; `event` and `result` names keep their meaning. A bump means a field changed meaning or left | `the_build_event_stream_is_ndjson_a_ci_job_can_read` |
 | Artifact layout under the configured output tree | `.frost/out/<config>`, `.frost/bin/<config>` and the `${config}` rule stay as documented, and `frost info` answers them so callers need not encode the rule | `info_answers_path_questions_without_a_graph` |
 
 ### Exit codes

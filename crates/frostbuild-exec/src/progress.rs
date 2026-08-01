@@ -19,6 +19,12 @@ pub fn progress_channel() -> (ProgressSender, Receiver<ProgressEvent>) {
 pub enum ProgressState {
     CacheHit,
     Executed,
+    /// Ran, failed, and passed on a declared retry.
+    ///
+    /// Distinct from `Executed` because a consumer that only sees "executed"
+    /// cannot report a flake, and the alternative -- reading it out of the
+    /// human-facing detail string -- makes a machine parse prose.
+    Flaky,
     Failed,
     Skipped,
     WouldRun,
@@ -30,6 +36,7 @@ impl ProgressState {
         match self {
             Self::CacheHit => "cache hit",
             Self::Executed => "cache miss",
+            Self::Flaky => "flaky",
             Self::Failed => "failed",
             Self::Skipped => "skipped",
             Self::WouldRun => "would run",

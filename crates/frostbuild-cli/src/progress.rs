@@ -28,15 +28,26 @@ impl RendererHandle {
 /// `echo_success` prints what an action that succeeded wrote. `frost test`
 /// turns it off for every mode but `--test-output=all`: a passing suite's
 /// output is the noise that hides the one failure worth reading.
-pub fn start(no_tui: bool, verbose: bool, echo_success: bool) -> (ProgressSender, RendererHandle) {
+/// `events` additionally writes the ndjson build event stream.
+///
+/// It is written by the renderer thread itself, from the same events it
+/// displays, rather than by a second consumer of a forked channel. An event a
+/// dashboard sees is then necessarily an event a human saw, in the same order,
+/// and there is no way for the two to drift into disagreeing about a build.
+pub fn start(
+    no_tui: bool,
+    verbose: bool,
+    echo_success: bool,
+    events: Option<crate::events::EventLog>,
+) -> (ProgressSender, RendererHandle) {
     let (sender, receiver) = progress_channel();
     let live = !no_tui && std::env::var_os("CI").is_none() && io::stdout().is_terminal();
     let interactive_input = io::stdin().is_terminal();
     let thread = thread::spawn(move || {
         if live {
-            run_live(receiver, interactive_input);
+            run_live(receiver, interactive_input, events);
         } else {
-            run_plain(receiver, verbose, echo_success);
+            run_plain(receiver, verbose, echo_success, events);
         }
     });
     (
@@ -47,10 +58,18 @@ pub fn start(no_tui: bool, verbose: bool, echo_success: bool) -> (ProgressSender
     )
 }
 
-fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool, echo_success: bool) {
+fn run_plain(
+    receiver: Receiver<ProgressEvent>,
+    verbose: bool,
+    echo_success: bool,
+    mut events: Option<crate::events::EventLog>,
+) {
     let mut commands = HashMap::new();
     let mut outputs = HashMap::new();
     while let Ok(event) = receiver.recv() {
+        if let Some(log) = events.as_mut() {
+            log.write(&event);
+        }
         match event {
             ProgressEvent::ActionStarted { id, command, .. } => {
                 commands.insert(id, command);
@@ -58,12 +77,14 @@ fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool, echo_success: boo
             ProgressEvent::ActionOutput { id, output } => {
                 outputs.insert(id, output);
             }
+            // A flake ran, so it is reported like any other run: dropping its
+            // output would hide the very failure it retried past.
             ProgressEvent::ActionFinished {
                 completed,
                 total,
                 id,
                 desc,
-                state: ProgressState::Executed,
+                state: ProgressState::Executed | ProgressState::Flaky,
                 ..
             } => {
                 println!("[{completed}/{total}] {desc}");
@@ -106,11 +127,15 @@ fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool, echo_success: boo
     }
 }
 
-fn run_live(receiver: Receiver<ProgressEvent>, interactive_input: bool) {
+fn run_live(
+    receiver: Receiver<ProgressEvent>,
+    interactive_input: bool,
+    mut events: Option<crate::events::EventLog>,
+) {
     let mut terminal = match TerminalGuard::enter(interactive_input) {
         Ok(terminal) => terminal,
         Err(_) => {
-            run_plain(receiver, false, true);
+            run_plain(receiver, false, true, events);
             return;
         }
     };
@@ -119,13 +144,23 @@ fn run_live(receiver: Receiver<ProgressEvent>, interactive_input: bool) {
     loop {
         let mut disconnected = false;
         match receiver.recv_timeout(tick) {
-            Ok(event) => state.apply(event),
+            Ok(event) => {
+                if let Some(log) = events.as_mut() {
+                    log.write(&event);
+                }
+                state.apply(event);
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => disconnected = true,
         }
         loop {
             match receiver.try_recv() {
-                Ok(event) => state.apply(event),
+                Ok(event) => {
+                    if let Some(log) = events.as_mut() {
+                        log.write(&event);
+                    }
+                    state.apply(event);
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     disconnected = true;
@@ -269,7 +304,9 @@ impl TuiState {
                 self.completed = completed;
                 match state {
                     ProgressState::CacheHit => self.cache_hits += 1,
-                    ProgressState::Executed => {}
+                    // A flake ran and passed, so it counts as neither a hit
+                    // nor a failure. The summary line is where it is named.
+                    ProgressState::Executed | ProgressState::Flaky => {}
                     ProgressState::Failed => {
                         self.failures += 1;
                         self.last_failure = Some(desc.clone());

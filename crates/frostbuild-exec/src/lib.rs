@@ -1167,9 +1167,9 @@ impl<'a> Engine<'a> {
                     attempts,
                     ..
                 } => (
-                    ProgressState::Executed,
+                    ProgressState::Flaky,
                     *duration_ms,
-                    format!("flaky: passed on attempt {attempts}"),
+                    format!("passed on attempt {attempts}"),
                 ),
                 Outcome::Cached => (ProgressState::CacheHit, elapsed_ms, String::new()),
                 Outcome::Failed { detail, .. } => {
