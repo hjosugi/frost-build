@@ -8,6 +8,11 @@ uses relative asset URLs so it works at the repository's Pages base path.
 documentation hub and links to the authoritative Markdown files in the
 repository; the Markdown remains the source of truth.
 
+`styles.css` keeps type, spacing, radius, tracking and leading scales in
+`:root`. Documentation components use the 4px spacing scale for reusable gaps
+and padding, with separately named tokens for the large page rhythm. Run
+`python3 -m unittest tests.test_site_css` after changing these foundations.
+
 Brand assets:
 
 - `assets/frostbuild-mark.png` — 1254 px transparent master;

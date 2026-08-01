@@ -56,7 +56,14 @@ class SiteStylesheetTestCase(unittest.TestCase):
 
     def test_scales_are_declared_once_in_root(self):
         root = _root_block(self.css)
-        for name in ("--text-xs", "--radius-md", "--track-wide", "--leading-normal"):
+        for name in (
+            "--text-xs",
+            "--space-4",
+            "--docs-layout-gap",
+            "--radius-md",
+            "--track-wide",
+            "--leading-normal",
+        ):
             self.assertIn(name, root, f"{name} must be defined in :root")
 
     def test_no_literal_sizes_outside_the_scales(self):
@@ -112,6 +119,21 @@ class SiteStylesheetTestCase(unittest.TestCase):
                 0.7,
                 f"{smaller}rem and {larger}rem differ by {gap_px:.2f}px",
             )
+
+    def test_spacing_scale_uses_the_four_pixel_grid(self):
+        root = _root_block(self.css)
+        steps = re.findall(r"--space-([0-9]+):\s*([0-9]+)px", root)
+        self.assertGreaterEqual(len(steps), 4)
+        for step, pixels in steps:
+            self.assertEqual(int(pixels), int(step) * 4)
+
+    def test_docs_hero_contains_intrinsic_code_width(self):
+        # The quick-start block contains white-space: pre. Without a zero
+        # minimum its intrinsic width expands the mobile grid past the viewport.
+        self.assertRegex(
+            self.css,
+            r"(?s)\.docs-hero > \* \{\s*min-width: 0;\s*\}",
+        )
 
 
 if __name__ == "__main__":
