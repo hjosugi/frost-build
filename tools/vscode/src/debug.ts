@@ -120,7 +120,12 @@ export class FrostDebugConfigurationProvider
       return undefined;
     }
 
-    const files = parseIdeOutput(run.output);
+    // stdout, not the stdout/stderr concatenation: the JSON is written to
+    // stdout and a late-flushed stderr line would otherwise land inside or
+    // after the document. `parseIdeOutput` tolerates surrounding prose anyway,
+    // but handing it the stream that actually carries the payload removes the
+    // interleaving rather than parsing around it.
+    const files = parseIdeOutput(run.stdout);
     const resolved = files ? firstLaunchConfiguration(files) : undefined;
     if (!resolved) {
       this.status.failed(`FrostBuild: cannot debug ${target}`);

@@ -80,10 +80,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * follows the `\n`, with the `\r` on the previous line.
  */
 function* objectStarts(text: string): Generator<number> {
-  for (let index = text.indexOf('{'); index !== -1; index = text.indexOf('{', index + 1)) {
+  let index = text.indexOf('{');
+  while (index !== -1) {
     if (index === 0 || text[index - 1] === '\n') {
       yield index;
     }
+    index = text.indexOf('{', index + 1);
   }
 }
 
