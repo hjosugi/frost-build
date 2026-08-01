@@ -33,7 +33,12 @@ end of this document.
 | `2` | frost could not run the work as asked | unusable command line, missing or invalid manifest, unreadable workspace, internal error |
 
 The distinction that matters to a script is `1` versus `2`: `1` is an answer
-about your code, `2` is an answer about your invocation or environment.
+about your code, `2` is an answer about your invocation or environment. A
+mistyped target name, an unreadable `frost.toml` and a tool frost cannot find
+are all `2`; a compile or test that ran and failed is `1`.
+`exit_codes_separate_your_code_from_your_invocation` drives one case of each
+through the real binary, because a document that says so and a binary that does
+so are different claims.
 
 ## Not contract
 

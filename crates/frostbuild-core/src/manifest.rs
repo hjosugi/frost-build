@@ -64,6 +64,86 @@ pub fn default_arflags() -> &'static [String] {
     })
 }
 
+/// Add a "did you mean" to serde's unknown-field error.
+///
+/// serde lists every accepted key, which for a target is twenty-three of them:
+/// correct, and useless, because the one that matters is buried. The name and
+/// the candidate list are already in the message, so the suggestion is derived
+/// from it rather than by rebuilding the schema somewhere this would drift
+/// from it.
+///
+/// This reads another crate's wording, so it is written to degrade quietly: if
+/// toml ever phrases the error differently the pattern simply does not match
+/// and the original message is returned unchanged. A test pins the behaviour
+/// so the loss would be visible.
+fn with_key_suggestion(error: toml::de::Error) -> anyhow::Error {
+    let text = error.to_string();
+    let Some(rest) = text.split_once("unknown field `").map(|(_, rest)| rest) else {
+        return anyhow::Error::new(error);
+    };
+    let Some((field, rest)) = rest.split_once('`') else {
+        return anyhow::Error::new(error);
+    };
+    let Some(expected) = rest.split_once("expected one of ").map(|(_, list)| list) else {
+        return anyhow::Error::new(error);
+    };
+    let candidates: Vec<&str> = expected
+        .split(',')
+        .map(|item| item.trim().trim_matches(|c| c == '`' || c == '\n'))
+        .filter(|item| !item.is_empty())
+        .collect();
+    match closest(field, candidates.iter().copied()) {
+        Some(hint) => anyhow::anyhow!("{text}\n\ndid you mean `{hint}`?"),
+        None => anyhow::Error::new(error),
+    }
+}
+
+/// The closest candidates to `input`, best first, at most `limit` of them.
+///
+/// Labels are scored by their parts rather than as whole strings. In a
+/// workspace every target is `//some/package:name`, and edit distance over the
+/// whole label is dominated by the package prefix — `//apps/cli:cli` is one
+/// edit from `//apps/cli:clip` and eight from `//core:cli`, though only one of
+/// those is a plausible typo of the name.
+///
+/// The name decides and the package breaks ties, in that order. The name is
+/// what identifies a target; the package only says where it lives. So an exact
+/// name in another package still beats a distant name in the one that was
+/// typed — someone who writes `//core:cli` when `//apps/cli:cli` exists got
+/// the location wrong, not the thing.
+pub fn suggestions<'a>(
+    input: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+    limit: usize,
+) -> Vec<&'a str> {
+    let (input_package, input_name) = split_label(input);
+    let budget = 1 + input_name.chars().count() / 3;
+    let mut scored: Vec<(usize, usize, &str)> = Vec::new();
+    for candidate in candidates {
+        let (package, name) = split_label(candidate);
+        let name_distance = edit_distance(input_name, name);
+        if name_distance <= budget {
+            scored.push((
+                name_distance,
+                edit_distance(input_package, package),
+                candidate,
+            ));
+        }
+    }
+    scored.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    scored.truncate(limit);
+    scored.into_iter().map(|(_, _, name)| name).collect()
+}
+
+/// `//pkg:name` into its parts. A bare name is its own name in no package, so
+/// single-manifest workspaces compare exactly as they always did.
+fn split_label(label: &str) -> (&str, &str) {
+    match label.rsplit_once(':') {
+        Some((package, name)) => (package, name),
+        None => ("", label),
+    }
+}
+
 /// The closest candidate to `input`, when one is close enough to be worth
 /// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
@@ -391,8 +471,9 @@ impl Manifest {
                 workspace_root.display()
             )
         })?;
-        let raw: RawManifest =
-            toml::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))?;
+        let raw: RawManifest = toml::from_str(&text)
+            .map_err(with_key_suggestion)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
         let root_has_workspace = toml::from_str::<toml::Value>(&text)
             .ok()
             .and_then(|v| v.get("workspace").cloned())
@@ -429,6 +510,7 @@ impl Manifest {
                 let package_text = std::fs::read_to_string(workspace_root.join(&rel))
                     .with_context(|| format!("failed to read {}", rel.display()))?;
                 let package_raw: RawManifest = toml::from_str(&package_text)
+                    .map_err(with_key_suggestion)
                     .with_context(|| format!("failed to parse {}", rel.display()))?;
                 let mut child = Self::from_raw_unvalidated(package_raw)?;
                 expand_manifest_paths(&mut child, workspace_root, &package)?;
@@ -458,7 +540,9 @@ impl Manifest {
     }
 
     pub fn parse_str(text: &str) -> Result<Self> {
-        let raw: RawManifest = toml::from_str(text).context("failed to parse manifest")?;
+        let raw: RawManifest = toml::from_str(text)
+            .map_err(with_key_suggestion)
+            .context("failed to parse manifest")?;
         Self::from_raw(raw)
     }
 
@@ -1977,6 +2061,101 @@ fn toml_array(values: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn suggestions_prefer_the_package_the_author_already_named() {
+        let known = [
+            "//apps/cli:cli",
+            "//apps/cli:clip",
+            "//core:core",
+            "//core:core_test",
+        ];
+
+        // The package is already right, so the near name in it comes first.
+        let hints = suggestions("//apps/cli:cl", known, 3);
+        assert_eq!(hints.first(), Some(&"//apps/cli:cli"));
+
+        // Comparing whole labels would rank by prefix length instead of by the
+        // part that was actually mistyped, which is the bug this avoids.
+        let hints = suggestions("//core:cor", known, 3);
+        assert_eq!(hints.first(), Some(&"//core:core"));
+
+        // The package only breaks ties. Both of these are one edit from the
+        // typed name, so the one in the package already named wins -- and
+        // dropping the package term entirely would sort them alphabetically
+        // and pick the other.
+        let tie = ["//apps/cli:clx", "//core:clx"];
+        assert_eq!(
+            suggestions("//core:cli", tie, 3).first(),
+            Some(&"//core:clx")
+        );
+
+        // But an exact name elsewhere beats a distant name here: someone who
+        // writes //core:cli when //apps/cli:cli exists got the location wrong,
+        // not the thing.
+        let split = ["//apps/cli:cli", "//core:cty"];
+        assert_eq!(
+            suggestions("//core:cli", split, 3).first(),
+            Some(&"//apps/cli:cli")
+        );
+
+        // A bare name in a single-manifest workspace behaves as it always did.
+        assert_eq!(suggestions("parsel", ["parser", "walker"], 3), ["parser"]);
+
+        // Nothing similar suggests nothing. A wrong suggestion is worse than
+        // none, because it sends the reader somewhere confidently.
+        assert!(suggestions("zzzzzzzz", ["parser", "walker"], 3).is_empty());
+
+        // At most `limit`, best first.
+        let hints = suggestions("parse", ["parser", "parsex", "parsed", "parseq"], 2);
+        assert_eq!(hints.len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_key_is_told_which_key_was_meant() {
+        // serde names all twenty-three accepted keys, which buries the one
+        // that matters.
+        let error = Manifest::parse_str(
+            r#"
+            [target.app]
+            kind = "cc_binary"
+            src = ["main.c"]
+            "#,
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("unknown field `src`"), "{text}");
+        assert!(text.contains("did you mean `srcs`?"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_resembles_nothing_gets_no_invented_suggestion() {
+        let error = Manifest::parse_str(
+            r#"
+            [target.app]
+            kind = "cc_binary"
+            srcs = ["main.c"]
+            quantumflux = 1
+            "#,
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("unknown field `quantumflux`"), "{text}");
+        assert!(!text.contains("did you mean"), "{text}");
+    }
+
+    #[test]
+    fn a_broken_manifest_says_where_it_broke() {
+        // Line, column, the offending line and a caret. This comes from `toml`
+        // rather than from us, so the test is here to notice if a dependency
+        // bump takes it away.
+        let error = Manifest::parse_str("[target.app\nkind = \"cc_binary\"\n").unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("line 1, column 12"), "{text}");
+        assert!(text.contains("[target.app"), "{text}");
+        assert!(text.contains('^'), "{text}");
+    }
+
     use super::*;
 
     const OK: &str = r#"
