@@ -9,21 +9,21 @@ default_targets = ["app"]
 # does not exist) so this workspace builds anywhere frost is published.
 cflags = ["-O2", "-Wall"]
 
+[target.app]
+kind = "cc_binary"
+srcs = ["src/main.c"]
+deps = ["util", "gen_config"]
+
 [target.gen_config]
 kind = "genrule"
 # The host separator plus extension-neutral name resolves to tools/gen_config
 # on POSIX and tools\gen_config.cmd through PATHEXT on Windows.
 cmd = "tools${pathsep}gen_config ${out}"
 inputs = ["tools/gen_config", "tools/gen_config.cmd"]
-outputs = ["gen/config.h"]
 includes = ["gen"]
+outputs = ["gen/config.h"]
 
 [target.util]
 kind = "cc_library"
 srcs = ["src/util.c"]
 includes = ["include"]
-
-[target.app]
-kind = "cc_binary"
-srcs = ["src/main.c"]
-deps = ["util", "gen_config"]

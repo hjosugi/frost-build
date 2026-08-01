@@ -32,6 +32,51 @@ cargo = "cargo"
 python3 = "python3"
 npm = "npm"
 
+[target.clippy]
+kind = "test"
+tool = "cargo"
+args = [
+  "clippy",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--locked",
+  "--",
+  "-D",
+  "warnings",
+]
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+timeout = 1800
+sandbox = false
+lint_allow = ["volatile-pass-env"]
+
+[target.fmt]
+kind = "test"
+tool = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+sandbox = false
+lint_allow = ["volatile-pass-env"]
+
+[target.python_test]
+kind = "test"
+tool = "python3"
+args = ["-m", "unittest", "discover", "-s", "tests"]
+# Narrow on purpose: this is the stage that shows the difference. Editing Rust
+# leaves it cached, which `scripts/check.sh` cannot do.
+inputs = ["frost.py", "tests/**/*.py"]
+pass_env = ["HOME", "PATH"]
+sandbox = false
+lint_allow = ["volatile-pass-env"]
+
 # Every stage reads the whole Rust source and the manifests that pin its
 # toolchain, so the input set is shared. The sample workspaces are listed
 # because the end-to-end tests copy them: a change to `sample_multi` must
@@ -65,58 +110,13 @@ inputs = [
 # remote cache, and cargo cannot find a toolchain without them. The cost is
 # accepted rather than argued with, and every stage says so.
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-lint_allow = ["volatile-pass-env"]
-# cargo reads a toolchain, a registry cache and a shared target directory, all
-# outside anything Frost declares.
-sandbox = false
 # A workspace-wide test run is the long pole; the default 300s ceiling is for a
 # single hanging test, not for this.
 timeout = 3600
-
-[target.clippy]
-kind = "test"
-tool = "cargo"
-args = [
-  "clippy",
-  "--workspace",
-  "--all-targets",
-  "--all-features",
-  "--locked",
-  "--",
-  "-D",
-  "warnings",
-]
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/**/*.rs",
-  "crates/**/*.toml",
-]
-pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-lint_allow = ["volatile-pass-env"]
+# cargo reads a toolchain, a registry cache and a shared target directory, all
+# outside anything Frost declares.
 sandbox = false
-timeout = 1800
-
-[target.fmt]
-kind = "test"
-tool = "cargo"
-args = ["fmt", "--all", "--", "--check"]
-inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
-pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 lint_allow = ["volatile-pass-env"]
-sandbox = false
-
-[target.python_test]
-kind = "test"
-tool = "python3"
-args = ["-m", "unittest", "discover", "-s", "tests"]
-# Narrow on purpose: this is the stage that shows the difference. Editing Rust
-# leaves it cached, which `scripts/check.sh` cannot do.
-inputs = ["frost.py", "tests/**/*.py"]
-pass_env = ["HOME", "PATH"]
-lint_allow = ["volatile-pass-env"]
-sandbox = false
 
 [target.vscode_test]
 kind = "test"
@@ -134,6 +134,6 @@ inputs = [
 # stages. It does need `node_modules`, which is gitignored: run `npm ci` in
 # tools/vscode once.
 pass_env = ["HOME", "PATH"]
-lint_allow = ["volatile-pass-env"]
-sandbox = false
 timeout = 900
+sandbox = false
+lint_allow = ["volatile-pass-env"]

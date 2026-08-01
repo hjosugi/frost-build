@@ -27,5 +27,5 @@ cflags = ["-O2", "-Wall"]
 kind = "genrule"
 cmd = "tools${pathsep}gen_version ${out}"
 inputs = ["tools/gen_version", "tools/gen_version.cmd"]
-outputs = ["gen/version.h"]
 includes = ["gen"]
+outputs = ["gen/version.h"]

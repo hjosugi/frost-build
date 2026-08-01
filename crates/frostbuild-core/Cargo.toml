@@ -22,6 +22,7 @@ memmap2.workspace = true
 postcard.workspace = true
 rayon.workspace = true
 ignore.workspace = true
+toml_edit = "0.25.13"
 
 [dev-dependencies]
 proptest.workspace = true

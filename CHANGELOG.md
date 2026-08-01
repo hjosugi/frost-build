@@ -39,6 +39,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost fmt` and `frost fmt --check`, which rewrite every manifest in the
+  workspace in one canonical form: a fixed key order inside each target, targets
+  in name order, and arrays inline when short and one-per-line when long.
+  Comments and string contents are preserved — a comment explains a decision the
+  keys cannot, and a formatter that dropped them is one nobody runs twice. Two
+  properties are tested rather than claimed: formatting is idempotent, without
+  which `--check` could fail on its own output, and it never changes what the
+  manifest means, which is the property reordering keys and tables could
+  plausibly break.
+
 - `frost lint`, and a `lint_allow` manifest key. It reports patterns that parse,
   build and cost something later: a target nothing reaches, an `-I` pointing at
   a directory nothing creates, a `pass_env` naming a variable that is

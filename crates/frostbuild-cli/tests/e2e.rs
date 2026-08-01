@@ -442,7 +442,7 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
-fn this_repository_and_its_samples_pass_their_own_lint() {
+fn this_repository_and_its_samples_pass_their_own_lint_and_fmt() {
     // A rule that is not run against a real manifest is a rule nobody has
     // checked. Both false positives this rule set shipped with -- a generated
     // include directory reported as missing, and a `cc_test` reported as
@@ -473,11 +473,21 @@ fn this_repository_and_its_samples_pass_their_own_lint() {
                 finding.target, finding.message, finding.rule
             ));
         }
+        // And canonically formatted. Kept in one test because the answer to
+        // both is the same edit and the same file list.
+        let mut manifests = vec![root.join("frost.toml")];
+        manifests.extend(frostbuild_core::manifest::package_manifests(&root).unwrap());
+        for path in manifests {
+            let text = std::fs::read_to_string(&path).unwrap();
+            if !frostbuild_core::fmt::is_formatted(&text).unwrap() {
+                offenders.push(format!("{workspace}: {} is not canonical", path.display()));
+            }
+        }
     }
     assert_eq!(
         offenders,
         Vec::<String>::new(),
-        "fix the manifest, or record the accepted cost with lint_allow"
+        "run `frost fmt`, fix the manifest, or record the cost with lint_allow"
     );
 }
 
