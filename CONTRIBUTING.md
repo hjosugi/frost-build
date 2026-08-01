@@ -12,13 +12,25 @@ correctness boundary.
 Before a PR:
 
 ```bash
-scripts/check.sh
+frost test --all          # the gate, incrementally, if you have a frost built
+scripts/check.sh          # the same stages, unconditionally, with no frost
 ```
 
-That runs the whole gate — `cargo test --workspace --all-targets --locked`,
+Both run `cargo test --workspace --all-targets --locked`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-`cargo fmt --all -- --check` and `python3 -m unittest discover -s tests` — and
-reports every stage that failed rather than stopping at the first.
+`cargo fmt --all -- --check`, `python3 -m unittest discover -s tests` and the
+VS Code extension's suite.
+
+The root `frost.toml` is this repository building itself. Each stage declares
+what it reads, so a stage that already passed on these exact inputs is a cached
+success: editing a `.rs` file reruns the three Rust stages and leaves the Python
+and extension suites alone, which `scripts/check.sh` cannot do. Measured here,
+a second run of an unchanged tree is 1.6 s against 103 s. `frost test --all
+--explain` says which input changed and why a stage reran.
+
+`scripts/check.sh` stays because bootstrapping cannot depend on the thing being
+bootstrapped — a contributor with no frost, or one whose frost does not build,
+still needs the gate.
 
 ## Releasing
 

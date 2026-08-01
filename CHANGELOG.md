@@ -7,6 +7,19 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- A root `frost.toml`: the repository builds itself. `frost test --all` runs the
+  pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
+  suite and the extension's — each naming what it reads, so a stage that already
+  passed on those exact inputs is a cached success rather than a repeat.
+  Measured here, a second run of an unchanged tree is 1.6 s against 103 s, and
+  editing a `.rs` file reruns the three Rust stages while leaving the Python and
+  extension suites cached. `scripts/check.sh` stays: bootstrapping cannot depend
+  on the thing being bootstrapped. The manifest deliberately has no
+  `[workspace]` section, because that would make Frost discover the nested
+  sample manifests and pull every sample workspace in as a package of this one.
+
+### Added
+
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
   provides a task provider, target and test pickers, "build the targets owning
   this file", an optional build-on-save, and compiler diagnostics routed into
