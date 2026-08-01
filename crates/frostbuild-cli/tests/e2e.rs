@@ -430,6 +430,87 @@ outputs = [".frost/out/${config}/report.txt"]
 #[test]
 // POSIX shell command text; see docs/09_platform_support.md.
 #[cfg(unix)]
+fn command_line_test_options_are_separate_results_not_shared_ones() {
+    let ws = Workspace::empty("test-options");
+    // The test writes what it was told, so the assertions read what actually
+    // reached the runner rather than trusting the flags were plumbed.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["probe"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.probe]
+kind = "test"
+tool = "sh"
+args = ["-c", "printf 'filter=%s level=%s args=%s\n' \"$TESTBRIDGE_TEST_ONLY\" \"$LEVEL\" \"$*\" > seen.txt", "sh"]
+inputs = ["cases.txt"]
+env = { LEVEL = "manifest" }
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+    let seen = || std::fs::read_to_string(ws.dir.join("seen.txt")).unwrap();
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "plain run failed:\n{out}");
+    assert_eq!(seen(), "filter= level=manifest args=\n");
+
+    // Cached, because nothing about the question changed.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok && out.contains("1 cached"), "{out}");
+
+    // The property #142 asked for: a filtered run is a different question, so
+    // the unfiltered result must not answer it.
+    let (ok, out) = ws.frost(&["test", "--test-filter", "parse::*"]);
+    assert!(ok, "filtered run failed:\n{out}");
+    assert!(
+        !out.contains("1 cached"),
+        "a filtered run must not reuse an unfiltered result:\n{out}"
+    );
+    assert_eq!(seen(), "filter=parse::* level=manifest args=\n");
+
+    // Going back to unfiltered runs again rather than being answered from
+    // cache. The journal keeps one entry per action id, so the filtered run
+    // replaced the unfiltered one -- alternating between two questions always
+    // re-executes. That is a cost, not a correctness problem: what must never
+    // happen is being *served* the other question's answer, and it does not.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("1 cached"),
+        "one journal entry per action means the filtered run evicted this one:\n{out}"
+    );
+    assert_eq!(seen(), "filter= level=manifest args=\n");
+
+    // The command line overrides the manifest, and that override is keyed:
+    // it runs rather than reusing the manifest-valued result.
+    let (ok, out) = ws.frost(&["test", "--test-env", "LEVEL=cli"]);
+    assert!(ok && !out.contains("1 cached"), "{out}");
+    assert_eq!(seen(), "filter= level=cli args=\n");
+
+    // Extra argv reaches the runner and is keyed the same way.
+    let (ok, out) = ws.frost(&["test", "--test-arg", "--extra"]);
+    assert!(ok && !out.contains("1 cached"), "{out}");
+    assert_eq!(seen(), "filter= level=manifest args=--extra\n");
+
+    // A malformed pair is rejected rather than becoming a variable nothing
+    // can read.
+    let (ok, out) = ws.frost(&["test", "--test-env", "NOEQUALS"]);
+    assert!(!ok, "a KEY=VALUE without '=' must be refused:\n{out}");
+    assert!(out.contains("KEY=VALUE"), "{out}");
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
 fn a_flaky_test_passes_on_a_retry_and_is_reported_rather_than_cached() {
     let ws = Workspace::empty("flaky-retries");
     // Fails once per `frost` invocation, then passes: the counter file makes

@@ -243,6 +243,27 @@ line gains `N flaky` so the cost is visible instead. A test that fails every
 attempt fails, and its output says `failed all N attempts` so the retries are
 not mistaken for a single run.
 
+Three options supply the same kinds of value from the command line instead of
+the manifest: `--test-filter PATTERN`, `--test-env KEY=VALUE` and `--test-arg
+ARG`, each repeatable except the filter. They are folded into every test action
+of that invocation, and the command line wins over a manifest value of the same
+name — it is the person typing now, and the override is visible because it
+lands in the action key.
+
+`--test-filter` travels as `TESTBRIDGE_TEST_ONLY` and `GTEST_FILTER` rather
+than as a flag. Frost cannot know a runner's filter syntax, and inventing one
+spelling per language is how a build tool acquires a table of special cases;
+the environment is the protocol runners already implement, exactly as with
+sharding.
+
+Nothing new enters the action key to make these safe. `argv` and `env` are
+already key material, so a filtered run simply *is* a different action and
+cannot be served an unfiltered result. The converse cost is worth knowing: the
+journal keeps one entry per action, so a filtered run replaces the unfiltered
+one and alternating between the two re-executes each time. That is a cost, not
+a correctness problem — what never happens is being handed the other question's
+answer.
+
 `flaky_retries` is deliberately **not** action-key material. It describes how
 hard to look for a verdict, not what the test does, so turning it on does not
 invalidate a result that already passed cleanly. It applies to test kinds only:

@@ -303,6 +303,22 @@ enum Cmd {
         all: bool,
         #[arg(long)]
         no_cache: bool,
+        /// Run only cases matching this pattern. Passed to the runner through
+        /// TESTBRIDGE_TEST_ONLY and GTEST_FILTER, and part of the action key,
+        /// so a filtered run is a separate result rather than one that
+        /// satisfies an unfiltered request
+        #[arg(long, value_name = "PATTERN")]
+        test_filter: Option<String>,
+        /// Set an environment variable for every test, as KEY=VALUE. Overrides
+        /// a manifest value of the same name, and participates in the action
+        /// key
+        #[arg(long, value_name = "KEY=VALUE")]
+        test_env: Vec<String>,
+        /// Append an argument to every test's command line. Participates in
+        /// the action key. Hyphens are allowed, since a runner's own flags are
+        /// the usual thing to pass here
+        #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
+        test_arg: Vec<String>,
         /// Shared cache consulted when the local journal misses: a directory
         /// path, file:///path, or http://host/prefix. Never required for
         /// correctness — every response is verified and any failure falls back
@@ -1203,6 +1219,7 @@ fn run(cli: Cli) -> Result<i32> {
                 no_tui,
                 timeout,
                 test_mode: false,
+                test_options: Default::default(),
                 daemon,
                 affected: false,
                 predictive: false,
@@ -1307,6 +1324,9 @@ fn run(cli: Cli) -> Result<i32> {
             predictive,
             all,
             no_cache,
+            test_filter,
+            test_env,
+            test_arg,
             remote_cache,
             remote_upload,
             remote_timeout,
@@ -1340,6 +1360,7 @@ fn run(cli: Cli) -> Result<i32> {
                 no_tui,
                 timeout,
                 test_mode: true,
+                test_options: parse_test_options(test_filter, test_env, test_arg)?,
                 daemon,
                 affected,
                 predictive,
@@ -2054,6 +2075,9 @@ struct BuildRequest {
     /// Seconds an action may run when its target declares no limit.
     timeout: Option<u64>,
     test_mode: bool,
+    /// Command-line test options, folded into test actions after the graph
+    /// loads. Empty for every non-test build.
+    test_options: frostbuild_core::graph::TestOptions,
     daemon: bool,
     affected: bool,
     predictive: bool,
@@ -2104,6 +2128,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         no_tui: false,
         timeout: None,
         test_mode: false,
+        test_options: Default::default(),
         daemon: false,
         affected: false,
         predictive: false,
@@ -2746,6 +2771,7 @@ fn run_target(
             no_tui: false,
             timeout: None,
             test_mode: false,
+            test_options: Default::default(),
             daemon: false,
             affected: false,
             predictive: false,
@@ -2931,6 +2957,7 @@ fn run_ide(
             no_tui: false,
             timeout: None,
             test_mode: false,
+            test_options: Default::default(),
             daemon: false,
             affected: false,
             predictive: false,
@@ -3292,6 +3319,7 @@ fn run_debug(
             no_tui: false,
             timeout: None,
             test_mode: false,
+            test_options: Default::default(),
             daemon: false,
             affected: false,
             predictive: false,
@@ -3468,6 +3496,7 @@ fn run_pick(
         root,
         BuildRequest {
             targets: selected,
+            test_options: Default::default(),
             jobs: None,
             keep_going: false,
             explain: false,
@@ -3694,7 +3723,14 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
             return Ok(0);
         }
     }
-    let graph = load_graph(root, &request.profile, &request.platform)?;
+    let mut graph = load_graph(root, &request.profile, &request.platform)?;
+    // In memory only. The stored graph stays the manifest's, so a run with
+    // `--test-filter parse` cannot leave a filtered graph behind for the next
+    // one; and because argv and env are already action-key material, the
+    // filtered actions key differently and cannot be served a cached result
+    // from an unfiltered run.
+    graph.apply_test_options(&request.test_options);
+    let graph = graph;
     let toolchain = toolchain_closure_fingerprint_cached(root, &graph.toolchain)?;
     let mut requested = if request.test_mode && (request.all || request.targets.is_empty()) {
         graph
@@ -3999,6 +4035,33 @@ fn write_trace(
 /// Load the configured graph, taking the manifest-free warm path when the
 /// sources stamp proves the workspace inputs are unchanged; otherwise fall
 /// back to a full manifest load and (re)compile.
+/// Turn the `--test-*` flags into the options the graph understands.
+///
+/// `KEY=VALUE` is split on the first `=` only, so a value may contain them.
+/// An empty key or a missing `=` is rejected here rather than becoming a
+/// variable nothing can read.
+fn parse_test_options(
+    filter: Option<String>,
+    env: Vec<String>,
+    args: Vec<String>,
+) -> Result<frostbuild_core::graph::TestOptions> {
+    let mut parsed = Vec::new();
+    for entry in env {
+        let Some((key, value)) = entry.split_once('=') else {
+            bail!("--test-env expects KEY=VALUE, got {entry:?}");
+        };
+        if key.is_empty() {
+            bail!("--test-env has an empty name in {entry:?}");
+        }
+        parsed.push((key.to_string(), value.to_string()));
+    }
+    Ok(frostbuild_core::graph::TestOptions {
+        filter,
+        env: parsed,
+        args,
+    })
+}
+
 fn load_graph(root: &std::path::Path, profile: &str, platform: &str) -> Result<BuildGraph> {
     if let Some(graph) = GraphStore::load_cached(root, profile, platform) {
         return Ok(graph);
@@ -4722,7 +4785,7 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 28] = [
+    const FREE_TEXT: [&str; 31] = [
         // Seconds.
         "frost build::timeout",
         "frost test::timeout",
@@ -4758,6 +4821,13 @@ mod completion_contract_tests {
         "frost bazel-dev::args",
         // A Bazel query expression; answering it means running Bazel.
         "frost import-bazel::query",
+        // A test runner's own filter grammar, the environment, and argv handed
+        // to that runner. Frost does not know any runner's case names, which is
+        // exactly why the filter travels as an environment variable rather than
+        // as a flag Frost would have to spell per language.
+        "frost test::test_filter",
+        "frost test::test_env",
+        "frost test::test_arg",
     ];
 
     fn walk(command: &clap::Command, path: &str, undeclared: &mut Vec<String>) {
