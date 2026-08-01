@@ -37,27 +37,10 @@ static CANCELLED: AtomicBool = AtomicBool::new(false);
 static RUNNING_PROCESS_GROUPS: OnceLock<Mutex<BTreeSet<u32>>> = OnceLock::new();
 static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
 
-/// Environment an action inherits whose value must not change its output.
-/// These name scratch locations and the search path for tools; an action
-/// whose result depends on them is not hermetic, which is what `--sandbox`
-/// and `--check-determinism` exist to surface. Keying on them would rebuild
-/// the world every time a shell exports a different TMPDIR.
-///
-/// PATH is here rather than in the key for a specific reason: its effect on
-/// the compiler is already captured, because the toolchain fingerprint hashes
-/// the *resolved* cc/cxx/ar binaries. What it does not capture is a genrule
-/// invoking some other tool found on PATH — the same blind spot as any
-/// undeclared input.
-const ENV_PASSTHROUGH: &[&str] = &[
-    "PATH",
-    "HOME",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    // Go uses this as its default cache root on Windows. It is operational
-    // scratch state, like TMP, rather than an input that changes built bytes.
-    "LOCALAPPDATA",
-];
+/// Defined in `frostbuild_core` because `frost lint` reports a `pass_env` that
+/// names one of these, and that is only sound if it is reading the same list
+/// the executor passes through.
+use frostbuild_core::ENV_PASSTHROUGH;
 
 /// Environment that changes what a compiler produces, so it belongs in the
 /// action key. `CPATH=/a` and `CPATH=/b` select different headers with an

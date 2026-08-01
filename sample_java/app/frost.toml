@@ -16,16 +16,16 @@
 
 [target.app]
 kind = "command"
-tool = "javac"
-deps = ["//greeting:greeting"]
 inputs = ["src/main/java/com/example/app/App.java"]
-outputs = [".frost/out/${config}/app.jar"]
-clean_dirs = [".frost/tmp/${config}/app-classes"]
+tool = "javac"
 args = ["-cp", "${dep://greeting:greeting}", "-d", "${clean_dir}", "${in}"]
 steps = [
   { tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
                                "--output", "${out}",
                                "--main-class", "com.example.app.App"] },
 ]
+deps = ["//greeting:greeting"]
+outputs = [".frost/out/${config}/app.jar"]
+clean_dirs = [".frost/tmp/${config}/app-classes"]
 pass_env = ["JAVA_HOME"]
 sandbox = false

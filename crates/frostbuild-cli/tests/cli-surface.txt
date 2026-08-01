@@ -16,6 +16,7 @@ frost debug <target> <program_args...> --debugger=VALUE --platform=VALUE --print
 frost dev <target> <program_args...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --runner=VALUE -j/--jobs=VALUE
 frost doctor --json --platform=VALUE --profile=VALUE
 frost explain <target> --platform=VALUE --profile=VALUE
+frost fmt <paths...> --check
 frost graph --dot --platform=VALUE --profile=VALUE
 frost ide <target> --dry-run --output=VALUE --platform=VALUE --profile=VALUE -j/--jobs=VALUE
 frost import-bazel --bazel=VALUE --dry-run --query=VALUE
@@ -23,6 +24,7 @@ frost import-ninja <ninja> --output=VALUE
 frost import-npm --dry-run --node=VALUE --npm=VALUE --script=VALUE --vite-builds
 frost info <key> --json --platform=VALUE --profile=VALUE
 frost init --dry-run --language=VALUE --wrapper
+frost lint --allow=VALUE --json
 frost lsp
 frost pack-jar --input=VALUE --main-class=VALUE --output=VALUE
 frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VALUE

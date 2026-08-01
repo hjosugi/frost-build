@@ -38,11 +38,20 @@
 
 [toolchain.tools]
 cargo = "cargo"
-python3 = "python3"
 npm = "npm"
+python3 = "python3"
 
 [target.binaries]
 kind = "command"
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+  "crates/**/*.json",
+  "crates/frostbuild-cli/assets/*",
+]
 tool = "cargo"
 # `cargo install` rather than `cargo build`, because a declared output has to be
 # a path Frost can name and `--out-dir` is still unstable; `--root` gives
@@ -77,15 +86,6 @@ steps = [
     "crates/frostbuild-daemon",
   ] },
 ]
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/**/*.rs",
-  "crates/**/*.toml",
-  "crates/**/*.json",
-  "crates/frostbuild-cli/assets/*",
-]
 # The binary names carry a host-specific suffix, so the file list cannot be
 # written down in a manifest that has to work on Windows too; owning the
 # directory is the honest description. Cargo's `.crates.toml` and
@@ -95,11 +95,11 @@ inputs = [
 # trees per configuration, not because this target has a debug variant — a
 # debug frost is what `cargo build` is for.
 output_dirs = [".frost/self/${config}/bin"]
-# Deliberately without HOME and PATH, which the gate stages above do name.
-# Frost passes both through regardless; naming them additionally makes them
-# action-key material, and a two-minute release build that misses whenever a
-# shell exports a different PATH would pay for nothing. What PATH selects here
-# is cargo, and the resolved cargo is already in the toolchain fingerprint.
+# Deliberately without HOME and PATH. Frost passes both through regardless;
+# naming them additionally makes them action-key material, and a two-minute
+# release build that misses whenever a shell exports a different PATH would pay
+# for nothing. What PATH selects here is cargo, and the resolved cargo is
+# already in the toolchain fingerprint. `frost lint` reports the other spelling.
 pass_env = [
   "CARGO_HOME",
   "RUSTUP_HOME",
@@ -116,6 +116,47 @@ pass_env = [
 sandbox = false
 timeout = 3600
 
+[target.clippy]
+kind = "test"
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+]
+tool = "cargo"
+args = [
+  "clippy",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--locked",
+  "--",
+  "-D",
+  "warnings",
+]
+pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+sandbox = false
+timeout = 1800
+
+[target.fmt]
+kind = "test"
+inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
+tool = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+sandbox = false
+
+[target.python_test]
+kind = "test"
+# Narrow on purpose: this is the stage that shows the difference. Editing Rust
+# leaves it cached, which `scripts/check.sh` cannot do.
+inputs = ["frost.py", "tests/**/*.py"]
+tool = "python3"
+args = ["-m", "unittest", "discover", "-s", "tests"]
+sandbox = false
+
 # Every stage reads the whole Rust source and the manifests that pin its
 # toolchain, so the input set is shared. The sample workspaces are listed
 # because the end-to-end tests copy them: a change to `sample_multi` must
@@ -125,8 +166,6 @@ timeout = 3600
 
 [target.rust_test]
 kind = "test"
-tool = "cargo"
-args = ["test", "--workspace", "--all-targets", "--locked"]
 inputs = [
   "Cargo.toml",
   "Cargo.lock",
@@ -139,11 +178,18 @@ inputs = [
   "sample_multi/**/*",
   "sample_java/**/*",
 ]
+tool = "cargo"
+args = ["test", "--workspace", "--all-targets", "--locked"]
 # Frost clears the environment and supplies a deterministic baseline, so
 # everything cargo genuinely needs is named. Each one's present-or-absent value
 # is action-key material, which is what makes a toolchain change invalidate the
 # stage rather than silently reuse a verdict from another compiler.
-pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+#
+# HOME and PATH are not named, for the reason `binaries` gives: Frost passes
+# them through anyway, so naming them adds their values to the key and nothing
+# else. The verdict still moves when the toolchain does — the resolved cargo is
+# in the toolchain fingerprint, and rust-toolchain.toml is a declared input.
+pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 # cargo reads a toolchain, a registry cache and a shared target directory, all
 # outside anything Frost declares.
 sandbox = false
@@ -151,52 +197,8 @@ sandbox = false
 # single hanging test, not for this.
 timeout = 3600
 
-[target.clippy]
-kind = "test"
-tool = "cargo"
-args = [
-  "clippy",
-  "--workspace",
-  "--all-targets",
-  "--all-features",
-  "--locked",
-  "--",
-  "-D",
-  "warnings",
-]
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/**/*.rs",
-  "crates/**/*.toml",
-]
-pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-sandbox = false
-timeout = 1800
-
-[target.fmt]
-kind = "test"
-tool = "cargo"
-args = ["fmt", "--all", "--", "--check"]
-inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
-pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-sandbox = false
-
-[target.python_test]
-kind = "test"
-tool = "python3"
-args = ["-m", "unittest", "discover", "-s", "tests"]
-# Narrow on purpose: this is the stage that shows the difference. Editing Rust
-# leaves it cached, which `scripts/check.sh` cannot do.
-inputs = ["frost.py", "tests/**/*.py"]
-pass_env = ["HOME", "PATH"]
-sandbox = false
-
 [target.vscode_test]
 kind = "test"
-tool = "npm"
-args = ["--prefix", "tools/vscode", "test"]
 inputs = [
   "tools/vscode/package.json",
   "tools/vscode/package-lock.json",
@@ -204,10 +206,11 @@ inputs = [
   "tools/vscode/src/**/*.ts",
   "tools/vscode/test/**/*.ts",
 ]
+tool = "npm"
+args = ["--prefix", "tools/vscode", "test"]
 # The extension's own suite shells out to the release binary for its end-to-end
 # cases and skips when it is absent, so this stage does not depend on the Rust
 # stages. It does need `node_modules`, which is gitignored: run `npm ci` in
 # tools/vscode once.
-pass_env = ["HOME", "PATH"]
 sandbox = false
 timeout = 900

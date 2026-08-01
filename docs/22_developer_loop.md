@@ -327,8 +327,41 @@ server keeps answering from the declarations that did load — that is the state
 a manifest is in for most of the time it is being edited, and going quiet then
 would be going quiet exactly when it is wanted.
 
-The server implements no formatting (that is `frost fmt`'s to provide once it
-exists), no rename, and nothing about files other than `frost.toml`; source
-code belongs to its own language's server. Any LSP client works — the VS Code
-extension in `tools/vscode/` is the first, and Neovim or a JetBrains IDE gets
-the same features from the same server.
+The server implements no formatting — that is `frost fmt` below — no rename,
+and nothing about files other than `frost.toml`; source code belongs to its own
+language's server. Any LSP client works — the VS Code extension in
+`tools/vscode/` is the first, and Neovim or a JetBrains IDE gets the same
+features from the same server.
+
+## The manifest, canonical and checked
+
+```bash
+frost fmt              # rewrite every frost.toml in the workspace
+frost fmt --check      # exit 1 if any of them would change
+frost fmt path.toml    # one file, for format-on-save
+frost lint             # patterns that load fine and go wrong later
+frost lint --json      # the same findings, one object per line
+```
+
+`frost fmt` canonicalizes what a manifest cannot express an opinion about:
+table order, key order within a table, and whether an array fits on one line.
+Comments and string literals come through byte for byte — a comment travels
+with the key it was written above, which is what makes reordering safe to run
+on a hand-organized file. It works on a manifest that does not load, which is
+the state a manifest is in for most of the time it is being edited and the
+moment formatting is most wanted. Running it twice changes nothing the first
+run did not, and a property test over generated manifests holds it to that.
+
+`frost lint` reports what the parser cannot: a manifest that is valid and
+unwise. Every rule has a stable identifier, one sentence saying what it costs,
+and a legitimate exception — which is why each is a lint rather than an error,
+and why `--allow RULE` exists for the workspace that disagrees. The rules and
+the `--json` schema are in
+[28_compatibility_contract.md](28_compatibility_contract.md#frost-lint---json).
+
+Both are CI-shaped: `frost fmt --check` and `frost lint` exit `1` on a finding
+and `2` only when the workspace could not be read, so a job is the command and
+nothing else. This repository holds its own manifest to both in
+`this_repository_describes_its_own_build`, and its sample workspaces in
+`lint_is_quiet_on_a_workspace_with_nothing_to_say` — a linter whose own
+author's workspace fails it is one nobody else keeps on.

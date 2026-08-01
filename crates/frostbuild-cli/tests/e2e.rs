@@ -4704,6 +4704,21 @@ fn this_repository_describes_its_own_build() {
             .any(|input| input == "crates/frostbuild-cli/assets/frostw"),
         "the binaries stage stopped watching the wrappers it embeds"
     );
+
+    // The other half of the dogfood: this manifest is held to what `frost fmt`
+    // and `frost lint` say about a manifest, in the tree, not in a copy. A
+    // linter its own author's workspace fails is one nobody else will keep on.
+    let findings = frostbuild_core::lint::lint(&repo, &manifest);
+    assert!(findings.is_empty(), "{findings:#?}");
+    for relative in frostbuild_core::manifest::discover_manifests(&repo).expect("the manifest set")
+    {
+        let text = std::fs::read_to_string(repo.join(&relative)).expect("read manifest");
+        assert!(
+            frostbuild_core::fmt::is_formatted(&text).expect("format it"),
+            "{} is not formatted; run `frost fmt`",
+            relative.display()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5538,5 +5553,214 @@ fn exit_codes_separate_a_bad_invocation_from_a_bad_build() {
     assert!(
         normalized_output(&out.stderr).contains("frost init"),
         "and it says what to do about it"
+    );
+}
+
+/// The exit code of one `frost` invocation in `workspace`.
+fn exit_code(workspace: &Path, args: &[&str]) -> i32 {
+    Command::new(frost_bin())
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .expect("spawn frost")
+        .status
+        .code()
+        .expect("frost exits rather than being signalled")
+}
+
+#[test]
+fn fmt_rewrites_a_manifest_once_and_then_leaves_it_alone() {
+    let ws = Workspace::new("fmt-idempotent");
+
+    // Keys out of canonical order, an array past the wrap width, and a comment
+    // that has to survive both. Appended to the real manifest rather than
+    // replacing it, so the workspace still builds and the last assertion here
+    // means something.
+    ws.append(
+        "frost.toml",
+        "\n[target.extra]\n\
+         # why this target exists\n\
+         srcs = [\"src/util.c\"]\n\
+         kind = \"cc_library\"\n\
+         cflags = [\"-Wall\", \"-Wextra\", \"-Wpedantic\", \"-Wshadow\", \"-Wconversion\", \
+         \"-Wsign-conversion\", \"-Wdouble-promotion\"]\n\
+         includes = [\"include\"]\n",
+    );
+
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt", "--check"]),
+        1,
+        "starts unformatted"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    let once = std::fs::read_to_string(ws.dir.join("frost.toml")).unwrap();
+
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt", "--check"]),
+        0,
+        "now it is clean"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    let twice = std::fs::read_to_string(ws.dir.join("frost.toml")).unwrap();
+    assert_eq!(once, twice, "formatting is a fixed point");
+
+    // The three things a formatter must not lose.
+    assert!(once.contains("# why this target exists"), "{once}");
+    assert!(once.contains("src/util.c"), "{once}");
+    assert!(once.contains("-Wsign-conversion"), "{once}");
+    // `kind` is what a reader looks for first, so canonical order puts it there.
+    let extra = once
+        .split("[target.extra]")
+        .nth(1)
+        .expect("the target survived");
+    assert!(
+        extra.trim_start().starts_with("kind = \"cc_library\""),
+        "keys are canonically ordered: {extra}"
+    );
+    // The long array wrapped; the short one did not.
+    assert!(once.contains("cflags = [\n"), "{once}");
+    assert!(once.contains("includes = [\"include\"]"), "{once}");
+
+    // And it is still the same workspace afterwards.
+    assert_eq!(exit_code(&ws.dir, &["build"]), 0);
+}
+
+#[test]
+fn fmt_reaches_every_package_of_a_workspace() {
+    let ws = Workspace::multi("fmt-packages");
+    ws.append(
+        "core/frost.toml",
+        "\n[target.extra]\nsrcs = [\"src/core.c\"]\nkind = \"cc_library\"\nincludes = [\"include\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["fmt", "--check"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("core/frost.toml: not formatted"), "{out}");
+
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    assert_eq!(exit_code(&ws.dir, &["fmt", "--check"]), 0);
+    assert_eq!(exit_code(&ws.dir, &["build"]), 0, "and it still builds");
+}
+
+#[test]
+fn fmt_works_on_a_manifest_that_does_not_load() {
+    // Formatting is most wanted mid-edit. A manifest that parses as TOML but
+    // names an unknown target is exactly that moment, and a formatter that
+    // needs the workspace to be valid first is no use there.
+    let ws = Workspace::new("fmt-invalid");
+    ws.write(
+        "frost.toml",
+        "[workspace]\ndefault_targets = [\"app\"]\n\n\
+         [target.app]\nsrcs = [\"src/main.c\"]\nkind = \"cc_binary\"\ndeps = [\"nope\"]\n",
+    );
+
+    assert_eq!(exit_code(&ws.dir, &["build"]), 2, "the workspace is broken");
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt"]),
+        0,
+        "and formatting still works"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt", "--check"]), 0);
+}
+
+#[test]
+fn lint_reports_what_it_says_it_reports_and_says_why() {
+    let ws = Workspace::new("lint-findings");
+    ws.append(
+        "frost.toml",
+        "\n[target.orphan]\nkind = \"cc_library\"\nsrcs = [\"src/util.c\"]\n\
+         includes = [\"no-such-dir\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["lint"]);
+    assert!(!ok, "findings are a non-zero exit: {out}");
+    assert_eq!(exit_code(&ws.dir, &["lint"]), 1);
+
+    assert!(out.contains("unreachable-target"), "{out}");
+    assert!(out.contains("missing-include-dir"), "{out}");
+    assert!(out.contains("orphan"), "{out}");
+    // Every finding carries the sentence saying what it costs, which is what
+    // makes it something a reader can act on rather than a scolding.
+    assert!(out.contains("= it is never built"), "{out}");
+
+    // Silencing one rule leaves the other, and silencing both is exit 0.
+    let (_, one) = ws.frost(&["lint", "--allow", "unreachable-target"]);
+    assert!(!one.contains("unreachable-target"), "{one}");
+    assert!(one.contains("missing-include-dir"), "{one}");
+    assert_eq!(
+        exit_code(
+            &ws.dir,
+            &[
+                "lint",
+                "--allow",
+                "unreachable-target",
+                "--allow",
+                "missing-include-dir",
+            ],
+        ),
+        0,
+    );
+}
+
+#[test]
+fn lint_is_quiet_on_a_workspace_with_nothing_to_say() {
+    // The negative case for the command as a whole. A linter that fires on the
+    // shipped samples is one every user turns off on their first day.
+    for sample in ["lint-clean-c", "lint-clean-multi"] {
+        let ws = if sample.ends_with("multi") {
+            Workspace::multi(sample)
+        } else {
+            Workspace::new(sample)
+        };
+        let (ok, out) = ws.frost(&["lint"]);
+        assert!(ok, "{sample}: {out}");
+        assert!(out.contains("nothing to report"), "{sample}: {out}");
+        assert_eq!(
+            exit_code(&ws.dir, &["fmt", "--check"]),
+            0,
+            "{sample} is formatted"
+        );
+    }
+}
+
+#[test]
+fn lint_json_is_one_object_per_line_with_a_stable_shape() {
+    let ws = Workspace::new("lint-json");
+    ws.append(
+        "frost.toml",
+        "\n[target.orphan]\nkind = \"cc_library\"\nsrcs = [\"src/util.c\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["lint", "--json"]);
+    assert!(!ok, "{out}");
+    let lines: Vec<&str> = out.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines.len(), 1, "{out}");
+
+    let finding: serde_json::Value = serde_json::from_str(lines[0]).expect("each line is JSON");
+    assert_eq!(finding["rule"], "unreachable-target");
+    assert_eq!(finding["target"], "orphan");
+    assert!(finding["detail"].is_string(), "{finding}");
+    assert!(finding["why"].is_string(), "{finding}");
+    // Documented in docs/28 as the schema; a fifth key would be additive, a
+    // renamed one would not.
+    assert_eq!(finding.as_object().unwrap().len(), 4, "{finding}");
+}
+
+#[test]
+fn a_misspelled_lint_rule_is_refused_rather_than_silently_allowing_nothing() {
+    // `--allow unreachable-targets` that quietly matched no rule would read as
+    // "allowed" and report the finding anyway, which looks like a broken flag.
+    let ws = Workspace::new("lint-unknown-rule");
+    let (ok, out) = ws.frost(&["lint", "--allow", "unreachable-targets"]);
+    assert!(!ok, "{out}");
+    assert_eq!(
+        exit_code(&ws.dir, &["lint", "--allow", "unreachable-targets"]),
+        2
+    );
+    assert!(out.contains("unknown lint rule"), "{out}");
+    assert!(
+        out.contains("did you mean \"unreachable-target\"?"),
+        "{out}"
     );
 }

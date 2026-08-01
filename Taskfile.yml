@@ -70,13 +70,23 @@ tasks:
     cmds:
       - '{{.FROST}} test vscode_test'
 
-  # Not a frost target: it rewrites the tree rather than deciding something
+  lint:
+    desc: Report frost.toml patterns that load fine and go wrong later
+    cmds:
+      - '{{.FROST}} lint'
+
+  # Not frost targets: they rewrite the tree rather than deciding something
   # about it, and a cached "already formatted" would be a lie the moment
   # anything else edited a file.
   fix:
     desc: Rewrite sources into rustfmt's canonical form
     cmds:
       - cargo fmt --all
+
+  fix:manifest:
+    desc: Rewrite every frost.toml into canonical form
+    cmds:
+      - '{{.FROST}} fmt'
 
   why:
     desc: Run the gate and say which input made each stage rerun

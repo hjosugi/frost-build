@@ -1133,6 +1133,36 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     })
 }
 
+/// Every manifest file this workspace is made of, workspace-relative, root
+/// first and the rest sorted.
+///
+/// [`Manifest::manifest_paths`] answers the same question and is authoritative,
+/// but only for a workspace that loads. `frost fmt` runs on manifests that do
+/// not — a half-typed one is when formatting is most wanted — so this answer is
+/// derived from the directory tree and the root's `[workspace]` declaration,
+/// which needs no target to be valid.
+pub fn discover_manifests(workspace_root: &Path) -> Result<Vec<PathBuf>> {
+    let root = workspace_root.join(MANIFEST_FILE);
+    if !root.is_file() {
+        bail!(
+            "no {MANIFEST_FILE} in {}. run `frost init` to write one, \
+             or `-C <dir>` to work somewhere else",
+            workspace_root.display()
+        );
+    }
+    // Without `[workspace]` the root manifest is the whole workspace, and a
+    // `frost.toml` in a subdirectory belongs to something else.
+    if !declares_workspace(&root) {
+        return Ok(vec![PathBuf::from(MANIFEST_FILE)]);
+    }
+    let mut paths = discover_package_manifests(workspace_root)?;
+    paths.sort();
+    if let Some(at) = paths.iter().position(|p| p == Path::new(MANIFEST_FILE)) {
+        paths[..=at].rotate_right(1);
+    }
+    Ok(paths)
+}
+
 fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {

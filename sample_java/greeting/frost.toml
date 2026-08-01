@@ -4,8 +4,13 @@
 
 [target.greeting]
 kind = "command"
-tool = "javac"
 inputs = ["src/main/java/com/example/greeting/Greeting.java"]
+tool = "javac"
+args = ["-d", "${clean_dir}", "${in}"]
+steps = [
+  { tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
+                               "--output", "${out}"] },
+]
 # Every command output must contain ${config}, which keeps debug, release and
 # cross-platform trees from colliding. Paths are package-relative, so this
 # resolves under greeting/.
@@ -13,11 +18,6 @@ outputs = [".frost/out/${config}/greeting.jar"]
 # Removed and recreated before every run, so a class deleted from the sources
 # cannot survive in the jar.
 clean_dirs = [".frost/tmp/${config}/greeting-classes"]
-args = ["-d", "${clean_dir}", "${in}"]
-steps = [
-  { tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
-                               "--output", "${out}"] },
-]
 # On macOS `javac` is a stub that picks a JDK from JAVA_HOME, so a build that
 # cleared it would compile against a different JDK than the one that runs the
 # result. Its present-or-absent value is action-key material.

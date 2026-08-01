@@ -586,6 +586,25 @@ enum Cmd {
         #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
     },
+    /// Rewrite every frost.toml in the workspace in canonical form
+    Fmt {
+        /// Report what is unformatted and change nothing; exit 1 if any file
+        /// would change, so CI can require formatting without a second tool
+        #[arg(long)]
+        check: bool,
+        /// Format these manifests instead of the whole workspace
+        #[arg(value_hint = ValueHint::FilePath)]
+        paths: Vec<PathBuf>,
+    },
+    /// Report manifest patterns that load fine and go wrong later
+    Lint {
+        /// Emit findings as JSON for editors and CI
+        #[arg(long)]
+        json: bool,
+        /// Ignore findings from this rule; repeatable
+        #[arg(long, value_name = "RULE", add = ArgValueCompleter::new(complete_lint_rule))]
+        allow: Vec<String>,
+    },
     /// Speak the Language Server Protocol for frost.toml on stdin/stdout
     Lsp,
     /// Report workspace, output and cache locations for scripts and editors
@@ -919,6 +938,15 @@ fn complete_npm_script(current: &OsStr) -> Vec<CompletionCandidate> {
         .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
     candidates(current, names)
+}
+
+fn complete_lint_rule(current: &OsStr) -> Vec<CompletionCandidate> {
+    candidates(
+        current,
+        frostbuild_core::lint::RULES
+            .iter()
+            .map(|rule| rule.to_string()),
+    )
 }
 
 fn complete_info_key(current: &OsStr) -> Vec<CompletionCandidate> {
@@ -1655,6 +1683,8 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Cmd::Fmt { check, paths } => run_fmt(&root, check, &paths),
+        Cmd::Lint { json, allow } => run_lint(&root, json, &allow),
         Cmd::Lsp => lsp::serve(&root),
         Cmd::Init {
             dry_run,
@@ -4639,6 +4669,140 @@ fn run_init(
     println!();
     println!("  read it before trusting it, then: frost build");
     Ok(0)
+}
+
+/// `frost fmt` and `frost fmt --check`.
+///
+/// `--check` exits 1 when a file would change, so a CI job is `frost fmt
+/// --check` and nothing else. Rewriting exits 0 whether or not anything moved:
+/// the request was "make these canonical", and they are.
+fn run_fmt(root: &std::path::Path, check: bool, paths: &[PathBuf]) -> Result<i32> {
+    let manifests = if paths.is_empty() {
+        frostbuild_core::manifest::discover_manifests(root)?
+    } else {
+        // An explicit path is taken as given: `frost fmt` on one file is how an
+        // editor's format-on-save reaches a manifest the workspace walk would
+        // not visit, and refusing it there would be refusing the useful case.
+        paths
+            .iter()
+            .map(|path| path.strip_prefix(root).unwrap_or(path).to_path_buf())
+            .collect()
+    };
+
+    let mut unformatted = Vec::new();
+    let mut rewritten = 0usize;
+    for relative in &manifests {
+        let absolute = root.join(relative);
+        let text = std::fs::read_to_string(&absolute)
+            .with_context(|| format!("failed to read {}", relative.display()))?;
+        let formatted = frostbuild_core::fmt::format(&text)
+            .with_context(|| format!("failed to format {}", relative.display()))?;
+        if formatted == text {
+            continue;
+        }
+        if check {
+            unformatted.push(relative.clone());
+        } else {
+            std::fs::write(&absolute, &formatted)
+                .with_context(|| format!("failed to write {}", relative.display()))?;
+            println!("frost: formatted {}", display_path(relative));
+            rewritten += 1;
+        }
+    }
+
+    if check {
+        if unformatted.is_empty() {
+            return Ok(0);
+        }
+        for relative in &unformatted {
+            println!("{}: not formatted", display_path(relative));
+        }
+        println!();
+        println!("  run `frost fmt` to rewrite {} of them", unformatted.len());
+        return Ok(1);
+    }
+    if rewritten == 0 {
+        println!(
+            "frost: {} already formatted",
+            match manifests.len() {
+                1 => "1 manifest".to_string(),
+                n => format!("all {n} manifests"),
+            }
+        );
+    }
+    Ok(0)
+}
+
+/// `frost lint`.
+///
+/// Findings exit 1: they are the answer, and a CI job that wants them to fail
+/// the build should not need a second command to decide that. `--allow` is how
+/// a workspace disagrees with one rule without turning the command off.
+fn run_lint(root: &std::path::Path, json: bool, allow: &[String]) -> Result<i32> {
+    for rule in allow {
+        if !frostbuild_core::lint::RULES.contains(&rule.as_str()) {
+            let hint = frostbuild_core::manifest::closest(
+                rule,
+                frostbuild_core::lint::RULES.iter().copied(),
+            )
+            .map(|near| format!(". did you mean {near:?}?"))
+            .unwrap_or_default();
+            bail!(
+                "unknown lint rule {rule:?}{hint}\nknown rules: {}",
+                frostbuild_core::lint::RULES.join(", ")
+            );
+        }
+    }
+
+    let manifest = Manifest::load(root)?;
+    let findings: Vec<_> = frostbuild_core::lint::lint(root, &manifest)
+        .into_iter()
+        .filter(|finding| !allow.iter().any(|rule| rule == finding.rule))
+        .collect();
+
+    if json {
+        // One object per finding on one line, so `frost lint --json | jq` and a
+        // line-oriented reader both work without a mode.
+        for finding in &findings {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "rule": finding.rule,
+                    "target": finding.target,
+                    "detail": finding.detail,
+                    "why": finding.why,
+                })
+            );
+        }
+    } else {
+        for finding in &findings {
+            match &finding.target {
+                Some(target) => println!("{}: {} [{}]", target, finding.detail, finding.rule),
+                None => println!("{} [{}]", finding.detail, finding.rule),
+            }
+            println!("  = {}", finding.why);
+        }
+        if findings.is_empty() {
+            println!(
+                "frost: nothing to report in {} targets",
+                manifest.targets.len()
+            );
+        } else {
+            println!();
+            println!(
+                "  {} finding{}. `--allow RULE` silences one this workspace disagrees with",
+                findings.len(),
+                if findings.len() == 1 { "" } else { "s" }
+            );
+        }
+    }
+    Ok(i32::from(!findings.is_empty()))
+}
+
+/// A workspace-relative path with forward slashes, so output is the same
+/// wherever it is read.
+fn display_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn report_wrapper(written: &[std::path::PathBuf], version: &str) {

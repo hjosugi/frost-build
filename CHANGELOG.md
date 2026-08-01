@@ -41,6 +41,31 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost fmt` and `frost lint`, so the manifest spec has something that checks
+  conformance to it. `fmt` canonicalizes table order, key order and array
+  wrapping while passing comments and string literals through byte for byte — a
+  comment travels with the key it was written above, which is what makes
+  reordering safe on a hand-organized file. It works on a manifest that does not
+  load, since that is the state a manifest is in for most of the time it is
+  being edited. `--check` exits 1 without writing, so a CI job is the command
+  and nothing else. A property test over generated manifests holds it to a fixed
+  point in two runs.
+  `lint` reports what the parser cannot: a manifest that is valid and unwise —
+  an unreachable target, a `pass_env` naming a variable frost already passes, an
+  absolute path hidden in an argument, host-shell syntax in a `cmd` that
+  `/bin/sh` and `cmd.exe` read differently, an `includes` entry that is not a
+  directory and that nothing generates. Every rule carries a stable identifier
+  for `--allow`, one sentence saying what it costs, and a positive and negative
+  test; the schema is in docs/28. Three checks the issue asked for turned out to
+  be refusals already, which is stronger than a finding: an empty glob and an
+  undeclared profile or platform are parse errors, and two targets claiming one
+  output is a graph error.
+  Running it on this repository's own manifest found five gate stages naming
+  `HOME` and `PATH` in `pass_env` — which does not make them available, they
+  already are, it puts their values in the action key and stops two machines
+  sharing a cache entry. The `binaries` target had a comment explaining exactly
+  that; the stages above it did the opposite. They no longer do.
+
 - A root `frost.toml`: the repository builds itself. `frost test --all` runs the
   pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
   suite and the extension's — each naming what it reads, so a stage that already
