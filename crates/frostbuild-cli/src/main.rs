@@ -523,6 +523,11 @@ enum Cmd {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Explain why a build reused a result or did not
+    Journal {
+        #[command(subcommand)]
+        command: JournalCmd,
+    },
     /// Manage the per-workspace build daemon
     Daemon {
         #[command(subcommand)]
@@ -785,6 +790,37 @@ enum CacheCmd {
         /// Emit one machine-readable JSON object
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum JournalCmd {
+    /// Write this build's action-key material: argv, environment, input
+    /// digests, toolchain, profile and platform, in a stable order
+    Export {
+        /// Where to write it. Defaults to stdout
+        #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath)]
+        out: Option<PathBuf>,
+        #[arg(
+            long,
+            default_value = frostbuild_core::manifest::DEFAULT_PROFILE,
+            add = ArgValueCompleter::new(complete_profile)
+        )]
+        profile: String,
+        #[arg(
+            long,
+            default_value = frostbuild_core::manifest::HOST_PLATFORM,
+            add = ArgValueCompleter::new(complete_platform)
+        )]
+        platform: String,
+    },
+    /// Compare two exports and report, per action, the first field that
+    /// differs — the cause, not every consequence of it
+    Diff {
+        #[arg(value_hint = ValueHint::FilePath)]
+        first: PathBuf,
+        #[arg(value_hint = ValueHint::FilePath)]
+        second: PathBuf,
     },
 }
 
@@ -1749,6 +1785,14 @@ fn run(cli: Cli) -> Result<i32> {
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => run_query(&root, &function),
+        Cmd::Journal { command } => match command {
+            JournalCmd::Export {
+                out,
+                profile,
+                platform,
+            } => run_journal_export(&root, &profile, &platform, out.as_deref()),
+            JournalCmd::Diff { first, second } => run_journal_diff(&first, &second),
+        },
         Cmd::Cache { command } => match command {
             CacheCmd::Stats { json } => {
                 let stats = frostbuild_core::cas::LocalCas::new(
@@ -3957,6 +4001,10 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
 
     if request.explain {
         println!("explain:");
+        // `explain` says an action reran; it cannot say why two *machines*
+        // disagree, because that needs the other machine's key material. This
+        // is the pointer from the one question to the other.
+        println!("  (compare two builds with `frost journal export` and `frost journal diff`)");
         for result in &report.results {
             match &result.outcome {
                 Outcome::Executed { reason, .. } => println!("  ran {} :: {reason}", result.id),
@@ -4254,6 +4302,102 @@ fn parse_test_options(
         env: parsed,
         args,
     })
+}
+
+/// Write what fed every action's key, joined from the four places that hold it.
+///
+/// The journal has the keys and input digests, the graph has argv and
+/// environment, the toolchain fingerprint is computed per run, and the profile
+/// and platform come from this invocation. Only together do they explain a
+/// cache miss.
+fn run_journal_export(
+    root: &std::path::Path,
+    profile: &str,
+    platform: &str,
+    out: Option<&std::path::Path>,
+) -> Result<i32> {
+    use frostbuild_core::journal_export::{ActionExport, JournalExport, EXPORT_FORMAT};
+
+    let graph = load_graph(root, profile, platform)?;
+    let journal = frostbuild_core::journal::Journal::load(root);
+    let toolchain = toolchain_closure_fingerprint_cached(root, &graph.toolchain)
+        .map_err(|error| attribute_missing_tool(error, &graph))?;
+
+    let mut actions = std::collections::BTreeMap::new();
+    for action in &graph.actions {
+        // The journal keys by action id *and configuration* — the same action
+        // built for two profiles has two entries — so the lookup must use the
+        // same composite the executor recorded under. Using `action.id` finds
+        // nothing, silently, and exports an empty file.
+        let Some(entry) = journal
+            .actions
+            .get(&frostbuild_exec::journal_id(&graph, action))
+        else {
+            continue;
+        };
+        actions.insert(
+            action.id.clone(),
+            ActionExport {
+                key: entry.key.clone(),
+                argv: action.argv.clone(),
+                env: action.env.clone(),
+                pass_env: action.pass_env.clone(),
+                inputs: entry.inputs.clone(),
+                outputs: entry.outputs.clone(),
+            },
+        );
+    }
+
+    let export = JournalExport {
+        format: EXPORT_FORMAT.to_string(),
+        action_key_schema: frostbuild_exec::ACTION_KEY_SCHEMA.to_string(),
+        profile: profile.to_string(),
+        platform: platform.to_string(),
+        toolchain,
+        actions,
+    };
+    let text = export.to_json()?;
+    match out {
+        Some(path) => {
+            std::fs::write(path, format!("{text}\n"))
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            println!(
+                "journal: {} actions to {}",
+                export.actions.len(),
+                path.display()
+            );
+        }
+        None => println!("{text}"),
+    }
+    Ok(0)
+}
+
+fn run_journal_diff(first: &std::path::Path, second: &std::path::Path) -> Result<i32> {
+    use frostbuild_core::journal_export::JournalExport;
+
+    let read = |path: &std::path::Path| -> Result<JournalExport> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        JournalExport::from_json(&text)
+            .with_context(|| format!("failed to read {}", path.display()))
+    };
+    let differences = frostbuild_core::journal_export::diff(&read(first)?, &read(second)?);
+    if differences.is_empty() {
+        println!("journal: identical");
+        return Ok(0);
+    }
+    println!(
+        "journal: {} difference{}",
+        differences.len(),
+        if differences.len() == 1 { "" } else { "s" }
+    );
+    for difference in &differences {
+        println!("{difference}");
+    }
+    // A difference is an answer, not a failure: the command succeeded in
+    // explaining the build. Exiting non-zero here would make `journal diff` in
+    // a script indistinguishable from one that could not read its inputs.
+    Ok(0)
 }
 
 fn load_graph(root: &std::path::Path, profile: &str, platform: &str) -> Result<BuildGraph> {

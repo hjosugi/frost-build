@@ -68,6 +68,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   sharing a cache entry. The `binaries` target had a comment explaining exactly
   that; the stages above it did the opposite. They no longer do.
 
+- `frost journal export` and `frost journal diff`, for "CI rebuilt what my
+  machine had cached". The export writes every action's key material — argv,
+  environment, input digests, toolchain fingerprint, profile, platform and the
+  action-key schema version — in a stable order, so two exports of one build are
+  byte-identical. The diff reports the *first* field that differs per action
+  rather than every field that does, and a build-wide difference such as a
+  changed toolchain is reported once and alone, because four thousand
+  consequences hide the one cause. Within an action the order is argv, env,
+  pass_env, inputs, outputs: decisions before their effects. The format is
+  versioned and a mismatch refuses rather than comparing fields whose meaning
+  may have changed.
+
 - `frost test --runs-per-test N` runs every test N times and requires all of
   them to pass. It does not read the cache — a recorded single pass cannot
   answer "does this pass N times", which is the only question worth asking N

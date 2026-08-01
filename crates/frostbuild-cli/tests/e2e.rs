@@ -442,6 +442,142 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
+fn journal_export_is_stable_and_diff_names_the_cause() {
+    let ws = Workspace::empty("journal-forensics");
+    let manifest = |extra_env: &str, tool: &str| {
+        format!(
+            r#"[workspace]
+default_targets = ["pack"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+packer = "{tool}"
+
+[target.pack]
+kind = "command"
+tool = "packer"
+args = ["-c", "cat src.txt > ${{out}}"]
+inputs = ["src.txt"]
+outputs = [".frost/out/${{config}}/packed.txt"]
+env = {{ LEVEL = "one"{extra_env} }}
+sandbox = false
+"#
+        )
+    };
+    ws.write("frost.toml", &manifest("", "/bin/sh"));
+    ws.write("src.txt", "contents");
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+
+    let export = |name: &str| {
+        let path = ws.dir.join(name);
+        let (ok, out) = ws.frost(&["journal", "export", "--out", path.to_str().unwrap()]);
+        assert!(ok, "export failed:\n{out}");
+        path
+    };
+    let first = export("first.json");
+    let again = export("again.json");
+
+    // Nothing changed, so the bytes must not either. A HashMap anywhere in the
+    // structure would break this at random, which is the failure this pins.
+    assert_eq!(
+        std::fs::read_to_string(&first).unwrap(),
+        std::fs::read_to_string(&again).unwrap(),
+        "two exports of one build must be byte-identical"
+    );
+    let (ok, out) = ws.frost(&[
+        "journal",
+        "diff",
+        first.to_str().unwrap(),
+        again.to_str().unwrap(),
+    ]);
+    assert!(ok && out.contains("identical"), "{out}");
+
+    // An input difference names the file that moved.
+    ws.write("src.txt", "different contents");
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let input_changed = export("input.json");
+    let (ok, out) = ws.frost(&[
+        "journal",
+        "diff",
+        first.to_str().unwrap(),
+        input_changed.to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+    assert!(out.contains("inputs:"), "{out}");
+    assert!(out.contains("src.txt"), "the file that moved:\n{out}");
+
+    // An environment difference is reported as env, not as the input and
+    // output digests it also changes.
+    ws.write("frost.toml", &manifest(r#", EXTRA = "yes""#, "/bin/sh"));
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let env_changed = export("env.json");
+    let (ok, out) = ws.frost(&[
+        "journal",
+        "diff",
+        input_changed.to_str().unwrap(),
+        env_changed.to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+    assert!(out.contains("env:"), "{out}");
+    assert!(out.contains("EXTRA"), "the variable that appeared:\n{out}");
+
+    // A toolchain difference is a property of the whole build, so it is
+    // reported once instead of once per action. A copy of the same shell at a
+    // different path is enough: the fingerprint covers which binary frost
+    // would invoke, not merely what it does. Copying rather than naming a
+    // second interpreter keeps this from silently skipping on a host that
+    // happens not to ship one.
+    std::fs::create_dir_all(ws.dir.join("tools")).unwrap();
+    std::fs::copy("/bin/sh", ws.dir.join("tools/sh")).expect("copy the shell");
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    ws.write("frost.toml", &manifest(r#", EXTRA = "yes""#, "tools/sh"));
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let tool_changed = export("toolchain.json");
+    let (ok, out) = ws.frost(&[
+        "journal",
+        "diff",
+        env_changed.to_str().unwrap(),
+        tool_changed.to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+    assert!(out.contains("toolchain:"), "{out}");
+    assert!(
+        out.contains("1 difference"),
+        "a build-wide change must be reported alone, not per action:\n{out}"
+    );
+
+    // A format frost does not know is refused rather than compared field by
+    // field against fields that may mean something else.
+    let text = std::fs::read_to_string(&first)
+        .unwrap()
+        .replace("frost-journal-export-v1", "frost-journal-export-v0");
+    ws.write("stale.json", &text);
+    let (code, out) = ws.frost_code(&[
+        "journal",
+        "diff",
+        first.to_str().unwrap(),
+        ws.dir.join("stale.json").to_str().unwrap(),
+    ]);
+    assert_eq!(
+        code, 2,
+        "an unreadable input is an invocation error:\n{out}"
+    );
+    assert!(out.contains("cannot be compared"), "{out}");
+}
+
+#[test]
 #[cfg(unix)]
 fn a_mistyped_target_is_answered_with_candidates() {
     let ws = Workspace::multi("diagnostics-target");
