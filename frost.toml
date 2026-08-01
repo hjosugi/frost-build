@@ -1,52 +1,54 @@
 # FrostBuild, built by FrostBuild.
 #
-#   ./frostw build          # the frost and frostd binaries, release
-#   ./frostw test --all     # every gate in CONTRIBUTING.md, cached
-#   ./frostw test fmt       # one gate
+#   frost test --all            the whole pre-PR gate, incrementally
+#   frost test rust_test        one stage
+#   frost test --all --explain  why a stage did or did not rerun
+#   frost build binaries        frost and frostd, release
 #
-# `./frostw` runs the frost named in `.frost-version`, downloading that release
-# once if this machine does not already have it. Bootstrapping needs no frost:
-# `cargo build --release` still works, and `task bootstrap` is that command.
+# `./frostw` runs the version `.frost-version` names, fetching that release once
+# if this machine does not have it, so none of the above needs a frost to be
+# installed first. `cargo build --release` remains the bootstrap.
 #
-# Why the boundaries are where they are
-# -------------------------------------
-# Cargo owns crate resolution, feature unification, rustc invocation order and
-# incremental state. Frost could not reproduce that without reimplementing it,
-# and pretending otherwise is how a build tool ships wrong answers — the same
-# lesson as sample_spring and sample_maven. So every target here wraps a whole
-# `cargo` or `python3` invocation with a declared input set, and Frost's job is
-# to decide whether that invocation has to happen at all.
+# This is the dogfood, and it is also the answer to "should this repository
+# adopt a task runner". It should not adopt someone else's: it *is* a build
+# tool, and the honest way to find out whether it is good enough to orchestrate
+# a real project is to orchestrate this one. Every gap this surfaces is a gap a
+# user would have hit.
 #
-# That is a real question, not a theoretical one. `cargo clippy`, `cargo fmt
-# --check` and `python3 -m unittest` each cost seconds to answer "nothing
-# changed", every time, and `scripts/check.sh` runs all four in sequence.
-# Declaring their inputs makes an unchanged tree cost one journal lookup, and
-# lets the four that did change run concurrently.
+# What Frost adds over `scripts/check.sh`, which runs all four stages every
+# time: each stage declares what it reads, so editing a `.rs` file does not
+# rerun the Python suite, and a stage that already passed on these exact inputs
+# is a cached success rather than a repeat. What it does not add is speed inside
+# cargo — cargo keeps its own incrementality, and Frost is orchestrating
+# heterogeneous stages, not replacing a compiler driver.
 #
-# What that costs: granularity is the whole invocation. Touching one .rs file
-# reruns the entire test gate, and Cargo's own incrementality is what makes
-# that affordable. Frost is deciding *whether*, not *what*.
+# Deliberately no `[workspace]` section. Adding one makes Frost discover nested
+# `frost.toml` files, which here would pull every sample workspace in as a
+# package of this one. The samples are independent workspaces and must stay
+# that way; bare target names are the legacy single-manifest form and are
+# correct for a repository whose subdirectories are not its packages.
 #
-# Requires cargo, python3 and a C compiler on PATH — the same tools
-# CONTRIBUTING.md already asks for. The C driver is only fingerprinted, not
-# used: no target here compiles C.
-
-[workspace]
-name = "frost-build"
-default_targets = ["binaries"]
+# Stages are `kind = "test"` because a gate stage has no artifact — it has a
+# verdict. Frost owns the success stamp, so a passing stage is cached and a
+# failing one records nothing and runs again.
+#
+# `binaries` is the exception, and the other half of the dogfood: it produces
+# the artifact this repository ships. `frost build binaries` after
+# `frost test --all` is the whole release path, run by the thing it builds.
 
 [toolchain.tools]
 cargo = "cargo"
-python = "python3"
+python3 = "python3"
+npm = "npm"
 
 [target.binaries]
 kind = "command"
 tool = "cargo"
-# `cargo install` rather than `cargo build`, because a declared output has to
-# be a path Frost can name, and `--out-dir` is still unstable. `--root` gives
+# `cargo install` rather than `cargo build`, because a declared output has to be
+# a path Frost can name and `--out-dir` is still unstable; `--root` gives
 # exactly that. `--force` is required: `.crates.toml` lives outside the owned
-# directory, so without it Cargo would report "already installed" over a
-# directory Frost had just emptied.
+# directory, so without it Cargo reports "already installed" over a directory
+# Frost has just emptied.
 args = [
   "install",
   "--locked",
@@ -79,24 +81,25 @@ inputs = [
   "Cargo.toml",
   "Cargo.lock",
   "rust-toolchain.toml",
-  "crates/*/Cargo.toml",
-  "crates/*/src/**/*.rs",
-  "crates/frostbuild-core/src/fastcdc_params.json",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+  "crates/**/*.json",
   "crates/frostbuild-cli/assets/*",
 ]
 # The binary names carry a host-specific suffix, so the file list cannot be
-# written down in a manifest that has to work on Windows too. Owning the
-# directory is the honest description. `.crates.toml` and `.crates2.json` are
-# Cargo's, and land beside it rather than in it.
+# written down in a manifest that has to work on Windows too; owning the
+# directory is the honest description. Cargo's `.crates.toml` and
+# `.crates2.json` land beside it rather than in it.
 #
-# Always a release build: `${config}` is here because Frost isolates owned
-# trees per configuration, not because this target has a debug variant. A
+# Always a release build. `${config}` is there because Frost isolates owned
+# trees per configuration, not because this target has a debug variant — a
 # debug frost is what `cargo build` is for.
 output_dirs = [".frost/self/${config}/bin"]
-# Cargo reads its registry and toolchain from outside the workspace, and
-# resolves the network through this machine's proxy configuration. Each name's
-# present-or-absent value is action-key material, so a build that resolved
-# against a different registry or toolchain does not reuse this result.
+# Deliberately without HOME and PATH, which the gate stages above do name.
+# Frost passes both through regardless; naming them additionally makes them
+# action-key material, and a two-minute release build that misses whenever a
+# shell exports a different PATH would pay for nothing. What PATH selects here
+# is cargo, and the resolved cargo is already in the toolchain fingerprint.
 pass_env = [
   "CARGO_HOME",
   "RUSTUP_HOME",
@@ -113,16 +116,40 @@ pass_env = [
 sandbox = false
 timeout = 3600
 
-# The four gates below are exactly the four stages of scripts/check.sh, in the
-# form that lets Frost skip the ones whose inputs did not move.
+# Every stage reads the whole Rust source and the manifests that pin its
+# toolchain, so the input set is shared. The sample workspaces are listed
+# because the end-to-end tests copy them: a change to `sample_multi` must
+# invalidate the suite that builds it. `.frost`, `.git` and gitignored paths
+# are excluded from globs by Frost itself, so the generated trees under the
+# samples do not leak in.
 
-[target.fmt]
+[target.rust_test]
 kind = "test"
 tool = "cargo"
-args = ["fmt", "--all", "--", "--check"]
-inputs = ["Cargo.toml", "crates/*/Cargo.toml", "crates/*/src/**/*.rs", "crates/*/tests/*.rs"]
-pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+args = ["test", "--workspace", "--all-targets", "--locked"]
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "deny.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+  "crates/**/*.txt",
+  "sample_c/**/*",
+  "sample_multi/**/*",
+  "sample_java/**/*",
+]
+# Frost clears the environment and supplies a deterministic baseline, so
+# everything cargo genuinely needs is named. Each one's present-or-absent value
+# is action-key material, which is what makes a toolchain change invalidate the
+# stage rather than silently reuse a verdict from another compiler.
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+# cargo reads a toolchain, a registry cache and a shared target directory, all
+# outside anything Frost declares.
 sandbox = false
+# A workspace-wide test run is the long pole; the default 300s ceiling is for a
+# single hanging test, not for this.
+timeout = 3600
 
 [target.clippy]
 kind = "test"
@@ -133,8 +160,6 @@ args = [
   "--all-targets",
   "--all-features",
   "--locked",
-  "--target-dir",
-  "target/self-clippy",
   "--",
   "-D",
   "warnings",
@@ -143,87 +168,46 @@ inputs = [
   "Cargo.toml",
   "Cargo.lock",
   "rust-toolchain.toml",
-  "crates/*/Cargo.toml",
-  "crates/*/src/**/*.rs",
-  "crates/*/tests/*.rs",
-  "crates/frostbuild-core/src/fastcdc_params.json",
-  "crates/frostbuild-cli/assets/*",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
 ]
-pass_env = [
-  "CARGO_HOME",
-  "RUSTUP_HOME",
-  "RUSTUP_TOOLCHAIN",
-  "CARGO_NET_OFFLINE",
-  "CARGO_BUILD_JOBS",
-  "RUSTFLAGS",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 sandbox = false
-timeout = 3600
+timeout = 1800
 
-[target.cargo_test]
+[target.fmt]
 kind = "test"
 tool = "cargo"
-args = [
-  "test",
-  "--workspace",
-  "--all-targets",
-  "--locked",
-  "--target-dir",
-  "target/self-test",
-]
-# The end-to-end suite drives the real binary against the sample workspaces
-# and compares the CLI surface against a checked-in snapshot, so all of that
-# is input: a sample that changes without the suite rerunning is a gate that
-# stopped testing what it claims to.
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/*/Cargo.toml",
-  "crates/*/src/**/*.rs",
-  "crates/*/tests/*.rs",
-  "crates/frostbuild-cli/tests/cli-surface.txt",
-  "crates/frostbuild-core/src/fastcdc_params.json",
-  "crates/frostbuild-cli/assets/*",
-  "sample_c/**/*",
-  "sample_java/**/*",
-  "sample_multi/**/*",
-]
-pass_env = [
-  "CARGO_HOME",
-  "RUSTUP_HOME",
-  "RUSTUP_TOOLCHAIN",
-  "CARGO_NET_OFFLINE",
-  "CARGO_BUILD_JOBS",
-  "RUSTFLAGS",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  # The suite compiles Java, Rust, Go, Node and Python through the command
-  # adapter when those toolchains are present, and skips them when they are
-  # not. Which way it went is part of what the result means.
-  "JAVA_HOME",
-  "GOROOT",
-  "GOPATH",
-  "JAVA_BIN",
-  "NODE_BIN",
-  "PYTHON_BIN",
-]
+args = ["fmt", "--all", "--", "--check"]
+inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 sandbox = false
-timeout = 3600
 
 [target.python_test]
 kind = "test"
-tool = "python"
+tool = "python3"
 args = ["-m", "unittest", "discover", "-s", "tests"]
-inputs = ["frost.py", "frost_bench.py", "scripts/*.py", "tests/**/*.py"]
-env = { PYTHONHASHSEED = "0", PYTHONDONTWRITEBYTECODE = "1" }
+# Narrow on purpose: this is the stage that shows the difference. Editing Rust
+# leaves it cached, which `scripts/check.sh` cannot do.
+inputs = ["frost.py", "tests/**/*.py"]
+pass_env = ["HOME", "PATH"]
 sandbox = false
-timeout = 1800
+
+[target.vscode_test]
+kind = "test"
+tool = "npm"
+args = ["--prefix", "tools/vscode", "test"]
+inputs = [
+  "tools/vscode/package.json",
+  "tools/vscode/package-lock.json",
+  "tools/vscode/tsconfig.json",
+  "tools/vscode/src/**/*.ts",
+  "tools/vscode/test/**/*.ts",
+]
+# The extension's own suite shells out to the release binary for its end-to-end
+# cases and skips when it is absent, so this stage does not depend on the Rust
+# stages. It does need `node_modules`, which is gitignored: run `npm ci` in
+# tools/vscode once.
+pass_env = ["HOME", "PATH"]
+sandbox = false
+timeout = 900

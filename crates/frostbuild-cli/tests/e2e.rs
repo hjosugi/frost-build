@@ -4653,23 +4653,31 @@ fn this_repository_describes_its_own_build() {
     targets.sort_unstable();
     assert_eq!(
         targets,
-        ["binaries", "cargo_test", "clippy", "fmt", "python_test"],
-        "the gates are the four in CONTRIBUTING.md, plus the binaries"
+        [
+            "binaries",
+            "clippy",
+            "fmt",
+            "python_test",
+            "rust_test",
+            "vscode_test"
+        ],
+        "the stages are the gate in CONTRIBUTING.md, plus the binaries"
     );
-    // The sample workspaces declare `[workspace]` of their own, so they are
-    // separate workspaces rather than packages of this one. Absorbing them
-    // would build them with this toolchain and these default targets.
+    // The manifest has no `[workspace]`, so the sample workspaces below this
+    // directory are not packages of it. Were one ever added they still would
+    // not be: a subdirectory declaring `[workspace]` is a workspace root, and
+    // discovery stops there. Either way, absorbing them would build them with
+    // this toolchain rather than the one they declared for themselves.
     assert!(
         !targets.iter().any(|name| name.starts_with("//sample")),
         "a sample workspace was absorbed as a package: {targets:?}"
     );
 
-    let gate = &manifest.targets["cargo_test"];
+    let gate = &manifest.targets["rust_test"];
     for expected in [
         "crates/frostbuild-cli/src/main.rs",
         "crates/frostbuild-cli/tests/e2e.rs",
         "crates/frostbuild-cli/tests/cli-surface.txt",
-        "crates/frostbuild-cli/assets/frostw",
         "sample_multi/core/src/core.c",
         "Cargo.lock",
     ] {
@@ -4684,6 +4692,17 @@ fn this_repository_describes_its_own_build() {
             .iter()
             .all(|input| !input.starts_with("target/")),
         "build output is not input"
+    );
+
+    // The wrapper scripts are shipped bytes embedded in the binary, so the
+    // stage that produces it has to rerun when they change.
+    let binaries = &manifest.targets["binaries"];
+    assert!(
+        binaries
+            .inputs
+            .iter()
+            .any(|input| input == "crates/frostbuild-cli/assets/frostw"),
+        "the binaries stage stopped watching the wrappers it embeds"
     );
 }
 

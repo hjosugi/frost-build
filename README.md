@@ -23,8 +23,8 @@ definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win
 FrostBuild builds itself. Cloned fresh, with no frost installed:
 
 ```bash
-./frostw build          # frost and frostd, using the release .frost-version names
-./frostw test --all     # every gate in CONTRIBUTING.md, skipping what did not change
+./frostw test --all     # the whole pre-PR gate, skipping what did not change
+./frostw build binaries # frost and frostd, release
 task --list             # the same entry points by name (https://taskfile.dev)
 ```
 

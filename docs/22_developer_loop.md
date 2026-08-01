@@ -194,32 +194,51 @@ nothing about the version difference that caused it.
 
 ## Frost builds Frost
 
-The repository's own `frost.toml` builds `frost` and `frostd` and runs the four
-gates `scripts/check.sh` runs. [Task](https://taskfile.dev) supplies the names:
+The repository's own `frost.toml` runs the pre-PR gate as five declared stages
+and produces `frost` and `frostd` themselves:
 
 ```bash
-task              # build the binaries
-task check        # every gate, skipping the ones whose inputs did not move
+./frostw test --all       # the gate, incrementally, needing no frost installed
+./frostw test --all --explain   # which input made each stage rerun
+./frostw build binaries   # frost and frostd, release
+```
+
+Cargo still owns crate resolution, feature unification and rustc invocation
+order. Every stage wraps a whole `cargo`, `python3` or `npm` invocation with a
+declared input set — the same boundary `sample_spring` and `sample_maven` draw
+around Gradle and Maven — so Frost decides *whether* the invocation has to
+happen, not *what* it does. That is what `scripts/check.sh` cannot do: it runs
+all five every time, while a stage whose inputs did not move is a cached
+success. Editing a `.rs` file reruns the three Rust stages and leaves the
+Python and extension suites alone.
+
+The manifest has no `[workspace]` section, deliberately: that would make Frost
+discover the nested sample manifests and pull every sample workspace in as a
+package of this one. Bare target names are the legacy single-manifest form, and
+they are right for a repository whose subdirectories are not its packages.
+
+The gate stages are `kind = "test"` because a stage has no artifact, it has a
+verdict, and Frost owns the success stamp — a passing stage caches, a failing
+one records nothing and runs again. `binaries` is the exception and produces
+the artifact this repository ships.
+
+[Task](https://taskfile.dev) supplies names for those command lines and nothing
+else:
+
+```bash
+task check        # ./frostw test --all
+task build        # ./frostw build binaries
 task --list       # the rest
 task bootstrap    # cargo build --release, for a machine with no frost at all
 ```
 
-The split between the two is deliberate. Task has no dependency graph and no
-cache and does not pretend to: each task is a name for a command. `frost.toml`
-is where the decision lives — declared inputs, a content-addressed journal, and
-concurrency across independent gates — so `task check` is one command that asks
-one question, rather than four commands in sequence.
+Every task is one line long on purpose. Task has no dependency graph and no
+cache, `frost.toml` is where the deciding happens, and a task that grew logic
+would be logic in the wrong file.
 
-Cargo still owns crate resolution, feature unification and rustc invocation
-order; every target wraps a whole `cargo` or `python3` invocation with a
-declared input set, the same boundary `sample_spring` and `sample_maven` draw
-around Gradle and Maven. Frost decides *whether* the invocation has to happen,
-not *what* it does. An unchanged tree answers in about a millisecond where the
-four gates otherwise cost seconds each; a touched `.rs` file reruns a whole
-gate, and Cargo's own incrementality is what makes that affordable.
-
-`scripts/check.sh` stays, and CI takes it: it is the path that requires no
-frost, which the bootstrap case still needs.
+`scripts/check.sh` stays, and CI takes it: bootstrapping cannot depend on the
+thing being bootstrapped, and a contributor with no network needs a gate that
+`./frostw` cannot give them.
 
 ## Explain one build, in one file
 

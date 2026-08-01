@@ -37,7 +37,7 @@
     "commands": [
       {
         "command": "frost.build",
-        "title": "Build Target…",
+        "title": "Build Target\u2026",
         "category": "FrostBuild"
       },
       {
@@ -47,13 +47,31 @@
       },
       {
         "command": "frost.test",
-        "title": "Run Test Target…",
+        "title": "Run Test Target\u2026",
         "category": "FrostBuild"
       },
       {
         "command": "frost.refreshTargets",
         "title": "Refresh Targets",
         "category": "FrostBuild"
+      },
+      {
+        "command": "frost.buildTarget",
+        "title": "Build",
+        "category": "FrostBuild",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "frost.testTarget",
+        "title": "Run Test",
+        "category": "FrostBuild",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "frost.debugTarget",
+        "title": "Debug",
+        "category": "FrostBuild",
+        "icon": "$(debug-alt)"
       }
     ],
     "menus": {
@@ -62,6 +80,30 @@
           "command": "frost.buildFileOwners",
           "group": "frost@1",
           "when": "resourceScheme == file"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "frost.refreshTargets",
+          "when": "view == frostTargets",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "frost.buildTarget",
+          "when": "view == frostTargets && viewItem =~ /^frost(Runnable|Test)?Target$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "frost.testTarget",
+          "when": "view == frostTargets && viewItem == frostTestTarget",
+          "group": "inline@2"
+        },
+        {
+          "command": "frost.debugTarget",
+          "when": "view == frostTargets && viewItem =~ /^frost(Runnable|Test)Target$/",
+          "group": "inline@3"
         }
       ]
     },
@@ -120,6 +162,54 @@
           "description": "Build the targets owning a file whenever it is saved. Off by default: a save should not start work the developer did not ask for."
         }
       }
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "frostbuild",
+          "title": "FrostBuild",
+          "icon": "$(tools)"
+        }
+      ]
+    },
+    "views": {
+      "frostbuild": [
+        {
+          "id": "frostTargets",
+          "name": "Targets",
+          "contextualTitle": "FrostBuild"
+        }
+      ]
+    },
+    "debuggers": [
+      {
+        "type": "frost",
+        "label": "FrostBuild",
+        "languages": [
+          "c",
+          "cpp",
+          "java",
+          "javascript",
+          "python"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target label to debug, for example //apps/cli:cli. Omitted, the command asks."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "frost",
+            "request": "launch",
+            "name": "Frost: debug target"
+          }
+        ]
+      }
+    ]
   }
 }

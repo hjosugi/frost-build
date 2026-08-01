@@ -65,3 +65,6 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Generated local knowledge graph
+/graphify-out/

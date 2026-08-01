@@ -5,7 +5,37 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- The site's stylesheet keeps its scales in one place. It held 51 font-size
+  declarations with 26 distinct rem values, 12 letter-spacing declarations with
+  12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
+  differing by as little as 0.01rem, which is accretion rather than intent.
+  Those are now a type scale, a 4px spacing scale, a radius scale, a tracking
+  scale and named leadings, verified against the rendered page: the largest
+  move is 0.64px of type, 0.14px of tracking and 2px of corner, and no element's
+  leading ratio changed. Display leadings and the negative tracking on large
+  headings are named rather than merged, because those are set by eye per size.
+  A test keeps it consolidated, since the next hurried change adds `0.77rem`
+  and nothing notices; the one literal that remains is an `em` that must scale
+  with the metric beside it, and it says so. Documentation keeps its reusable
+  gaps and padding on the spacing scale while naming the large layout rhythm
+  separately.
+
 ### Added
+
+- A root `frost.toml`: the repository builds itself. `frost test --all` runs the
+  pre-PR gate as five declared stages — cargo test, clippy, fmt, the Python
+  suite and the extension's — each naming what it reads, so a stage that already
+  passed on those exact inputs is a cached success rather than a repeat.
+  Measured here, a second run of an unchanged tree is 1.6 s against 103 s, and
+  editing a `.rs` file reruns the three Rust stages while leaving the Python and
+  extension suites cached. `scripts/check.sh` stays: bootstrapping cannot depend
+  on the thing being bootstrapped. The manifest deliberately has no
+  `[workspace]` section, because that would make Frost discover the nested
+  sample manifests and pull every sample workspace in as a package of this one.
+  `frost build binaries` produces `frost` and `frostd` through the same
+  manifest, so the release path is run by the thing it builds.
 
 - `frost lsp` speaks the Language Server Protocol for `frost.toml` on
   stdin/stdout: diagnostics, completion of labels across packages and of the
@@ -57,15 +87,13 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   manifest; frost itself warns once, on stderr, when it is not the declared
   version. `.frost-version` names one exact version — no ranges, no `latest` —
   because the reason to check it in is that two machines run the same build.
-- FrostBuild builds itself: a root `frost.toml` produces `frost` and `frostd`
-  and runs the four gates `scripts/check.sh` runs, with declared inputs, so an
-  unchanged tree answers in about a millisecond instead of paying for four
-  sequential tool startups. Cargo still owns crate resolution and rustc
-  ordering — each target wraps a whole `cargo` or `python3` invocation, the
-  boundary `sample_spring` draws around Gradle. A `Taskfile.yml`
-  ([Task](https://taskfile.dev)) supplies the names: `task`, `task check`,
-  `task bootstrap` for a machine with neither frost nor network.
-  `scripts/check.sh` stays as the path that needs no frost.
+  This repository checks its own in, so `./frostw test --all` runs the gate on
+  a machine with no frost at all.
+
+- A `Taskfile.yml` ([Task](https://taskfile.dev)) naming the entry points:
+  `task`, `task check`, `task bootstrap`. It has no dependency graph and no
+  cache and does not pretend to — every task is a name for a command, and
+  `frost.toml` remains the thing that decides whether a stage has to run.
 
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
   provides a task provider, target and test pickers, "build the targets owning
