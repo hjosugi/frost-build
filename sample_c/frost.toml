@@ -16,10 +16,10 @@ deps = ["util", "gen_config"]
 
 [target.gen_config]
 kind = "genrule"
-inputs = ["tools/gen_config", "tools/gen_config.cmd"]
 # The host separator plus extension-neutral name resolves to tools/gen_config
 # on POSIX and tools\gen_config.cmd through PATHEXT on Windows.
 cmd = "tools${pathsep}gen_config ${out}"
+inputs = ["tools/gen_config", "tools/gen_config.cmd"]
 includes = ["gen"]
 outputs = ["gen/config.h"]
 

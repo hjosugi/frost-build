@@ -25,7 +25,7 @@ cflags = ["-O2", "-Wall"]
 # tools\gen_version.cmd through PATHEXT on Windows.
 [target.gen_version]
 kind = "genrule"
-inputs = ["tools/gen_version", "tools/gen_version.cmd"]
 cmd = "tools${pathsep}gen_version ${out}"
+inputs = ["tools/gen_version", "tools/gen_version.cmd"]
 includes = ["gen"]
 outputs = ["gen/version.h"]

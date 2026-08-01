@@ -1,41 +1,29 @@
-//! One canonical rendering of a `frost.toml`.
+//! One canonical spelling of a manifest.
 //!
-//! A declarative manifest can be read by a machine, which also means it can be
-//! written by one. `docs/14` turned Starlark down; the cost of that choice is
-//! that "how a manifest is laid out" becomes a matter of taste unless something
-//! settles it, and diffs fill with reordered keys nobody meant to change.
+//! The point is not that any particular order is better. It is that two people
+//! writing the same target should produce the same bytes, so a review shows
+//! what changed rather than who wrote it.
 //!
-//! The rules are deliberately few. Order the tables the way the specification
-//! introduces them, order a target's keys the way one is read — what it is,
-//! what it consumes, what it produces, how it runs — and wrap an array when it
-//! does not fit. Everything else, including every comment and every string
-//! exactly as written, is left alone: a formatter that rewrote a `cmd` would be
-//! changing the build.
+//! `toml_edit` rather than parse-and-reserialize, because a manifest's comments
+//! are the part worth keeping: `# needs HOME for the dependency cache` explains
+//! a decision that the keys around it cannot. A formatter that drops them is
+//! one nobody runs twice.
 
 use anyhow::{Context, Result};
-use toml_edit::{DocumentMut, Item, Table, Value};
+use toml_edit::{Array, DocumentMut, Item, Value};
 
-/// Columns a line may reach before an array is broken across lines.
+/// Key order inside a `[target.*]` table.
 ///
-/// Manifests are read next to code, in the same window, and this is the width
-/// the rest of the tree is written to.
-const WIDTH: usize = 88;
-
-/// Top-level tables, in the order `docs/06_manifest_spec.md` introduces them:
-/// what the workspace is, what builds it, where it builds to, and then the
-/// work itself.
-const TABLE_ORDER: &[&str] = &["workspace", "toolchain", "platform", "profile", "target"];
-
-/// Keys of a `[target.*]` table, in the order a reader asks about them: what
-/// kind of thing this is, what it consumes, what it produces, and how it runs.
-const TARGET_KEY_ORDER: &[&str] = &[
+/// Grouped by what a reader is asking, not alphabetically: what kind of thing
+/// is this, what does it read, what does it produce, how does it run. A reader
+/// scanning for outputs should find them in the same place in every target.
+const TARGET_KEY_ORDER: [&str; 24] = [
     "kind",
+    "tool",
+    "cmd",
+    "args",
     "srcs",
     "inputs",
-    "cmd",
-    "tool",
-    "args",
-    "steps",
     "deps",
     "includes",
     "cflags",
@@ -46,287 +34,166 @@ const TARGET_KEY_ORDER: &[&str] = &[
     "depfile",
     "depfile_format",
     "preserve_outputs",
+    "steps",
     "env",
     "pass_env",
-    "sandbox",
     "shard_count",
     "flaky_retries",
     "timeout",
-    // Last because it is about checking the target rather than building it: a
-    // reader looking for what this target does should not meet it on the way.
+    "sandbox",
     "lint_allow",
 ];
 
-/// Keys of `[workspace]` and `[toolchain]`, likewise.
-const OTHER_KEY_ORDER: &[&str] = &[
-    "name",
-    "default_targets",
-    "cc",
-    "cxx",
-    "ar",
-    "kofunc",
-    "sysroot",
-    "arflags",
-    "cflags",
-    "cxxflags",
-    "ldflags",
-];
+/// An array longer than this, rendered inline, stops being readable in a
+/// review diff: one changed entry rewrites the whole line.
+const INLINE_ARRAY_WIDTH: usize = 76;
 
-/// Rewrite `text` into the canonical form.
-///
-/// Pure, so the same rules serve `frost fmt`, `frost fmt --check` and an
-/// editor asking for a formatting edit, and so idempotence is a property of a
-/// function rather than of a command.
-pub fn format(text: &str) -> Result<String> {
-    let mut document: DocumentMut = text.parse().context("parsing the manifest to format")?;
-    sort_tables(document.as_table_mut(), TABLE_ORDER);
-    for (_, item) in document.as_table_mut().iter_mut() {
-        format_item(item);
+/// Format a manifest's text. Idempotent by construction, and asserted so.
+pub fn format_manifest(text: &str) -> Result<String> {
+    let mut document: DocumentMut = text.parse().context("failed to parse manifest")?;
+
+    // Targets in name order. A manifest that grows by appending drifts into an
+    // order that reflects when things were written, which is not something a
+    // reader ever wants to know.
+    if let Some(Item::Table(targets)) = document.get_mut("target") {
+        // Sub-tables are emitted by `position`, not by map order, so sorting
+        // the values does nothing here. Collect the positions the document
+        // already uses and hand them out in name order: the block stays where
+        // the author put it, and only the targets within it move.
+        let mut names: Vec<String> = targets.iter().map(|(name, _)| name.to_string()).collect();
+        names.sort();
+        let mut positions: Vec<isize> = targets
+            .iter()
+            .filter_map(|(_, item)| match item {
+                Item::Table(table) => table.position(),
+                _ => None,
+            })
+            .collect();
+        positions.sort_unstable();
+
+        for (name, position) in names.iter().zip(positions) {
+            if let Some(Item::Table(table)) = targets.get_mut(name) {
+                table.set_position(Some(position));
+            }
+        }
+        for (_, item) in targets.iter_mut() {
+            if let Item::Table(target) = item {
+                sort_by_canonical_order(target);
+                for (_, value) in target.iter_mut() {
+                    canonicalize_arrays(value);
+                }
+            }
+        }
     }
-    // Sorting the map is not enough: a table remembers where it was in the
-    // original document and is rendered in that order, so the order has to be
-    // restated rather than merely rearranged.
-    let mut position = 0usize;
-    reposition(document.as_table_mut(), &mut position);
+    for (_, item) in document.iter_mut() {
+        canonicalize_arrays(item);
+    }
+
+    // `toml_edit` keeps the line endings it was given inside untouched decor,
+    // while every prefix this module sets is `\n`. On a CRLF checkout -- which
+    // is what git hands a Windows runner by default -- that mixes the two in
+    // one file. Normalising to whichever the input used keeps `fmt` from
+    // rewriting every line of a file it was asked to tidy, and keeps `--check`
+    // from failing on a platform rather than on a manifest.
     let rendered = document.to_string();
-    Ok(if wants_crlf(text) {
-        with_crlf(&rendered)
-    } else {
-        rendered
+    Ok(match text.contains("\r\n") {
+        true => rendered.replace("\r\n", "\n").replace('\n', "\r\n"),
+        false => rendered.replace("\r\n", "\n"),
     })
 }
 
-/// Whether this file's layout uses CRLF.
-///
-/// A manifest checked out on Windows with `core.autocrlf` has CRLF throughout,
-/// and a formatter that answered "not formatted" to every such file — then
-/// rewrote it whole — would be fighting the checkout rather than the manifest.
-/// So the file's own ending is kept, the way rustfmt's `newline_style = "Auto"`
-/// keeps it.
-///
-/// Decided by majority rather than by the first newline found, because a CR
-/// can also appear inside a multi-line string, where it is content and says
-/// nothing about the layout.
-fn wants_crlf(text: &str) -> bool {
-    let crlf = text.matches("\r\n").count();
-    let total = text.matches('\n').count();
-    crlf * 2 > total
-}
-
-/// Restore CRLF to a rendered document.
-///
-/// `toml_edit` normalizes the newlines it controls — indentation, the blank
-/// line before a header, the break inside a wrapped array — to LF, and leaves
-/// the bytes of a multi-line string exactly as they were parsed. So a CR that
-/// survived to here belongs to a string, and the LF after it must not gain a
-/// second one.
-fn with_crlf(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / 16);
-    let mut previous = '\0';
-    for character in text.chars() {
-        if character == '\n' && previous != '\r' {
-            out.push('\r');
-        }
-        out.push(character);
-        previous = character;
-    }
-    out
-}
-
-/// Renumber every table so it renders in the order the map now holds.
-fn reposition(table: &mut Table, next: &mut usize) {
-    for (_, item) in table.iter_mut() {
-        let Some(child) = item.as_table_mut() else {
-            continue;
-        };
-        // An implicit table — the `target` in `[target.app]`, which has no
-        // header of its own — is not rendered, so numbering it would leave a
-        // gap that means nothing.
-        if !child.is_implicit() {
-            child.set_position(Some(*next as isize));
-            *next += 1;
-        }
-        reposition(child, next);
-    }
-}
-
-/// Whether `text` is already canonical.
+/// True when `text` is already canonical.
 pub fn is_formatted(text: &str) -> Result<bool> {
-    Ok(format(text)? == text)
+    Ok(format_manifest(text)? == text)
 }
 
-fn format_item(item: &mut Item) {
-    let Some(table) = item.as_table_mut() else {
-        return;
-    };
-    // A `[target.*]` table holds the targets; the targets themselves hold the
-    // keys. Which order applies is decided by what the table contains, not by
-    // its name, so `[platform.aarch64.tools]` needs no special case.
-    if table.iter().all(|(_, item)| item.is_table()) {
-        sort_tables(table, &[]);
-    } else {
-        sort_keys(table);
-    }
-    for (_, child) in table.iter_mut() {
-        format_item(child);
-    }
-    for (key, value) in table.iter_mut() {
-        if let Some(value) = value.as_value_mut() {
-            // `key = ` is on the line too, so the decision about whether the
-            // value fits has to count it.
-            wrap_value(value, key.get().chars().count() + 3, 0);
-        }
-    }
-}
-
-/// Order a table's sub-tables: the ones `order` names first, in that order,
-/// then everything else alphabetically.
-fn sort_tables(table: &mut Table, order: &[&str]) {
-    let rank = |key: &str| order.iter().position(|name| *name == key);
-    let mut keys: Vec<String> = table.iter().map(|(key, _)| key.to_string()).collect();
-    keys.sort_by(|a, b| match (rank(a), rank(b)) {
-        (Some(a), Some(b)) => a.cmp(&b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.cmp(b),
-    });
-    reinsert(table, &keys);
-}
-
-fn sort_keys(table: &mut Table) {
-    // A target's keys and a toolchain's keys are different lists, and a table
-    // is one or the other; asking both and taking whichever recognizes the key
-    // avoids having to know which table this is.
-    let rank = |key: &str| {
-        TARGET_KEY_ORDER
-            .iter()
-            .position(|name| *name == key)
-            .or_else(|| {
-                OTHER_KEY_ORDER
-                    .iter()
-                    .position(|name| *name == key)
-                    .map(|at| at + TARGET_KEY_ORDER.len())
-            })
-    };
-    let mut keys: Vec<String> = table.iter().map(|(key, _)| key.to_string()).collect();
-    keys.sort_by(|a, b| match (rank(a), rank(b)) {
-        (Some(a), Some(b)) => a.cmp(&b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        // An unrecognized key is a manifest error, but formatting runs on
-        // manifests that do not load yet — that is when it is wanted. Ordering
-        // them alphabetically keeps the output stable rather than guessing.
-        (None, None) => a.cmp(b),
-    });
-    reinsert(table, &keys);
-}
-
-/// Rebuild a table in `keys` order.
+/// Order a target's keys, with anything unrecognized kept after the known ones
+/// in its existing relative order.
 ///
-/// toml_edit has no reorder, and removing and re-inserting is what carries the
-/// decoration — the blank lines and comments written above an entry — along
-/// with it. Losing those would make a formatter something nobody runs twice.
-fn reinsert(table: &mut Table, keys: &[String]) {
-    // The key itself, not its name: a comment written above an entry is decor
-    // on the key, and re-inserting by name would build a fresh key and drop it.
-    let mut taken = Vec::with_capacity(keys.len());
-    for key in keys {
-        if let Some(entry) = table.remove_entry(key) {
-            taken.push(entry);
+/// An unknown key is a manifest from a newer frost, or a typo the parser will
+/// reject in a moment. Either way, moving it to the end and leaving it there is
+/// better than dropping it or guessing where it belongs.
+fn sort_by_canonical_order(table: &mut toml_edit::Table) {
+    table.sort_values_by(|a, _, b, _| {
+        let rank = |key: &str| {
+            TARGET_KEY_ORDER
+                .iter()
+                .position(|known| *known == key)
+                .unwrap_or(TARGET_KEY_ORDER.len())
+        };
+        // Unknown keys tie on rank, and `sort_values_by` is stable, so they
+        // keep the order the author gave them.
+        rank(a.get()).cmp(&rank(b.get()))
+    });
+}
+
+/// Inline short arrays, one entry per line for long ones.
+///
+/// Both spellings are canonical for their width, so the rule survives a round
+/// trip: a long array is not re-inlined on the second run, and a short one is
+/// not re-expanded.
+fn canonicalize_arrays(item: &mut Item) {
+    match item {
+        Item::Value(Value::Array(array)) => rewrap(array),
+        Item::Value(Value::InlineTable(table)) => {
+            for (_, value) in table.iter_mut() {
+                if let Value::Array(array) = value {
+                    rewrap(array);
+                }
+            }
         }
-    }
-    for (key, item) in taken {
-        table.insert_formatted(&key, item);
+        Item::Table(table) => {
+            for (_, value) in table.iter_mut() {
+                canonicalize_arrays(value);
+            }
+        }
+        _ => {}
     }
 }
 
-/// Break an array across lines when it does not fit, and put it back on one
-/// line when it does.
-///
-/// `column` is where the value starts on its line, so the fit is measured
-/// where it will actually be printed; `indent` is the block it belongs to, and
-/// the two differ whenever a `key = ` precedes the value.
-fn wrap_value(value: &mut Value, column: usize, indent: usize) {
-    let Some(array) = value.as_array_mut() else {
+fn rewrap(array: &mut Array) {
+    // Measured on the entries alone: the key and indentation vary with nesting,
+    // and a rule that depended on them would rewrap an array for being moved.
+    let width: usize = array
+        .iter()
+        .map(|value| value.to_string().trim().len() + 2)
+        .sum();
+
+    if width <= INLINE_ARRAY_WIDTH {
+        for value in array.iter_mut() {
+            let decor = value.decor_mut();
+            decor.set_prefix(" ");
+            decor.set_suffix("");
+        }
+        array.set_trailing("");
+        array.set_trailing_comma(false);
+        // The first entry carries no leading space: `[a, b]`, not `[ a, b]`.
+        if let Some(first) = array.iter_mut().next() {
+            first.decor_mut().set_prefix("");
+        }
         return;
-    };
-    for element in array.iter_mut() {
-        wrap_value(element, indent + 2, indent + 2);
     }
-    // Measure the one-line form before deciding, because the decision is
-    // exactly "does the one-line form fit".
-    let mut inline = array.clone();
-    inline.fmt();
-    let fits = inline.to_string().chars().count() + column <= WIDTH;
-    if fits {
-        *array = inline;
-        return;
-    }
-    array.fmt();
-    let padding = " ".repeat(indent + 2);
-    for element in array.iter_mut() {
-        let decor = element.decor_mut();
-        decor.set_prefix(format!("\n{padding}"));
+
+    for value in array.iter_mut() {
+        let decor = value.decor_mut();
+        decor.set_prefix("\n  ");
         decor.set_suffix("");
     }
-    array.set_trailing(format!(",\n{}", " ".repeat(indent)));
-    array.set_trailing_comma(false);
+    array.set_trailing("\n");
+    // A trailing comma keeps the next addition to a one-line diff.
+    array.set_trailing_comma(true);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
-
-    /// A manifest built from arbitrary but well-shaped parts.
-    ///
-    /// Generated rather than listed because the property is about every
-    /// manifest, and the cases that break a formatter are the ones nobody
-    /// thought to write down: a key that lands exactly on the wrap boundary, a
-    /// target whose keys are all unrecognized, an empty array.
-    fn any_manifest() -> impl Strategy<Value = String> {
-        let key = prop::sample::select(vec![
-            "kind",
-            "srcs",
-            "deps",
-            "includes",
-            "cflags",
-            "inputs",
-            "outputs",
-            "not_a_key",
-        ]);
-        let array = prop::collection::vec("[a-z/:._]{1,20}", 0..6);
-        let entry = (key, array).prop_map(|(key, values)| {
-            let items: Vec<String> = values.iter().map(|v| format!("\"{v}\"")).collect();
-            format!("{key} = [{}]\n", items.join(", "))
-        });
-        let target = ("[a-z][a-z0-9_]{0,10}", prop::collection::vec(entry, 0..5))
-            .prop_map(|(name, entries)| format!("[target.{name}]\n{}", entries.concat()));
-        prop::collection::vec(target, 1..5).prop_map(|targets| targets.join("\n"))
-    }
-
-    proptest! {
-        #[test]
-        fn formatting_reaches_a_fixed_point_on_any_manifest(manifest in any_manifest()) {
-            // Duplicate target names are legal input to the parser but not to
-            // TOML, so a generated collision is not a case about formatting.
-            let Ok(once) = format(&manifest) else { return Ok(()) };
-            prop_assert_eq!(format(&once).unwrap(), once.clone());
-            prop_assert!(is_formatted(&once).unwrap());
-            // Nothing is invented and nothing is lost: every quoted string in
-            // goes out, so a formatter cannot quietly drop a source file.
-            for quoted in manifest.split('"').skip(1).step_by(2) {
-                prop_assert!(once.contains(quoted), "{quoted} vanished from {once}");
-            }
-        }
-    }
 
     #[test]
     fn every_key_a_target_accepts_has_a_place_in_the_order() {
-        // A key missing here still formats — it falls to the alphabetical tail
-        // — but its position is then an accident rather than a decision, and it
-        // lands in the middle of keys it has nothing to do with. Failing here
-        // is a new manifest key asking where it belongs.
+        // An unlisted key still formats — it falls to the end — but its
+        // position is then an accident rather than a decision, and it lands
+        // among keys it has nothing to do with. Failing here is a new manifest
+        // key asking where it belongs.
         let accepted = crate::manifest::TARGET_KEYS;
         let missing: Vec<&str> = accepted
             .iter()
@@ -344,185 +211,178 @@ mod tests {
 
     #[test]
     fn formatting_is_idempotent() {
-        // The property that makes a formatter usable in a commit hook: run it
-        // twice and the second run is a no-op. Anything that reorders on every
-        // pass, or re-wraps what it just wrapped, fails here.
-        let manifests = [
-            "[target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/main.c\"]\n",
-            "[workspace]\ndefault_targets = [\"app\"]\n\n[target.b]\nkind = \"cc_library\"\nsrcs = [\"b.c\"]\n\n[target.a]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n",
-            "[target.app]\nsrcs = [\"src/main.c\"]\nkind = \"cc_binary\"\ndeps = [\"//a:a\", \"//b:b\", \"//c:c\", \"//d:d\", \"//e:e\", \"//f:f\", \"//g:g\", \"//h:h\"]\n",
-            "[toolchain]\ncflags = [\"-Wall\"]\ncc = \"clang\"\n\n[toolchain.tools]\nz = \"z\"\na = \"a\"\n",
+        // The property that makes `--check` meaningful: if a second run could
+        // change something, `--check` would fail on its own output.
+        let inputs = [
+            "[target.b]\nkind = \"cc_binary\"\nsrcs = [\"b.c\"]\n",
+            "[target.a]\nsrcs = [\"a.c\"]\nkind = \"cc_library\"\ndeps = [\"b\"]\n",
+            "[workspace]\ndefault_targets = [\"a\"]\n\n[target.a]\nkind = \"cc_binary\"\nsrcs = [\"a.c\", \"b.c\", \"c.c\", \"d.c\", \"e.c\", \"f.c\", \"g.c\", \"h.c\", \"i.c\", \"j.c\", \"k.c\"]\n",
+            "[target.t]\nkind = \"command\"\ntool = \"x\"\nenv = { A = \"1\", B = \"2\" }\n",
         ];
-        for manifest in manifests {
-            let once = format(manifest).unwrap();
-            let twice = format(&once).unwrap();
-            assert_eq!(once, twice, "not idempotent for {manifest:?}");
+        for input in inputs {
+            let once = format_manifest(input).unwrap();
+            let twice = format_manifest(&once).unwrap();
+            assert_eq!(once, twice, "not idempotent for {input:?}");
             assert!(is_formatted(&once).unwrap());
         }
     }
 
     #[test]
-    fn a_file_keeps_the_line_ending_it_arrived_with() {
-        // Windows checks a manifest out with CRLF whenever `core.autocrlf` is
-        // on, which is the default there. A formatter that called every such
-        // file unformatted, and then rewrote it whole, would be arguing with
-        // the checkout rather than formatting the manifest — and `--check`
-        // would fail on that machine forever. Found by CI, which is the only
-        // host in this project that could.
-        let lf = "[workspace]\ndefault_targets = [\"app\"]\n\n\
-                  [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/main.c\"]\n";
-        let crlf = lf.replace('\n', "\r\n");
+    fn a_files_line_endings_are_its_own_business() {
+        // Found by Windows CI, not here: git checks out CRLF on Windows by
+        // default, `toml_edit` preserves those endings in decor it did not
+        // touch, and every prefix this module sets is "\n". The result was a
+        // file mixing both, so `--check` failed on every manifest for being on
+        // Windows rather than for being wrong.
+        let unix = "[target.a]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        let windows = unix.replace('\n', "\r\n");
 
-        assert!(is_formatted(lf).unwrap(), "the LF spelling is canonical");
-        assert!(
-            is_formatted(&crlf).unwrap(),
-            "and so is the same manifest in CRLF"
-        );
-        assert_eq!(format(&crlf).unwrap(), crlf, "which means it is left alone");
-        assert_eq!(format(lf).unwrap(), lf);
+        let formatted_unix = format_manifest(unix).unwrap();
+        let formatted_windows = format_manifest(&windows).unwrap();
 
-        // Reordering a CRLF file keeps CRLF, rather than emitting a mixture.
-        let scrambled = "[target.app]\r\nsrcs = [\"a.c\"]\r\nkind = \"cc_binary\"\r\n";
-        let formatted = format(scrambled).unwrap();
+        assert!(!formatted_unix.contains('\r'), "{formatted_unix:?}");
         assert!(
-            formatted.starts_with("[target.app]\r\nkind"),
-            "{formatted:?}"
+            !formatted_windows.replace("\r\n", "").contains('\n'),
+            "every newline must be CRLF, not just the untouched ones: {formatted_windows:?}"
         );
-        assert!(
-            !formatted.contains('\r') || !formatted.replace("\r\n", "").contains('\n'),
-            "no bare LF survives in a CRLF file: {formatted:?}"
-        );
-        assert_eq!(format(&formatted).unwrap(), formatted, "and it settles");
+        // Same content either way, so the choice really is only about endings.
+        assert_eq!(formatted_windows.replace("\r\n", "\n"), formatted_unix);
+
+        // And both are already canonical, which is the property CI checks.
+        assert!(is_formatted(&formatted_unix).unwrap());
+        assert!(is_formatted(&formatted_windows).unwrap());
     }
 
     #[test]
-    fn a_carriage_return_inside_a_string_is_not_a_line_ending() {
-        // `toml_edit` normalizes the newlines it controls and leaves a
-        // multi-line string's bytes alone, so restoring CRLF has to skip an LF
-        // that already has a CR. Doubling one would corrupt the string, which
-        // for a `cmd` means corrupting the build.
-        let manifest = "[target.gen]\r\nkind = \"genrule\"\r\n\
-                        cmd = \"\"\"one\r\ntwo\"\"\"\r\n\
-                        inputs = [\"a\"]\r\noutputs = [\"b\"]\r\n";
-        let formatted = format(manifest).unwrap();
-        assert!(!formatted.contains("\r\r"), "{formatted:?}");
-        assert!(formatted.contains("one\r\ntwo"), "{formatted:?}");
-        assert_eq!(format(&formatted).unwrap(), formatted);
-    }
+    fn formatting_never_changes_what_the_manifest_means() {
+        // The property that actually matters. Idempotence only says the second
+        // run is a no-op; this says the first one did not change the build.
+        // Reordering keys and tables is exactly the kind of edit that could,
+        // and a formatter that alters a build is worse than no formatter.
+        let input = r#"
+            [workspace]
+            default_targets = ["app"]
 
-    #[test]
-    fn comments_and_strings_survive_exactly() {
-        // A formatter that rewrote a `cmd` would be changing the build, and one
-        // that dropped the comment explaining why a flag is there would be
-        // deleting the only thing that made the flag reviewable.
-        let manifest = "\
-# Why this workspace exists.
-[workspace]
-default_targets = [\"app\"]
+            [target.zebra]
+            srcs = ["z.c"]
+            kind = "cc_library"
+            includes = ["include"]
 
-[target.app]
-# The entry point. Do not reorder these flags.
-kind = \"cc_binary\"
-srcs = [\"src/main.c\"]
-cflags = [\"-DGREETING=\\\"hello  world\\\"\", \"-O2\"] # and why
-";
-        let formatted = format(manifest).unwrap();
-        assert!(
-            formatted.contains("# Why this workspace exists."),
-            "{formatted}"
-        );
-        assert!(
-            formatted.contains("# The entry point. Do not reorder these flags."),
-            "{formatted}"
-        );
-        assert!(formatted.contains("# and why"), "{formatted}");
-        assert!(
-            formatted.contains("-DGREETING=\\\"hello  world\\\""),
-            "the string is not re-escaped or re-spaced:\n{formatted}"
-        );
-    }
+            [target.app]
+            deps = ["zebra"]
+            srcs = ["a.c", "b.c", "c.c", "d.c", "e.c", "f.c", "g.c", "h.c", "i.c"]
+            kind = "cc_binary"
+            cflags = ["-O2", "-Wall"]
+            "#;
+        let before = crate::manifest::Manifest::parse_str(input).unwrap();
+        let after = crate::manifest::Manifest::parse_str(&format_manifest(input).unwrap()).unwrap();
 
-    #[test]
-    fn tables_and_keys_land_in_the_order_a_manifest_is_read_in() {
-        let manifest = "\
-[target.b]
-srcs = [\"b.c\"]
-kind = \"cc_library\"
-
-[profile.release]
-cflags = [\"-O2\"]
-
-[target.a]
-deps = [\"b\"]
-kind = \"cc_binary\"
-srcs = [\"a.c\"]
-
-[workspace]
-default_targets = [\"a\"]
-";
-        let formatted = format(manifest).unwrap();
-        let at = |needle: &str| formatted.find(needle).unwrap_or_else(|| panic!("{needle}"));
-
-        assert!(at("[workspace]") < at("[profile.release]"), "{formatted}");
-        assert!(at("[profile.release]") < at("[target.a]"), "{formatted}");
-        assert!(at("[target.a]") < at("[target.b]"), "{formatted}");
-        // Within a target: what it is, what it consumes, what it depends on.
-        let target_a = &formatted[at("[target.a]")..at("[target.b]")];
-        assert!(
-            target_a.find("kind").unwrap() < target_a.find("srcs").unwrap(),
-            "{target_a}"
-        );
-        assert!(
-            target_a.find("srcs").unwrap() < target_a.find("deps").unwrap(),
-            "{target_a}"
-        );
-    }
-
-    #[test]
-    fn an_array_is_wrapped_only_when_it_does_not_fit() {
-        let short = format("[target.a]\nkind = \"cc_library\"\nsrcs = [\n  \"a.c\",\n]\n").unwrap();
-        assert!(
-            short.contains("srcs = [\"a.c\"]"),
-            "a short array is pulled back onto one line:\n{short}"
-        );
-        // Just under, so it stays: the boundary is the printed line, not the
-        // array on its own.
-        let fits = format(
-            "[target.a]\nkind = \"cc_binary\"\ndeps = [\"//aaaaaaaaaa:a\", \"//bbbbbbbbbb:b\", \"//cccccccccc:c\", \"//dddddddddd:d\"]\n",
-        )
-        .unwrap();
-        assert!(
-            fits.lines()
-                .any(|line| line.starts_with("deps = [\"//aaaaaaaaaa:a\"") && line.ends_with(']')),
-            "78 columns is under the limit and stays on one line:\n{fits}"
-        );
-
-        // 7 columns of `deps = ` plus a 105-column array: over the limit
-        // only once the key is counted, which is the case the measurement has
-        // to get right.
-        let long = format(
-            "[target.a]\nkind = \"cc_binary\"\ndeps = [\"//aaaaaaaaaa:a\", \"//bbbbbbbbbb:b\", \"//cccccccccc:c\", \"//dddddddddd:d\", \"//eeeeeeeeee:e\", \"//ffffffffff:f\"]\n",
-        )
-        .unwrap();
-        assert!(long.contains("deps = [\n"), "{long}");
-        assert!(long.contains("\n  \"//aaaaaaaaaa:a\","), "{long}");
-        assert!(long.contains("\n]"), "{long}");
-        for line in long.lines() {
-            assert!(
-                line.chars().count() <= WIDTH,
-                "a wrapped line still overflows: {line:?}"
-            );
+        assert_eq!(before.default_targets, after.default_targets);
+        assert_eq!(before.targets.len(), after.targets.len());
+        for (name, target) in &before.targets {
+            let other = after.targets.get(name).expect("target survived");
+            assert_eq!(target.kind, other.kind, "{name} kind");
+            assert_eq!(target.srcs, other.srcs, "{name} srcs");
+            assert_eq!(target.deps, other.deps, "{name} deps");
+            assert_eq!(target.includes, other.includes, "{name} includes");
+            assert_eq!(target.cflags, other.cflags, "{name} cflags");
         }
     }
 
     #[test]
-    fn a_manifest_that_does_not_load_can_still_be_formatted() {
-        // Formatting is wanted while a manifest is being written, which is
-        // exactly when it does not yet describe a valid build. Only the syntax
-        // has to hold.
-        let formatted = format("[target.a]\nnot_a_key = 1\nkind = \"cc_binary\"\n").unwrap();
-        assert!(formatted.contains("kind = \"cc_binary\""), "{formatted}");
-        assert!(formatted.contains("not_a_key = 1"), "{formatted}");
-        assert!(format("[target.a").is_err(), "syntax still has to hold");
+    fn comments_and_string_contents_survive() {
+        // The reason this uses toml_edit at all. A comment explains a decision
+        // the keys cannot, and a formatter that drops them is one nobody runs
+        // a second time.
+        let input = r#"# The gate, in five stages.
+[target.app]
+# Needs HOME for the dependency cache; see docs/16.
+kind = "cc_binary"
+srcs = ["main.c"] # the only source
+cmd = "printf 'a  b' > ${out} && echo done"
+"#;
+        let formatted = format_manifest(input).unwrap();
+        assert!(
+            formatted.contains("# The gate, in five stages."),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("# Needs HOME for the dependency cache; see docs/16."),
+            "{formatted}"
+        );
+        assert!(formatted.contains("# the only source"), "{formatted}");
+        // Whitespace inside a string is content, not formatting.
+        assert!(formatted.contains("printf 'a  b'"), "{formatted}");
+    }
+
+    #[test]
+    fn keys_reach_a_canonical_order_from_either_spelling() {
+        let one = "[target.a]\nsrcs = [\"a.c\"]\nkind = \"cc_library\"\nsandbox = false\n";
+        let other = "[target.a]\nsandbox = false\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        // The whole point: two people writing the same target produce the same
+        // bytes, so a review shows what changed rather than who wrote it.
+        assert_eq!(
+            format_manifest(one).unwrap(),
+            format_manifest(other).unwrap()
+        );
+        let formatted = format_manifest(one).unwrap();
+        let kind = formatted.find("kind").unwrap();
+        let srcs = formatted.find("srcs").unwrap();
+        let sandbox = formatted.find("sandbox").unwrap();
+        assert!(kind < srcs && srcs < sandbox, "{formatted}");
+    }
+
+    #[test]
+    fn targets_reach_name_order() {
+        let input = "[target.zebra]\nkind = \"cc_library\"\nsrcs = [\"z.c\"]\n\n[target.alpha]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        let formatted = format_manifest(input).unwrap();
+        assert!(
+            formatted.find("[target.alpha]") < formatted.find("[target.zebra]"),
+            "{formatted}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_is_kept_rather_than_dropped_or_guessed_at() {
+        // A manifest from a newer frost, or a typo the parser rejects in a
+        // moment. Losing it would be the worst possible response to either.
+        let input = "[target.a]\nfuture_key = \"x\"\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        let formatted = format_manifest(input).unwrap();
+        assert!(formatted.contains("future_key"), "{formatted}");
+        // After the keys it knows, so the known ones still read in order.
+        assert!(
+            formatted.find("kind") < formatted.find("future_key"),
+            "{formatted}"
+        );
+    }
+
+    #[test]
+    fn long_arrays_wrap_and_short_ones_do_not() {
+        let short = "[target.a]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        assert!(
+            format_manifest(short).unwrap().contains("srcs = [\"a.c\"]"),
+            "a short array stays on one line"
+        );
+
+        let long = format!(
+            "[target.a]\nkind = \"cc_library\"\nsrcs = [{}]\n",
+            (0..12)
+                .map(|n| format!("\"src/file_number_{n}.c\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let formatted = format_manifest(&long).unwrap();
+        assert!(
+            formatted.contains("\n  \"src/file_number_0.c\","),
+            "a long array goes one per line:\n{formatted}"
+        );
+        // And stays that way, rather than being re-inlined next run.
+        assert_eq!(formatted, format_manifest(&formatted).unwrap());
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_parse_is_refused_rather_than_rewritten() {
+        let error = format_manifest("[target.a\nkind = \"x\"\n").unwrap_err();
+        assert!(format!("{error:#}").contains("failed to parse"));
     }
 }

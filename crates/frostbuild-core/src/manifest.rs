@@ -1220,34 +1220,28 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     })
 }
 
-/// Every manifest file this workspace is made of, workspace-relative, root
-/// first and the rest sorted.
+/// Every nested package manifest, absolute, or none when the root does not
+/// declare a `[workspace]`.
 ///
-/// [`Manifest::manifest_paths`] answers the same question and is authoritative,
-/// but only for a workspace that loads. `frost fmt` runs on manifests that do
-/// not — a half-typed one is when formatting is most wanted — so this answer is
-/// derived from the directory tree and the root's `[workspace]` declaration,
-/// which needs no target to be valid.
-pub fn discover_manifests(workspace_root: &Path) -> Result<Vec<PathBuf>> {
-    let root = workspace_root.join(MANIFEST_FILE);
-    if !root.is_file() {
-        bail!(
-            "no {MANIFEST_FILE} in {}. run `frost init` to write one, \
-             or `-C <dir>` to work somewhere else",
-            workspace_root.display()
-        );
+/// Gated on the declaration for the same reason loading is: without it, the
+/// subdirectories of a repository are not its packages, and a tool that walked
+/// into them anyway would rewrite the sample workspaces from the root.
+pub fn package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(root.join(MANIFEST_FILE))
+        .with_context(|| format!("failed to read {}", root.join(MANIFEST_FILE).display()))?;
+    let declares_workspace = toml::from_str::<toml::Value>(&text)
+        .map(|value| value.get("workspace").is_some())
+        .unwrap_or(false);
+    if !declares_workspace {
+        return Ok(Vec::new());
     }
-    // Without `[workspace]` the root manifest is the whole workspace, and a
-    // `frost.toml` in a subdirectory belongs to something else.
-    if !declares_workspace(&root) {
-        return Ok(vec![PathBuf::from(MANIFEST_FILE)]);
-    }
-    let mut paths = discover_package_manifests(workspace_root)?;
-    paths.sort();
-    if let Some(at) = paths.iter().position(|p| p == Path::new(MANIFEST_FILE)) {
-        paths[..=at].rotate_right(1);
-    }
-    Ok(paths)
+    let mut found = discover_package_manifests(root)?;
+    found.sort();
+    Ok(found
+        .into_iter()
+        .filter(|rel| rel != Path::new(MANIFEST_FILE))
+        .map(|rel| root.join(rel))
+        .collect())
 }
 
 fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {

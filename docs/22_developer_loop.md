@@ -338,38 +338,26 @@ features from the same server.
 ```bash
 frost fmt              # rewrite every frost.toml in the workspace
 frost fmt --check      # exit 1 if any of them would change
-frost fmt path.toml    # one file, for format-on-save
 frost lint             # patterns that load fine and go wrong later
-frost lint --json      # the same findings, one object per line
+frost lint --json      # the same findings, machine-readable
 ```
 
-`frost fmt` canonicalizes what a manifest cannot express an opinion about:
-table order, key order within a table, and whether an array fits on one line.
-Comments and string literals come through byte for byte — a comment travels
-with the key it was written above, which is what makes reordering safe to run
-on a hand-organized file. It works on a manifest that does not load, which is
-the state a manifest is in for most of the time it is being edited and the
-moment formatting is most wanted. Running it twice changes nothing the first
-run did not, and a property test over generated manifests holds it to that.
+Both are described where the manifest is:
+[06_manifest_spec.md](06_manifest_spec.md#frost-fmt) for the canonical form and
+[the rules](06_manifest_spec.md#frost-lint) for what `lint` reports and what
+`lint_allow` accepts. What belongs here is how they fit the loop: both exit `1`
+on a finding and `2` only when the workspace could not be read, so a CI job is
+the command and nothing else, and neither needs a build to answer.
 
-A file keeps the line ending it arrived with. `core.autocrlf` is on by default
-on Windows, so a manifest is checked out there with CRLF; a formatter that
-called every such file unformatted and then rewrote it whole would be arguing
-with the checkout rather than formatting the manifest. `*.toml` is deliberately
-not pinned in `.gitattributes`, so the Windows CI job keeps exercising that
-path — it is the only host in this project that can.
+One boundary worth knowing while editing: `frost fmt` works on a manifest that
+does not load. That is the state a manifest is in for most of the time it is
+being edited, and the moment formatting is most wanted — so it is `frost fmt`,
+not `frost lsp`, that an editor's format-on-save should reach for. The server
+deliberately implements no formatting of its own.
 
-`frost lint` reports what the parser cannot: a manifest that is valid and
-unwise. Every rule has a stable identifier, one sentence saying what it costs,
-and a legitimate exception — which is why each is a lint rather than an error,
-and why `lint_allow` exists on a target, recording an accepted cost next to the
-target that pays it rather than in a flag someone has to remember. The rules
-and the `--json` shape are in
-[06_manifest_spec.md](06_manifest_spec.md#frost-lint).
-
-Both are CI-shaped: `frost fmt --check` and `frost lint` exit `1` on a finding
-and `2` only when the workspace could not be read, so a job is the command and
-nothing else. This repository holds its own manifest to both in
-`this_repository_describes_its_own_build`, and its sample workspaces in
-`lint_is_quiet_on_a_workspace_with_nothing_to_say` — a linter whose own
-author's workspace fails it is one nobody else keeps on.
+A file also keeps the line ending it arrived with. `core.autocrlf` is on by
+default on Windows, so a manifest is checked out there with CRLF; a formatter
+that called every such file unformatted and then rewrote it whole would be
+arguing with the checkout rather than formatting the manifest. `*.toml` is
+deliberately not pinned in `.gitattributes`, so the Windows CI job keeps
+exercising that path — it is the only host in this project that can.

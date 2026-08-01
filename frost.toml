@@ -38,20 +38,11 @@
 
 [toolchain.tools]
 cargo = "cargo"
-npm = "npm"
 python3 = "python3"
+npm = "npm"
 
 [target.binaries]
 kind = "command"
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/**/*.rs",
-  "crates/**/*.toml",
-  "crates/**/*.json",
-  "crates/frostbuild-cli/assets/*",
-]
 tool = "cargo"
 # `cargo install` rather than `cargo build`, because a declared output has to be
 # a path Frost can name and `--out-dir` is still unstable; `--root` gives
@@ -70,6 +61,24 @@ args = [
   "--path",
   "crates/frostbuild-cli",
 ]
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+  "crates/**/*.json",
+  "crates/frostbuild-cli/assets/*",
+]
+# The binary names carry a host-specific suffix, so the file list cannot be
+# written down in a manifest that has to work on Windows too; owning the
+# directory is the honest description. Cargo's `.crates.toml` and
+# `.crates2.json` land beside it rather than in it.
+#
+# Always a release build. `${config}` is there because Frost isolates owned
+# trees per configuration, not because this target has a debug variant — a
+# debug frost is what `cargo build` is for.
+output_dirs = [".frost/self/${config}/bin"]
 # The daemon ships in the same archive, so it belongs in the same action: one
 # journal entry means the pair is never half-rebuilt.
 steps = [
@@ -86,15 +95,6 @@ steps = [
     "crates/frostbuild-daemon",
   ] },
 ]
-# The binary names carry a host-specific suffix, so the file list cannot be
-# written down in a manifest that has to work on Windows too; owning the
-# directory is the honest description. Cargo's `.crates.toml` and
-# `.crates2.json` land beside it rather than in it.
-#
-# Always a release build. `${config}` is there because Frost isolates owned
-# trees per configuration, not because this target has a debug variant — a
-# debug frost is what `cargo build` is for.
-output_dirs = [".frost/self/${config}/bin"]
 # Deliberately without HOME and PATH. Frost passes both through regardless;
 # naming them additionally makes them action-key material, and a two-minute
 # release build that misses whenever a shell exports a different PATH would pay
@@ -113,18 +113,11 @@ pass_env = [
   "HTTPS_PROXY",
   "NO_PROXY",
 ]
-sandbox = false
 timeout = 3600
+sandbox = false
 
 [target.clippy]
 kind = "test"
-inputs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "crates/**/*.rs",
-  "crates/**/*.toml",
-]
 tool = "cargo"
 args = [
   "clippy",
@@ -136,27 +129,34 @@ args = [
   "-D",
   "warnings",
 ]
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+]
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-sandbox = false
 timeout = 1800
+sandbox = false
 lint_allow = ["volatile-pass-env"]
 
 [target.fmt]
 kind = "test"
-inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
 tool = "cargo"
 args = ["fmt", "--all", "--", "--check"]
+inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 sandbox = false
 lint_allow = ["volatile-pass-env"]
 
 [target.python_test]
 kind = "test"
+tool = "python3"
+args = ["-m", "unittest", "discover", "-s", "tests"]
 # Narrow on purpose: this is the stage that shows the difference. Editing Rust
 # leaves it cached, which `scripts/check.sh` cannot do.
 inputs = ["frost.py", "tests/**/*.py"]
-tool = "python3"
-args = ["-m", "unittest", "discover", "-s", "tests"]
 pass_env = ["HOME", "PATH"]
 sandbox = false
 lint_allow = ["volatile-pass-env"]
@@ -170,6 +170,8 @@ lint_allow = ["volatile-pass-env"]
 
 [target.rust_test]
 kind = "test"
+tool = "cargo"
+args = ["test", "--workspace", "--all-targets", "--locked"]
 inputs = [
   "Cargo.toml",
   "Cargo.lock",
@@ -182,8 +184,6 @@ inputs = [
   "sample_multi/**/*",
   "sample_java/**/*",
 ]
-tool = "cargo"
-args = ["test", "--workspace", "--all-targets", "--locked"]
 # Frost clears the environment and supplies a deterministic baseline, so
 # everything cargo genuinely needs is named. Each one's present-or-absent value
 # is action-key material, which is what makes a toolchain change invalidate the
@@ -194,16 +194,18 @@ args = ["test", "--workspace", "--all-targets", "--locked"]
 # remote cache, and cargo cannot find a toolchain without them. The cost is
 # accepted rather than argued with, and every stage says so.
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
-# cargo reads a toolchain, a registry cache and a shared target directory, all
-# outside anything Frost declares.
-sandbox = false
 # A workspace-wide test run is the long pole; the default 300s ceiling is for a
 # single hanging test, not for this.
 timeout = 3600
+# cargo reads a toolchain, a registry cache and a shared target directory, all
+# outside anything Frost declares.
+sandbox = false
 lint_allow = ["volatile-pass-env"]
 
 [target.vscode_test]
 kind = "test"
+tool = "npm"
+args = ["--prefix", "tools/vscode", "test"]
 inputs = [
   "tools/vscode/package.json",
   "tools/vscode/package-lock.json",
@@ -211,13 +213,11 @@ inputs = [
   "tools/vscode/src/**/*.ts",
   "tools/vscode/test/**/*.ts",
 ]
-tool = "npm"
-args = ["--prefix", "tools/vscode", "test"]
 # The extension's own suite shells out to the release binary for its end-to-end
 # cases and skips when it is absent, so this stage does not depend on the Rust
 # stages. It does need `node_modules`, which is gitignored: run `npm ci` in
 # tools/vscode once.
 pass_env = ["HOME", "PATH"]
-sandbox = false
 timeout = 900
+sandbox = false
 lint_allow = ["volatile-pass-env"]

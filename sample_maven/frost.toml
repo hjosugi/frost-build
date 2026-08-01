@@ -28,9 +28,9 @@ mvn = "mvn"
 
 [target.package]
 kind = "command"
-inputs = ["pom.xml", "src/main/java/**/*.java"]
 tool = "mvn"
 args = ["-B", "package", "-Dfrost.buildDir=target/${config}"]
+inputs = ["pom.xml", "src/main/java/**/*.java"]
 output_dirs = ["target/${config}"]
 # Maven needs its local repository under HOME, a JDK, and this machine's proxy
 # configuration to reach the repositories. Each name's present-or-absent value

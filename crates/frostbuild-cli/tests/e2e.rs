@@ -442,7 +442,7 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
-fn this_repository_and_its_samples_pass_their_own_lint() {
+fn this_repository_and_its_samples_pass_their_own_lint_and_fmt() {
     // A rule that is not run against a real manifest is a rule nobody has
     // checked. Both false positives this rule set shipped with -- a generated
     // include directory reported as missing, and a `cc_test` reported as
@@ -473,11 +473,21 @@ fn this_repository_and_its_samples_pass_their_own_lint() {
                 finding.target, finding.message, finding.rule
             ));
         }
+        // And canonically formatted. Kept in one test because the answer to
+        // both is the same edit and the same file list.
+        let mut manifests = vec![root.join("frost.toml")];
+        manifests.extend(frostbuild_core::manifest::package_manifests(&root).unwrap());
+        for path in manifests {
+            let text = std::fs::read_to_string(&path).unwrap();
+            if !frostbuild_core::fmt::is_formatted(&text).unwrap() {
+                offenders.push(format!("{workspace}: {} is not canonical", path.display()));
+            }
+        }
     }
     assert_eq!(
         offenders,
         Vec::<String>::new(),
-        "fix the manifest, or record the accepted cost with lint_allow"
+        "run `frost fmt`, fix the manifest, or record the cost with lint_allow"
     );
 }
 
@@ -5455,18 +5465,9 @@ fn this_repository_describes_its_own_build() {
         "the binaries stage stopped watching the wrappers it embeds"
     );
 
-    // The other half of the dogfood: this manifest is held to what `frost fmt`
-    // says about a manifest, in the tree, not in a copy. Lint is the same idea
-    // and lives in `this_repository_and_its_samples_pass_their_own_lint`.
-    for relative in frostbuild_core::manifest::discover_manifests(&repo).expect("the manifest set")
-    {
-        let text = std::fs::read_to_string(repo.join(&relative)).expect("read manifest");
-        assert!(
-            frostbuild_core::fmt::is_formatted(&text).expect("format it"),
-            "{} is not formatted; run `frost fmt`",
-            relative.display()
-        );
-    }
+    // What `frost fmt` and `frost lint` say about this manifest is asserted in
+    // `this_repository_and_its_samples_pass_their_own_lint_and_fmt`, against the
+    // files in the tree and across every workspace this repository ships.
 }
 
 // ---------------------------------------------------------------------------
@@ -6396,7 +6397,10 @@ fn fmt_reaches_every_package_of_a_workspace() {
 
     let (ok, out) = ws.frost(&["fmt", "--check"]);
     assert!(!ok, "{out}");
-    assert!(out.contains("core/frost.toml: not formatted"), "{out}");
+    // The point of the test: `--check` from the root reached into a package
+    // rather than stopping at the root manifest. The wording around the name
+    // is not contract, so only the name is asserted.
+    assert!(out.contains("core/frost.toml"), "{out}");
 
     assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
     assert_eq!(exit_code(&ws.dir, &["fmt", "--check"]), 0);

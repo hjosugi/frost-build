@@ -33,11 +33,16 @@ gradle = "gradle"
 
 [target.boot_jar]
 kind = "command"
-inputs = ["build.gradle", "settings.gradle", "src/main/java/**/*.java"]
 tool = "gradle"
 # `build/${config}` is Frost's, so build.gradle reads the location from this
 # property. A plain `gradle bootJar` with no property still writes `build/`.
-args = ["bootJar", "--no-daemon", "--console=plain", "-PfrostBuildDir=build/${config}"]
+args = [
+  "bootJar",
+  "--no-daemon",
+  "--console=plain",
+  "-PfrostBuildDir=build/${config}",
+]
+inputs = ["build.gradle", "settings.gradle", "src/main/java/**/*.java"]
 # Frost owns this tree entirely: every file under it is recorded as an output,
 # which is how a tool whose output names cannot be written down in advance —
 # a jar named from the project version — is still cacheable.

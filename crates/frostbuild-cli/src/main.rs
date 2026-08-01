@@ -523,6 +523,13 @@ enum Cmd {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Rewrite frost.toml in its canonical form
+    Fmt {
+        /// Report whether anything would change and exit non-zero if so,
+        /// without writing. For CI
+        #[arg(long)]
+        check: bool,
+    },
     /// Report manifest patterns that build but cost something later
     Lint {
         /// Emit findings as one machine-readable JSON object
@@ -623,16 +630,6 @@ enum Cmd {
         /// Workspace-relative output wheel (must use the standard wheel filename)
         #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
-    },
-    /// Rewrite every frost.toml in the workspace in canonical form
-    Fmt {
-        /// Report what is unformatted and change nothing; exit 1 if any file
-        /// would change, so CI can require formatting without a second tool
-        #[arg(long)]
-        check: bool,
-        /// Format these manifests instead of the whole workspace
-        #[arg(value_hint = ValueHint::FilePath)]
-        paths: Vec<PathBuf>,
     },
     /// Speak the Language Server Protocol for frost.toml on stdin/stdout
     Lsp,
@@ -1768,7 +1765,6 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Cmd::Fmt { check, paths } => run_fmt(&root, check, &paths),
         Cmd::Lsp => lsp::serve(&root),
         Cmd::Init {
             dry_run,
@@ -1783,6 +1779,7 @@ fn run(cli: Cli) -> Result<i32> {
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => run_query(&root, &function),
+        Cmd::Fmt { check } => run_fmt(&root, check),
         Cmd::Lint { json } => run_lint(&root, json),
         Cmd::Journal { command } => match command {
             JournalCmd::Export {
@@ -4309,6 +4306,52 @@ fn parse_test_options(
 /// environment, the toolchain fingerprint is computed per run, and the profile
 /// and platform come from this invocation. Only together do they explain a
 /// cache miss.
+/// Rewrite every manifest in the workspace in canonical form.
+///
+/// Nested package manifests are included: a workspace where only the root is
+/// formatted is one where `--check` passes and the packages still drift.
+fn run_fmt(root: &std::path::Path, check: bool) -> Result<i32> {
+    let mut manifests = vec![root.join(frostbuild_core::manifest::MANIFEST_FILE)];
+    manifests.extend(frostbuild_core::manifest::package_manifests(root)?);
+
+    let mut changed = Vec::new();
+    for path in &manifests {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let formatted = frostbuild_core::fmt::format_manifest(&text)
+            .with_context(|| format!("failed to format {}", path.display()))?;
+        if formatted == text {
+            continue;
+        }
+        changed.push(path.clone());
+        if !check {
+            std::fs::write(path, &formatted)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+    }
+
+    let relative = |path: &std::path::Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    if changed.is_empty() {
+        println!("fmt: {} manifest(s) already canonical", manifests.len());
+        return Ok(0);
+    }
+    for path in &changed {
+        println!("{}", relative(path));
+    }
+    if check {
+        println!("fmt: {} would change; run `frost fmt`", changed.len());
+        // The "your code" side of the exit-code split, like a failing lint.
+        return Ok(1);
+    }
+    println!("fmt: {} rewritten", changed.len());
+    Ok(0)
+}
+
 /// Report manifest patterns that parse, build, and cost something later.
 fn run_lint(root: &std::path::Path, json: bool) -> Result<i32> {
     let manifest = Manifest::load(root)?;
@@ -5027,74 +5070,6 @@ fn run_init(
     println!();
     println!("  read it before trusting it, then: frost build");
     Ok(0)
-}
-
-/// `frost fmt` and `frost fmt --check`.
-///
-/// `--check` exits 1 when a file would change, so a CI job is `frost fmt
-/// --check` and nothing else. Rewriting exits 0 whether or not anything moved:
-/// the request was "make these canonical", and they are.
-fn run_fmt(root: &std::path::Path, check: bool, paths: &[PathBuf]) -> Result<i32> {
-    let manifests = if paths.is_empty() {
-        frostbuild_core::manifest::discover_manifests(root)?
-    } else {
-        // An explicit path is taken as given: `frost fmt` on one file is how an
-        // editor's format-on-save reaches a manifest the workspace walk would
-        // not visit, and refusing it there would be refusing the useful case.
-        paths
-            .iter()
-            .map(|path| path.strip_prefix(root).unwrap_or(path).to_path_buf())
-            .collect()
-    };
-
-    let mut unformatted = Vec::new();
-    let mut rewritten = 0usize;
-    for relative in &manifests {
-        let absolute = root.join(relative);
-        let text = std::fs::read_to_string(&absolute)
-            .with_context(|| format!("failed to read {}", relative.display()))?;
-        let formatted = frostbuild_core::fmt::format(&text)
-            .with_context(|| format!("failed to format {}", relative.display()))?;
-        if formatted == text {
-            continue;
-        }
-        if check {
-            unformatted.push(relative.clone());
-        } else {
-            std::fs::write(&absolute, &formatted)
-                .with_context(|| format!("failed to write {}", relative.display()))?;
-            println!("frost: formatted {}", display_path(relative));
-            rewritten += 1;
-        }
-    }
-
-    if check {
-        if unformatted.is_empty() {
-            return Ok(0);
-        }
-        for relative in &unformatted {
-            println!("{}: not formatted", display_path(relative));
-        }
-        println!();
-        println!("  run `frost fmt` to rewrite {} of them", unformatted.len());
-        return Ok(1);
-    }
-    if rewritten == 0 {
-        println!(
-            "frost: {} already formatted",
-            match manifests.len() {
-                1 => "1 manifest".to_string(),
-                n => format!("all {n} manifests"),
-            }
-        );
-    }
-    Ok(0)
-}
-
-/// A workspace-relative path with forward slashes, so output is the same
-/// wherever it is read.
-fn display_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 fn report_wrapper(written: &[std::path::PathBuf], version: &str) {

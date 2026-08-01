@@ -43,16 +43,15 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
-- `frost fmt`, so a manifest has one canonical rendering. It orders tables and
-  keys and wraps an array that does not fit, while passing comments and string
-  literals through byte for byte — a comment travels with the key it was written
-  above, which is what makes reordering safe on a hand-organized file. It keeps
-  the line ending a file arrived with, so a Windows checkout is not rewritten
-  whole on every run. It works on a manifest that does not load, since that is
-  the state a manifest is in for most of the time it is being edited and the
-  moment formatting is most wanted. `--check` exits 1 without writing, so a CI
-  job is the command and nothing else, and a property test over generated
-  manifests holds it to a fixed point in two runs.
+- `frost fmt` and `frost fmt --check`, which rewrite every manifest in the
+  workspace in one canonical form: a fixed key order inside each target, targets
+  in name order, and arrays inline when short and one-per-line when long.
+  Comments and string contents are preserved — a comment explains a decision the
+  keys cannot, and a formatter that dropped them is one nobody runs twice. Two
+  properties are tested rather than claimed: formatting is idempotent, without
+  which `--check` could fail on its own output, and it never changes what the
+  manifest means, which is the property reordering keys and tables could
+  plausibly break.
 
 - `frost lint`, and a `lint_allow` manifest key. It reports patterns that parse,
   build and cost something later: a target nothing reaches, an `-I` pointing at
