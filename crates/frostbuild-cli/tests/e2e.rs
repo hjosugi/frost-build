@@ -4686,3 +4686,147 @@ fn this_repository_describes_its_own_build() {
         "build output is not input"
     );
 }
+
+// ---------------------------------------------------------------------------
+// --report: one build, explained in one file.
+// ---------------------------------------------------------------------------
+
+/// A report is only useful if it can be handed to someone and opened. Anything
+/// fetched from elsewhere makes it a page that needs the network to be read,
+/// so the property is asserted against the bytes frost actually wrote.
+fn assert_self_contained(html: &str) {
+    for reference in [
+        "http://",
+        "https://",
+        "src=\"//",
+        "href=\"//",
+        "@import",
+        "<script",
+        "<iframe",
+        "<img",
+    ] {
+        assert!(
+            !html.contains(reference),
+            "the report reaches outside itself with {reference:?}"
+        );
+    }
+    assert!(html.starts_with("<!doctype html>"), "not a whole document");
+    assert!(html.contains("<style>"), "styling has to be inline");
+}
+
+/// The `N` in `--stats`' "critical    N ms estimated" line.
+fn stats_critical_path_ms(stats_output: &str) -> &str {
+    stats_output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("critical"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("--stats prints an estimated critical path when something ran")
+}
+
+#[test]
+fn a_report_shows_the_same_build_stats_printed() {
+    let ws = Workspace::multi("report-stats");
+
+    let (ok, out) = ws.frost(&[
+        "build", "--no-tui", "--stats", "--report", "--trace", "t.json",
+    ]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("frost: report "),
+        "the report has to say where it landed:\n{out}"
+    );
+
+    let report = ws.dir.join(".frost/report/host-debug.html");
+    let html = std::fs::read_to_string(&report).expect("the default report path");
+    assert_self_contained(&html);
+
+    // Two renderings of one run. Where they overlap they have to agree, or one
+    // of them is describing a build that did not happen.
+    let critical = stats_critical_path_ms(&out);
+    assert!(
+        html.contains(&format!("{critical} ms estimated before the run")),
+        "the report's critical path disagrees with --stats ({critical} ms):\n{html}"
+    );
+    for fragment in [
+        "utilization",
+        "<h2>Critical path</h2>",
+        "<h2>Slowest actions that ran</h2>",
+        "<h2>Cache, by kind of work</h2>",
+        "<h2>Why work ran</h2>",
+        "not built before",
+        "compile",
+        "link",
+    ] {
+        assert!(
+            html.contains(fragment),
+            "the report omits {fragment}:\n{html}"
+        );
+    }
+    // The trace is the timeline and the report is the summary; the report
+    // points at it with a relative link, so copying the pair keeps it working.
+    assert!(html.contains("href=\"../../t.json\""), "{html}");
+    assert!(ws.dir.join("t.json").exists());
+
+    // A warm build reports being warm rather than reporting zeroes.
+    let (ok, out) = ws.frost(&["build", "--no-tui", "--report"]);
+    assert!(ok, "{out}");
+    let warm = std::fs::read_to_string(&report).expect("the report is rewritten");
+    assert_self_contained(&warm);
+    assert!(warm.contains("Nothing ran"), "{warm}");
+    assert!(
+        !warm.contains("<h2>Slowest actions that ran</h2>"),
+        "nothing ran, so nothing was slowest:\n{warm}"
+    );
+    assert!(
+        warm.contains("100% of the closure"),
+        "a fully cached closure is worth saying plainly:\n{warm}"
+    );
+}
+
+#[test]
+fn a_failing_build_still_writes_a_report_naming_the_failure() {
+    // This is the build whose report someone actually wants, so it is written
+    // before the nonzero exit rather than skipped along with the success path.
+    let ws = Workspace::new("report-failure");
+    ws.write(
+        "src/util.c",
+        "#include \"util.h\"\nint util(void) { return \"deliberate type error\"; }\n",
+    );
+
+    let (ok, out) = ws.frost(&["build", "--no-tui", "-k", "--report=fail.html"]);
+    assert!(!ok, "the build was supposed to fail:\n{out}");
+    assert!(out.contains("frost: report "), "{out}");
+
+    let html = std::fs::read_to_string(ws.dir.join("fail.html")).expect("the report");
+    assert_self_contained(&html);
+    assert!(html.contains("<h2>Failures</h2>"), "{html}");
+    assert!(html.contains("src/util.c"), "{html}");
+    // The compiler's own words, escaped rather than dropped: a report that
+    // says "it failed" without them sends the reader back to the terminal.
+    assert!(
+        html.contains("deliberate type error") || html.contains("error"),
+        "the failure output tail is missing:\n{html}"
+    );
+}
+
+#[test]
+fn a_test_report_counts_shards_as_slices_of_their_test() {
+    let ws = Workspace::multi("report-tests");
+    let manifest = ws.dir.join("core/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("core_test"), "{text}");
+    std::fs::write(&manifest, format!("{text}shard_count = 3\n")).unwrap();
+
+    let (ok, out) = ws.frost(&["test", "--all", "--no-tui", "--report=tests.html"]);
+    assert!(ok, "{out}");
+
+    let html = std::fs::read_to_string(ws.dir.join("tests.html")).expect("the report");
+    assert_self_contained(&html);
+    assert!(html.contains("<h2>Tests</h2>"), "{html}");
+    for shard in ["0/3", "1/3", "2/3"] {
+        assert!(
+            html.contains(&format!("<td class=\"dim\">{shard}</td>")),
+            "shard {shard} is missing from the report:\n{html}"
+        );
+    }
+}

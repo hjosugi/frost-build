@@ -220,3 +220,50 @@ gate, and Cargo's own incrementality is what makes that affordable.
 
 `scripts/check.sh` stays, and CI takes it: it is the path that requires no
 frost, which the bootstrap case still needs.
+
+## Explain one build, in one file
+
+```bash
+frost build --report                       # .frost/report/<platform>-<profile>.html
+frost build --report=build.html --trace t.json
+frost test --all --report=tests.html
+```
+
+`--report` writes a self-contained HTML file: the critical path with each
+action's measured duration, the cache breakdown per kind of work, the slowest
+actions that ran, the invalidation reasons grouped by `--explain`'s vocabulary,
+the test results including shards, and the failing actions with the tail of
+their output. No server, no network, no JavaScript, no external stylesheet —
+it opens from `file://` and survives being attached to a message.
+
+The three views divide as follows. `--stats` is the counters, for a terminal.
+`--trace` is the raw timeline, for `chrome://tracing`, and when both are asked
+for the report links to it relatively so the pair can be copied together.
+`--report` is the summary — the one meant to be handed to someone else, which
+is what `chrome://tracing`'s "open this in the right tool first" makes a Chrome
+trace bad at. Comparing *across* builds is not this file's job; that is
+`frost journal export` / `diff`.
+
+Nothing here is measured for the report's benefit. The critical path is the one
+the scheduler used to order its ready queue, the durations are the journal's,
+and the reasons are the strings `--explain` prints. Rendering happens after the
+build has been timed, summarized and had its failures printed, so it cannot
+move a number it goes on to show.
+
+It does have one cost, and it is not the rendering. `--report` forgoes the
+no-op certificate, because a certificate answers "nothing to do" without ever
+planning a build and so has nothing to report. On a 1000-action workspace that
+is about 10 ms on an otherwise 7 ms no-op; rendering itself is under a
+millisecond there, and inside the noise floor at every larger size:
+
+| scenario | build | rendering | `--report` total |
+|---|---|---|---|
+| clean | 2870 ms | +26 ms (+0.9%) | −73 ms (noise) |
+| incremental leaf | 56 ms | +1.1 ms (+2.1%) | −2.0 ms (noise) |
+| no-op | 7.3 ms | +0.3 ms (+1.7%) | +10.2 ms |
+
+Medians of 15 interleaved iterations, 4 workers, from
+`frost-bench report`; the run is `bench/baselines/2026-08-01-vm-report-overhead.json`,
+with its host metadata. The "rendering" column compares against `--stats`,
+which takes the same full check path without writing anything, so the
+certificate's absence is not attributed to the renderer.

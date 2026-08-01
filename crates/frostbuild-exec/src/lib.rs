@@ -379,6 +379,11 @@ pub enum Outcome {
 pub struct ActionResult {
     pub id: String,
     pub desc: String,
+    /// What sort of work this was, so a report can group by it rather than
+    /// re-deriving categories from the shape of an id.
+    pub kind: frostbuild_core::graph::ActionKind,
+    /// The target this action belongs to.
+    pub target: String,
     pub outcome: Outcome,
 }
 
@@ -389,6 +394,13 @@ pub struct BuildReport {
     /// Scheduling measurements, so two strategies can be compared from a
     /// single run rather than by wall-clock feel.
     pub stats: BuildStats,
+    /// Action ids along the estimated longest chain, in execution order.
+    ///
+    /// The scheduler computes this to order the ready queue; carrying it out
+    /// means a report can name the chain that bounded the build instead of
+    /// recomputing one that might not be the chain the scheduler used. Empty
+    /// when nothing ran, because then nothing bounded anything.
+    pub critical_path: Vec<String>,
 }
 
 /// What the chosen scheduler and estimator actually bought.
@@ -489,6 +501,9 @@ pub struct Engine<'a> {
     critical_path_ms: u64,
     critical_path: BTreeSet<usize>,
     critical_path_labels: Vec<String>,
+    /// The same chain as action ids, kept for the finished report. Only the
+    /// actions on the chain, so this costs nothing on a wide graph.
+    critical_path_ids: Vec<String>,
     estimated_work_ms: u64,
     toolchain_hash: String,
     /// Output-affecting environment captured once per invocation. Looking up
@@ -752,6 +767,7 @@ impl<'a> Engine<'a> {
             critical_path_ms: 0,
             critical_path: BTreeSet::new(),
             critical_path_labels: Vec::new(),
+            critical_path_ids: Vec::new(),
             estimated_work_ms: 0,
             toolchain_hash,
             key_env,
@@ -842,6 +858,8 @@ impl<'a> Engine<'a> {
             results.push(ActionResult {
                 id: action.id.clone(),
                 desc: action.desc.clone(),
+                kind: action.kind,
+                target: action.target.clone(),
                 outcome,
             });
         }
@@ -862,7 +880,11 @@ impl<'a> Engine<'a> {
             estimated_work_ms: self.estimated_work_ms,
             executed,
         };
-        let report = BuildReport { results, stats };
+        let report = BuildReport {
+            results,
+            stats,
+            critical_path: std::mem::take(&mut self.critical_path_ids),
+        };
         if let Some(progress) = progress {
             progress.emit(ProgressEvent::BuildFinished {
                 success: report.success(),
@@ -882,6 +904,14 @@ impl<'a> Engine<'a> {
             self.opts.scheduler,
             self.opts.estimator,
         );
+        // The ids are always carried: they are one string per action on the
+        // chain, not per action in the closure, and the finished report needs
+        // them whether or not anyone was watching the build happen.
+        self.critical_path_ids = plan
+            .critical_path
+            .iter()
+            .map(|&local| self.graph.actions[self.closure[local]].id.clone())
+            .collect();
         if self.opts.progress.is_some() {
             self.critical_path = plan.critical_path.iter().copied().collect();
             self.critical_path_labels = plan

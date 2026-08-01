@@ -27,6 +27,14 @@ from typing import Any
 SCHEMA = "frost-bench-standard-v2"
 STANDARD_SCENARIOS = ("clean", "noop", "incremental_leaf", "hot_header", "cache_hit_rebuild")
 SUPPORTED_TOOLS = ("ninja", "make", "frost", "bazel")
+REPORT_SCHEMA = "frost-bench-report-v1"
+REPORT_SCENARIOS = ("clean", "noop", "incremental_leaf")
+# Interleaved within each iteration, so drift on a noisy host lands on every
+# variant. Three of them, because `--report` costs two separable things: it
+# forgoes the no-op certificate (which answers without planning a build, and so
+# has nothing to report), and it renders. `no_certificate` takes the same full
+# check path without rendering, which separates the two.
+REPORT_VARIANTS = ("plain", "no_certificate", "report")
 JAVA_SCHEMA = "frost-bench-java-v1"
 JAVA_SCENARIOS = ("clean", "noop", "incremental_leaf")
 JAVA_TOOLS = (
@@ -2838,7 +2846,12 @@ def java_configuration_metrics(root: pathlib.Path, spec: ToolSpec, size: int) ->
     }
 
 
-def run_tool(root: pathlib.Path, spec: ToolSpec, jobs: int) -> float:
+def run_tool(
+    root: pathlib.Path,
+    spec: ToolSpec,
+    jobs: int,
+    extra_args: tuple[str, ...] = (),
+) -> float:
     if not spec.argv:
         raise FileNotFoundError(spec.name)
     if spec.name == "bazel":
@@ -2855,6 +2868,7 @@ def run_tool(root: pathlib.Path, spec: ToolSpec, jobs: int) -> float:
         cmd = [*spec.argv, "--jobs", str(max(1, jobs))]
     else:
         cmd = [*spec.argv, "-j", str(max(1, jobs))]
+    cmd.extend(extra_args)
     start = time.perf_counter()
     subprocess.run(cmd, cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return (time.perf_counter() - start) * 1000
@@ -5148,6 +5162,147 @@ def run_python_command(args: argparse.Namespace) -> int:
     return 1 if any(result["status"] == "failed" for result in report["results"]) else 0
 
 
+def report_variant_args(variant: str) -> tuple[str, ...]:
+    # The report path is under `.frost/`, so the written file is never itself
+    # a build input. `--stats` is on both non-plain variants because it also
+    # bypasses the no-op certificate: holding it fixed leaves rendering as the
+    # only difference between them.
+    if variant == "no_certificate":
+        return ("--stats",)
+    if variant == "report":
+        return ("--stats", "--report=.frost/bench-report.html")
+    return ()
+
+
+def measure_report_overhead(
+    root: pathlib.Path,
+    spec: ToolSpec,
+    size: int,
+    iterations: int,
+    jobs: int,
+    selected_scenarios: tuple[str, ...],
+) -> dict[str, Any]:
+    """Cost of `--report`, measured against the same build without it.
+
+    The report is rendered after the build has been timed and summarized, so
+    it cannot move the numbers it shows. That is a claim about where the code
+    runs; this is the claim about the clock, which is a different one. Each
+    scenario runs both variants alternately within one iteration, so a host
+    that drifts mid-run drifts under both.
+    """
+    if not spec.argv:
+        return {
+            "tool": spec.name,
+            "size": size,
+            "status": "skipped",
+            "reason": "frost executable was not found",
+            "scenarios": {},
+        }
+
+    scenarios: dict[str, Any] = {}
+    leaf = root / "src" / f"{target_name(size - 1)}.txt"
+
+    for scenario in selected_scenarios:
+        samples: dict[str, list[float]] = {variant: [] for variant in REPORT_VARIANTS}
+        if scenario == "noop":
+            # Seed the outputs, then let the cache settle, so every timed run
+            # measures the same fully-cached decision.
+            run_tool(root, spec, jobs)
+            run_tool(root, spec, jobs)
+        else:
+            run_tool(root, spec, jobs)
+        for _ in range(iterations):
+            for variant in REPORT_VARIANTS:
+                if scenario == "clean":
+                    clean_tool_outputs(root, spec, cache=True)
+                elif scenario == "incremental_leaf":
+                    append_marker(leaf, "leaf")
+                samples[variant].append(
+                    run_tool(root, spec, jobs, report_variant_args(variant))
+                )
+        measured = {variant: summarize(samples[variant]) for variant in REPORT_VARIANTS}
+        plain = measured["plain"]["median_ms"]
+        planned = measured["no_certificate"]["median_ms"]
+        with_report = measured["report"]["median_ms"]
+        # What a caller pays for asking for a report at all.
+        measured["delta_ms"] = round(with_report - plain, 3)
+        # What rendering costs, once the build was going to be planned anyway.
+        measured["render_delta_ms"] = round(with_report - planned, 3)
+        # Reported, not judged: what counts as noise is a property of the host
+        # the numbers were taken on, and belongs with them rather than here.
+        measured["delta_pct"] = round(100.0 * (with_report - plain) / plain, 3) if plain else None
+        measured["render_delta_pct"] = (
+            round(100.0 * (with_report - planned) / planned, 3) if planned else None
+        )
+        scenarios[scenario] = measured
+
+    return {
+        "tool": spec.name,
+        "version": tool_version(spec),
+        "size": size,
+        "status": "ok",
+        "iterations": iterations,
+        "jobs": jobs,
+        "target_count": size,
+        "graph": graph_contract(size),
+        "scenarios": scenarios,
+    }
+
+
+def run_report_command(args: argparse.Namespace) -> int:
+    requested = parse_csv(args.scenarios, valid=REPORT_SCENARIOS)
+    if not requested:
+        raise SystemExit("--scenarios must select at least one scenario")
+    selected = tuple(scenario for scenario in REPORT_SCENARIOS if scenario in requested)
+    if args.iterations <= 0:
+        raise SystemExit("--iterations must be positive")
+    if args.jobs <= 0:
+        raise SystemExit("--jobs must be positive")
+
+    environment = environment_snapshot()
+    spec = tool_specs(["frost"])[0]
+    sizes = parse_sizes(args.sizes)
+
+    if args.workdir:
+        base_workdir = pathlib.Path(args.workdir).resolve()
+        base_workdir.mkdir(parents=True, exist_ok=True)
+        temp_context = None
+    else:
+        temp_context = tempfile.TemporaryDirectory(prefix="frost-bench-report-")
+        base_workdir = pathlib.Path(temp_context.name)
+
+    results = []
+    try:
+        for size in sizes:
+            root = base_workdir / f"report-{size}"
+            generate_workspace(root, size)
+            results.append(
+                measure_report_overhead(root, spec, size, args.iterations, args.jobs, selected)
+            )
+    finally:
+        if temp_context is not None and not args.keep_workdir:
+            temp_context.cleanup()
+
+    report = {
+        "schema": REPORT_SCHEMA,
+        "suite": "report",
+        "generated_at": utc_now(),
+        "environment": environment,
+        "config": {
+            "sizes": sizes,
+            "iterations": args.iterations,
+            "jobs": args.jobs,
+            "scenarios": list(selected),
+            "variants": list(REPORT_VARIANTS),
+        },
+        "results": results,
+    }
+    if args.out:
+        write_report(pathlib.Path(args.out), report)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 1 if any(result["status"] == "failed" for result in report["results"]) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="FrostBuild benchmark harness")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -5331,6 +5486,23 @@ def main(argv: list[str] | None = None) -> int:
     python_parser.add_argument("--keep-workdir", action="store_true")
     python_parser.add_argument("--out")
     python_parser.set_defaults(func=run_python_command)
+
+    report_parser = sub.add_parser(
+        "report",
+        help="measure what --report costs, against the same build without it",
+    )
+    report_parser.add_argument("--sizes", default="1000")
+    report_parser.add_argument(
+        "--scenarios",
+        default=",".join(REPORT_SCENARIOS),
+        help="comma-separated clean, noop, incremental_leaf scenarios",
+    )
+    report_parser.add_argument("--iterations", type=int, default=7)
+    report_parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 2))
+    report_parser.add_argument("--workdir", help="directory for generated workspaces")
+    report_parser.add_argument("--keep-workdir", action="store_true")
+    report_parser.add_argument("--out", help="write JSON report to this path as well as stdout")
+    report_parser.set_defaults(func=run_report_command)
 
     args = parser.parse_args(argv)
     return args.func(args)

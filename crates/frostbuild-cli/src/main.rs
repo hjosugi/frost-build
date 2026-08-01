@@ -22,6 +22,7 @@ mod bazel;
 mod jar;
 mod npm;
 mod progress;
+mod report;
 mod wheel;
 mod wrapper;
 
@@ -120,6 +121,10 @@ enum Cmd {
         /// Write a Chrome/Perfetto trace JSON
         #[arg(long, value_hint = ValueHint::FilePath)]
         trace: Option<PathBuf>,
+        /// Write a self-contained HTML report of this build; `--report=PATH`
+        /// chooses where, plain `--report` writes under .frost/report/
+        #[arg(long, num_args = 0..=1, require_equals = true, value_name = "PATH", value_hint = ValueHint::FilePath)]
+        report: Option<Option<PathBuf>>,
         /// Report scheduling measurements: makespan, worker utilization and
         /// distance from the estimated critical path
         #[arg(long)]
@@ -327,6 +332,10 @@ enum Cmd {
         remote_timeout: u64,
         #[arg(long)]
         explain: bool,
+        /// Write a self-contained HTML report of this run; `--report=PATH`
+        /// chooses where, plain `--report` writes under .frost/report/
+        #[arg(long, num_args = 0..=1, require_equals = true, value_name = "PATH", value_hint = ValueHint::FilePath)]
+        report: Option<Option<PathBuf>>,
         /// Stop any test still running after this many seconds; overrides the
         /// default limit and is itself overridden by a target's own `timeout`
         #[arg(long, value_name = "SECONDS")]
@@ -1185,6 +1194,7 @@ fn run(cli: Cli) -> Result<i32> {
             check_determinism,
             timeout,
             trace,
+            report,
             stats,
             no_tui,
             daemon,
@@ -1204,6 +1214,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: check_determinism.is_some(),
                 trace,
+                report,
                 stats,
                 remote_cache,
                 remote_upload,
@@ -1319,6 +1330,7 @@ fn run(cli: Cli) -> Result<i32> {
             remote_upload,
             remote_timeout,
             explain,
+            report,
             profile,
             platform,
             all_platforms,
@@ -1341,6 +1353,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: false,
                 trace: None,
+                report,
                 stats: false,
                 remote_cache,
                 remote_upload,
@@ -2058,6 +2071,9 @@ struct BuildRequest {
     sandbox: bool,
     check_determinism: bool,
     trace: Option<PathBuf>,
+    /// `None` writes no report; `Some` writes one, at the default path when
+    /// the inner option is empty.
+    report: Option<Option<PathBuf>>,
     stats: bool,
     remote_cache: Option<String>,
     remote_upload: bool,
@@ -2109,6 +2125,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         sandbox: false,
         check_determinism: false,
         trace: None,
+        report: None,
         stats: false,
         remote_cache: None,
         remote_upload: false,
@@ -2751,6 +2768,7 @@ fn run_target(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -2936,6 +2954,7 @@ fn run_ide(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3297,6 +3316,7 @@ fn run_debug(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3490,6 +3510,7 @@ fn run_pick(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3674,6 +3695,9 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         && !request.sandbox
         && !request.check_determinism
         && request.trace.is_none()
+        // The certificate answers without producing a BuildReport, and a
+        // report of a build that was never planned would have nothing in it.
+        && request.report.is_none()
         && !request.stats
         && !request.affected
         && !request.predictive
@@ -3827,9 +3851,10 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
     }
 
-    if let Some(trace) = request.trace {
-        write_trace(root, trace, &report)?;
-    }
+    let trace = match request.trace {
+        Some(trace) => Some(write_trace(root, trace, &report)?),
+        None => None,
+    };
 
     if let Some(remote) = &remote {
         let summary = remote.summary();
@@ -3940,6 +3965,42 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
         println!("tests: {passed} passed, {test_failed} failed, {cached} cached");
     }
+
+    // Written last, and deliberately: the build has already been timed,
+    // summarized and had its failures printed, so rendering cannot move any
+    // number the report goes on to show. A failed build gets one too — that is
+    // the build whose report someone actually wants.
+    if let Some(destination) = request.report {
+        let destination = destination
+            .unwrap_or_else(|| report::default_path(&request.profile, &request.platform));
+        let destination = if destination.is_absolute() {
+            destination
+        } else {
+            root.join(destination)
+        };
+        report::write(
+            &destination,
+            &report::Build {
+                workspace: root
+                    .file_name()
+                    .map_or_else(
+                        || root.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    )
+                    .as_str(),
+                profile: &request.profile,
+                platform: &request.platform,
+                targets: &requested,
+                report: &report,
+                graph_actions: graph.actions.len(),
+                elapsed_ms: elapsed,
+                trace: trace.as_deref(),
+                test_mode: request.test_mode,
+            },
+        )?;
+        println!("frost: report {}", destination.display());
+    }
+
     Ok(if frostbuild_exec::was_cancelled() {
         130
     } else if report.success() {
@@ -3949,11 +4010,13 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     })
 }
 
+/// Returns where the trace landed, so a report written alongside it can link
+/// to it rather than describing where to look.
 fn write_trace(
     root: &std::path::Path,
     destination: PathBuf,
     report: &frostbuild_exec::BuildReport,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let mut timestamp = 0u64;
     let mut events = Vec::new();
     for result in &report.results {
@@ -3977,10 +4040,10 @@ fn write_trace(
         root.join(destination)
     };
     std::fs::write(
-        path,
+        &path,
         serde_json::to_vec(&serde_json::json!({ "traceEvents": events }))?,
     )?;
-    Ok(())
+    Ok(path)
 }
 
 /// Load the configured graph, taking the manifest-free warm path when the

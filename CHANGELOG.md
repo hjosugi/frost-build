@@ -7,6 +7,24 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost build --report` and `frost test --report` write a self-contained HTML
+  file explaining one build: the critical path with each action's measured
+  duration, the cache breakdown per kind of work, the slowest actions that ran,
+  invalidation reasons grouped by `--explain`'s vocabulary, test results
+  including shards, and failing actions with the tail of their output. No
+  server, no network, no JavaScript, no external stylesheet — it opens from
+  `file://` and can be attached to a message, which is what makes a Chrome
+  trace a poor thing to hand to a colleague. `--stats` remains the counters and
+  `--trace` the raw timeline; when both are asked for, the report links to the
+  trace relatively so the pair travels together. Nothing is measured for the
+  report: the critical path is the one the scheduler ordered its queue with,
+  the durations are the journal's, and rendering happens after the build has
+  been timed and summarized, so it cannot move a number it shows. It does
+  forgo the no-op certificate, because a certificate answers without planning a
+  build and so has nothing to report — about 10 ms on an otherwise 7 ms
+  1000-action no-op, against under a millisecond for the rendering itself
+  (`frost-bench report`, `bench/baselines/2026-08-01-vm-report-overhead.json`).
+
 - `frostw` and `frostw.cmd`, checked in beside a one-line `.frost-version`, run
   the frost release a repository requires rather than the one a machine
   happens to have — the gradlew/bazelisk shape, which before 1.0 matters
