@@ -81,32 +81,43 @@ pub fn notification(method: &str, params: Value) -> Value {
 /// Only the `file` scheme: this server has nothing to say about a document it
 /// cannot read from disk to compare against the workspace.
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    // `file://host/path` is not something an editor sends for a local file;
-    // an empty authority leaves the path starting at the third slash.
-    let path = rest.strip_prefix('/').map(|p| format!("/{p}"))?;
-    let decoded = percent_decode(&path);
-    // `file:///C:/x` on Windows: the leading slash is part of the URI, not the
-    // path.
-    #[cfg(windows)]
-    let decoded = decoded
-        .strip_prefix('/')
-        .filter(|rest| {
-            let bytes = rest.as_bytes();
-            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
-        })
-        .map_or(decoded.clone(), str::to_string);
-    Some(PathBuf::from(decoded))
+    let decoded = percent_decode(uri.strip_prefix("file://")?);
+    // `file:///C:/x` is the correct spelling of a Windows path and
+    // `file://C:/x` is the one some clients emit; both name the same local
+    // file. Anything else sitting in the authority position is a UNC share,
+    // which this server does not serve — and answering `None` there is what
+    // keeps it from being mistaken for a relative path.
+    match decoded.strip_prefix('/') {
+        Some(rest) if is_drive_path(rest) => Some(PathBuf::from(rest)),
+        Some(_) => Some(PathBuf::from(decoded)),
+        None if is_drive_path(&decoded) => Some(PathBuf::from(decoded)),
+        None => None,
+    }
 }
 
 pub fn path_to_uri(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
+    // Windows canonicalization yields a `\\?\` verbatim prefix, and `\\?\UNC\`
+    // for a share. An editor cannot match a URI carrying one against the
+    // document it opened, so it comes off here the same way frost strips it
+    // before handing a path to a child process.
+    let text = match (text.strip_prefix("//?/UNC/"), text.strip_prefix("//?/")) {
+        (Some(share), _) => format!("//{share}"),
+        (None, Some(rest)) => rest.to_string(),
+        (None, None) => text,
+    };
     let absolute = if text.starts_with('/') {
         text
     } else {
         format!("/{text}")
     };
     format!("file://{}", percent_encode(&absolute))
+}
+
+/// Whether a path begins with a Windows drive letter.
+fn is_drive_path(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn percent_decode(text: &str) -> String {
@@ -202,6 +213,40 @@ mod tests {
             uri_to_path("untitled:Untitled-1"),
             None,
             "a document with no file has nothing to compare against the workspace"
+        );
+    }
+
+    #[test]
+    fn a_windows_path_survives_both_spellings_clients_use() {
+        // `file://C:/x` treats the drive as an authority and is what broke
+        // every request on Windows: the path came back as nothing, so no
+        // document mapped and the server answered null to everything.
+        for uri in [
+            "file:///C:/Users/dev/repo/frost.toml",
+            "file://C:/Users/dev/repo/frost.toml",
+        ] {
+            assert_eq!(
+                uri_to_path(uri),
+                Some(PathBuf::from("C:/Users/dev/repo/frost.toml")),
+                "{uri}"
+            );
+        }
+        // A real authority is a UNC share, which is not a local file.
+        assert_eq!(uri_to_path("file://server/share/frost.toml"), None);
+    }
+
+    #[test]
+    fn a_canonicalized_windows_path_loses_its_verbatim_prefix() {
+        // `Path::canonicalize` returns `\\?\C:\…` on Windows, and the workspace
+        // root is canonicalized. A URI carrying that prefix matches nothing an
+        // editor opened.
+        assert_eq!(
+            path_to_uri(Path::new(r"\\?\C:\repo\core\frost.toml")),
+            "file:///C:/repo/core/frost.toml"
+        );
+        assert_eq!(
+            path_to_uri(Path::new(r"\\?\UNC\server\share\frost.toml")),
+            "file:////server/share/frost.toml"
         );
     }
 }

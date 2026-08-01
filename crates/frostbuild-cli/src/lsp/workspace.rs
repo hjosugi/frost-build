@@ -463,11 +463,33 @@ impl Workspace {
 
     /// The package a manifest belongs to: its directory relative to the root,
     /// with `/` separators, empty for the root manifest.
+    ///
+    /// The path comes from an editor's URI, so it is whatever the user opened,
+    /// while the root has been resolved. On macOS that alone is enough to make
+    /// them disagree — `/var` is a symlink to `/private/var` — and any
+    /// symlinked checkout does the same on every host. Getting this wrong is
+    /// not subtle: every file looks like it is in the root package, so every
+    /// local label resolves to a target that does not exist and the server
+    /// answers nothing anywhere.
     fn package_of(&self, path: &Path) -> String {
-        path.parent()
-            .and_then(|dir| dir.strip_prefix(&self.root).ok())
-            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default()
+        let Some(dir) = path.parent() else {
+            return String::new();
+        };
+        let relative = match dir.strip_prefix(&self.root) {
+            Ok(relative) => relative.to_path_buf(),
+            // Resolving is the fallback rather than the rule: it touches the
+            // filesystem, and a document being edited may not be on it yet.
+            Err(_) => match dir.canonicalize().ok().and_then(|resolved| {
+                resolved
+                    .strip_prefix(&self.root)
+                    .map(Path::to_path_buf)
+                    .ok()
+            }) {
+                Some(relative) => relative,
+                None => return String::new(),
+            },
+        };
+        relative.to_string_lossy().replace('\\', "/")
     }
 
     /// The manifest and line where a label is declared.
@@ -684,6 +706,49 @@ deps = [\"//core:missing\"]
             span.line >= 2,
             "the unterminated array is on line 2: {span:?}"
         );
+    }
+
+    /// macOS reaches every temp directory through `/var`, whose real path is
+    /// `/private/var`, and a symlinked checkout does the same anywhere. The
+    /// root has been resolved and the editor's URI has not, so a server that
+    /// compared them literally would place every file in the root package and
+    /// then answer nothing about any of them.
+    #[cfg(unix)]
+    #[test]
+    fn a_document_reached_through_a_symlink_is_still_in_its_package() {
+        let base = std::env::temp_dir().join(format!("frost-lsp-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("core/src")).unwrap();
+        std::fs::write(
+            real.join("core/src/core.c"),
+            "int core(void) { return 1; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            real.join("frost.toml"),
+            "[workspace]\ndefault_targets = [\"//core:core\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            real.join("core/frost.toml"),
+            "[target.core]\nkind = \"cc_library\"\nsrcs = [\"src/core.c\"]\n",
+        )
+        .unwrap();
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // The root as `frost -C` resolves it; the document as an editor sends it.
+        let workspace = Workspace::new(real.canonicalize().unwrap());
+        assert_eq!(
+            workspace.package_of(&link.join("core/frost.toml")),
+            "core",
+            "a symlinked path is the same package as the path it resolves to"
+        );
+        assert_eq!(workspace.package_of(&real.join("core/frost.toml")), "core");
+        assert_eq!(workspace.package_of(&real.join("frost.toml")), "");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

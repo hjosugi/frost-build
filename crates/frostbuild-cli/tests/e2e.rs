@@ -4953,8 +4953,39 @@ fn lsp_exit() -> [serde_json::Value; 2] {
     ]
 }
 
+/// A `file:` URI for a path, spelled the way the server spells one.
+///
+/// Two host details make the naive `format!("file://{path}")` wrong, and both
+/// were found by CI rather than by reading. Windows: that produces
+/// `file://C:/…`, where `C:` sits in the authority position, so the server
+/// reads no path at all and answers null to everything; and `canonicalize`
+/// there returns a `\\?\` verbatim prefix that no editor would ever send.
+/// macOS: every temp directory is reached through `/var` while its real path
+/// is `/private/var`, so an expectation built from an unresolved path compares
+/// two spellings of one file.
 fn lsp_uri(path: &Path) -> String {
-    format!("file://{}", path.display().to_string().replace('\\', "/"))
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let text = resolved.display().to_string().replace('\\', "/");
+    let text = match (text.strip_prefix("//?/UNC/"), text.strip_prefix("//?/")) {
+        (Some(share), _) => format!("//{share}"),
+        (None, Some(rest)) => rest.to_string(),
+        (None, None) => text,
+    };
+    let absolute = if text.starts_with('/') {
+        text
+    } else {
+        format!("/{text}")
+    };
+    let mut encoded = String::with_capacity(absolute.len());
+    for byte in absolute.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    format!("file://{encoded}")
 }
 
 fn reply_to(replies: &[serde_json::Value], id: u32) -> serde_json::Value {
@@ -5248,4 +5279,61 @@ fn frost_lsp_keeps_answering_while_a_manifest_does_not_parse() {
         labels.contains(&"//core:core".to_string()),
         "labels are still offered while the document does not parse: {labels:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn frost_lsp_answers_about_a_document_opened_through_a_symlink() {
+    // The case macOS CI found: `frost -C` resolves the workspace root, an
+    // editor sends whatever path the user opened, and on macOS every temp
+    // directory is reached through `/var` while its real path is
+    // `/private/var`. Comparing those literally puts every file in the root
+    // package, so every local label resolves to a target that does not exist
+    // and the server answers nothing, anywhere.
+    //
+    // A symlink reproduces it on any Unix host, which is the point: the
+    // earlier E2E only failed on macOS because only macOS supplied one.
+    let ws = Workspace::multi("lsp-symlink");
+    let link = ws.dir.with_extension("link");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&ws.dir, &link).expect("symlink the workspace");
+
+    let manifest = link.join("text/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    // Deliberately unresolved: this is the spelling an editor sends.
+    let uri = format!("file://{}", manifest.display());
+    // The target's own header, so the question is what package this document
+    // is in. An absolute label like `//core:core` resolves the same whatever
+    // the answer, and would pass with the bug still there.
+    let header = line_of(&text, "[target.text]") as u32;
+
+    let replies = lsp_session(
+        &link,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/hover", &uri, header, 9),
+            lsp_at(3, "textDocument/references", &uri, header, 9),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let hover = reply_to(&replies, 2);
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .is_some_and(|markdown| markdown.contains("**//text:text**")),
+        "the document's own target went unrecognized through a symlink: {hover:#?}"
+    );
+    let references = reply_to(&replies, 3);
+    assert!(
+        references.as_array().is_some_and(|locations| locations
+            .iter()
+            .any(|location| { location["uri"] == lsp_uri(&ws.dir.join("apps/cli/frost.toml")) })),
+        "references went silent through a symlink: {references:#?}"
+    );
+
+    let _ = std::fs::remove_file(&link);
 }

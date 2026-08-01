@@ -118,6 +118,15 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   targets it declared for itself. Nested manifests without `[workspace]`, which
   is what a package is, are unaffected.
 
+- `frost lsp` answered nothing on Windows, and nothing about any package on
+  macOS. Both were the same class of mistake: comparing path spellings rather
+  than the files they name. A client sending `file://C:/…` — the drive in the
+  authority position — mapped to no path at all, and a canonicalized root
+  carries a `\\?\` prefix no editor would send back; on macOS every temp
+  directory is reached through `/var` while its real path is `/private/var`, so
+  every document looked like it was in the root package and every local label
+  resolved to a target that did not exist.
+
 - Ordering a graph whose manifest declared an unknown dependency panicked
   instead of reporting it. `Manifest::load` rejects that before anything is
   configured, so it was unreachable until `frost lsp` needed the manifests a
