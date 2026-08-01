@@ -28,9 +28,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const explorer = new FrostTestExplorer(controller, targets, runner);
   context.subscriptions.push(controller);
 
-  const refreshViews = (): void => {
+  const refreshViews = async (): Promise<void> => {
     tree.refresh();
-    void explorer.discover();
+    await explorer.discover();
   };
 
   context.subscriptions.push(

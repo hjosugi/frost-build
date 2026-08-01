@@ -13,7 +13,10 @@ import { frostFolder, relativePath } from './workspace';
 export interface CommandDeps {
   targets: TargetIndex;
   runner: FrostRunner;
-  refreshViews: () => void;
+  /** Resolves once the views actually reflect the new target list, so the
+   *  command is finished when its effect is visible rather than when the work
+   *  has merely been started. */
+  refreshViews: () => Promise<void>;
 }
 
 /** Ask which target, listing kinds so the choice is informed. */
@@ -94,9 +97,12 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     vscode.commands.registerCommand('frost.build', () => pickAndRun('build')),
     vscode.commands.registerCommand('frost.test', () => pickAndRun('test')),
     vscode.commands.registerCommand('frost.buildFileOwners', buildFileOwners),
-    vscode.commands.registerCommand('frost.refreshTargets', () => {
+    vscode.commands.registerCommand('frost.refreshTargets', async () => {
       targets.clear();
-      refreshViews();
+      // No confirmation message: the tree and the Test Explorer visibly
+      // repopulate, and a notification for something the user can see happen
+      // is the kind of noise that trains people to dismiss notifications.
+      await refreshViews();
     }),
     // Invoked from a tree row, which already knows its folder and label, so it
     // skips the quick pick entirely.
