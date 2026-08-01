@@ -5283,7 +5283,12 @@ sandbox = false
 /// Arguments for "write this text to this output", in the host's shell.
 fn write_line_args(text: &str, name: &str) -> String {
     match cfg!(windows) {
-        true => format!(r#""/C", "echo {text}> gen\\${{config}}\\{name}""#),
+        // `echo.` rather than `echo `: when the stamp expands to nothing —
+        // which is the whole point of the `--no-stamp` and `--stamp-optional`
+        // cases — a bare `echo >file` writes "ECHO is on." instead of a blank
+        // line, because cmd reads an argument-less `echo` as a query. The dot
+        // makes what follows text, empty or not.
+        true => format!(r#""/C", "echo.{text}> gen\\${{config}}\\{name}""#),
         false => format!(r#""-c", "echo '{text}' > gen/${{config}}/{name}""#),
     }
 }
