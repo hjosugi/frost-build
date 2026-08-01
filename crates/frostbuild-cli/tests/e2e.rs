@@ -430,6 +430,80 @@ outputs = [".frost/out/${config}/report.txt"]
 #[test]
 // POSIX shell command text; see docs/09_platform_support.md.
 #[cfg(unix)]
+fn a_flaky_test_passes_on_a_retry_and_is_reported_rather_than_cached() {
+    let ws = Workspace::empty("flaky-retries");
+    // Fails once per `frost` invocation, then passes: the counter file makes
+    // the first attempt of each run fail and the second succeed, which is what
+    // a real flake looks like from the outside.
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["sometimes"]
+
+[toolchain]
+cc = "/bin/sh"
+cxx = "/bin/sh"
+ar = "/bin/sh"
+
+[toolchain.tools]
+sh = "/bin/sh"
+
+[target.sometimes]
+kind = "test"
+tool = "sh"
+args = ["-c", "if [ -f .attempted ]; then rm -f .attempted; exit 0; else touch .attempted; echo 'first attempt always fails' >&2; exit 1; fi"]
+inputs = ["cases.txt"]
+flaky_retries = 1
+sandbox = false
+"#,
+    );
+    ws.write("cases.txt", "one");
+
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "a retry that passes must leave the build green:\n{out}");
+    assert!(
+        out.contains("1 flaky"),
+        "the summary must name the flake rather than fold it into passed:\n{out}"
+    );
+    assert!(
+        !out.contains("1 passed"),
+        "counting a flake as a clean pass erases the only signal:\n{out}"
+    );
+
+    // The point of the feature. A cached flake would hide itself from every
+    // later build, including the one that would have caught it, so the second
+    // run must execute again rather than report `cached`.
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(ok, "second run failed:\n{out}");
+    assert!(
+        out.contains("1 flaky") && out.contains("0 cached"),
+        "a flaky success must not be cached:\n{out}"
+    );
+    assert!(
+        out.contains("1 built"),
+        "nothing was recorded, so the test must run again:\n{out}"
+    );
+
+    // And a test that fails every attempt still fails, with the count named
+    // so the retries are visible rather than looking like a single run.
+    let always = ws.dir.join("frost.toml");
+    let text = std::fs::read_to_string(&always).unwrap().replace(
+        r#""-c", "if [ -f .attempted ]; then rm -f .attempted; exit 0; else touch .attempted; echo 'first attempt always fails' >&2; exit 1; fi""#,
+        r#""-c", "exit 3""#,
+    );
+    std::fs::write(&always, text).unwrap();
+    let (ok, out) = ws.frost(&["test"]);
+    assert!(!ok, "a test that never passes must fail:\n{out}");
+    assert!(
+        out.contains("failed all 2 attempts"),
+        "the retries must be visible in the failure:\n{out}"
+    );
+    assert!(out.contains("1 failed"), "{out}");
+}
+
+#[test]
+// POSIX shell command text; see docs/09_platform_support.md.
+#[cfg(unix)]
 fn a_consumer_names_its_dependency_instead_of_that_dependency_s_layout() {
     let ws = Workspace::empty("dep-references");
     // Nothing below writes `gen/`, `.frost/out/` or a profile directory by

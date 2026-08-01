@@ -228,6 +228,27 @@ Frost has always used, so adding the field to a workspace does not invalidate an
 existing journal. Declaring any of the variables above in `env` or `pass_env`
 alongside `shard_count` is an error rather than a silent override.
 
+A test or `cc_test` target may also declare `flaky_retries = N` (default 0,
+maximum 9), which gives a failing test that many more attempts before the
+failure is its verdict. Each retry starts from the state a first attempt would
+see: the partial success stamp is removed and clean directories are reset, so
+attempt two does not run in the world attempt one left behind.
+
+A test that passes only on a retry is reported as **flaky** and its success is
+**not recorded** — not in the journal, not in the remote cache. The build is
+green and dependents proceed, but the next run executes the test again. Caching
+a verdict the test reached only on the second try would hide the flake from
+every later build, including the one that would have caught it; the summary
+line gains `N flaky` so the cost is visible instead. A test that fails every
+attempt fails, and its output says `failed all N attempts` so the retries are
+not mistaken for a single run.
+
+`flaky_retries` is deliberately **not** action-key material. It describes how
+hard to look for a verdict, not what the test does, so turning it on does not
+invalidate a result that already passed cleanly. It applies to test kinds only:
+on anything else the field would parse and do nothing, and retrying a failed
+compile is a different and much worse idea than retrying a test.
+
 ## Language-neutral command targets
 
 Use `command` when the underlying tool has a real argv interface. Unlike a

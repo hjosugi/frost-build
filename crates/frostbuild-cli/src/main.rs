@@ -3807,6 +3807,12 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         for result in &report.results {
             match &result.outcome {
                 Outcome::Executed { reason, .. } => println!("  ran {} :: {reason}", result.id),
+                Outcome::Flaky {
+                    reason, attempts, ..
+                } => println!(
+                    "  flaky {} :: {reason} (passed on attempt {attempts}, not cached)",
+                    result.id
+                ),
                 Outcome::Cached => println!("  cached {}", result.id),
                 Outcome::Failed { reason, .. } => println!("  failed {} :: {reason}", result.id),
                 Outcome::Skipped { reason } => println!("  skipped {} :: {reason}", result.id),
@@ -3917,16 +3923,33 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
             .results
             .iter()
             .filter(|result| result.id.starts_with("test:"));
-        let (mut passed, mut test_failed, mut cached) = (0, 0, 0);
+        let (mut passed, mut test_failed, mut cached, mut flaky, mut skipped) = (0, 0, 0, 0, 0);
         for test in tests {
             match test.outcome {
                 Outcome::Executed { .. } => passed += 1,
+                // A flake passed, so it is not a failure and the build is
+                // green; but counting it under `passed` would erase the only
+                // signal that this test cannot be trusted.
+                Outcome::Flaky { .. } => flaky += 1,
                 Outcome::Cached => cached += 1,
-                Outcome::Failed { .. } | Outcome::Skipped { .. } => test_failed += 1,
+                Outcome::Failed { .. } => test_failed += 1,
+                // Not run because something upstream failed. Reporting it as
+                // a failure blames a test that never executed, which sends
+                // the reader to the wrong file.
+                Outcome::Skipped { .. } => skipped += 1,
                 Outcome::WouldRun { .. } | Outcome::MayRun { .. } => {}
             }
         }
-        println!("tests: {passed} passed, {test_failed} failed, {cached} cached");
+        let mut summary = format!("tests: {passed} passed, {test_failed} failed, {cached} cached");
+        // Only when non-zero: a line that always ends "0 flaky, 0 skipped"
+        // trains the reader to stop reading it.
+        if flaky > 0 {
+            summary.push_str(&format!(", {flaky} flaky"));
+        }
+        if skipped > 0 {
+            summary.push_str(&format!(", {skipped} skipped"));
+        }
+        println!("{summary}");
     }
     Ok(if frostbuild_exec::was_cancelled() {
         130
@@ -3945,7 +3968,9 @@ fn write_trace(
     let mut timestamp = 0u64;
     let mut events = Vec::new();
     for result in &report.results {
-        if let Outcome::Executed { duration_ms, .. } = result.outcome {
+        if let Outcome::Executed { duration_ms, .. } | Outcome::Flaky { duration_ms, .. } =
+            result.outcome
+        {
             events.push(serde_json::json!({
                 "name": result.desc,
                 "cat": "action",
