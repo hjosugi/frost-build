@@ -84,7 +84,49 @@ pub fn format(text: &str) -> Result<String> {
     // restated rather than merely rearranged.
     let mut position = 0usize;
     reposition(document.as_table_mut(), &mut position);
-    Ok(document.to_string())
+    let rendered = document.to_string();
+    Ok(if wants_crlf(text) {
+        with_crlf(&rendered)
+    } else {
+        rendered
+    })
+}
+
+/// Whether this file's layout uses CRLF.
+///
+/// A manifest checked out on Windows with `core.autocrlf` has CRLF throughout,
+/// and a formatter that answered "not formatted" to every such file — then
+/// rewrote it whole — would be fighting the checkout rather than the manifest.
+/// So the file's own ending is kept, the way rustfmt's `newline_style = "Auto"`
+/// keeps it.
+///
+/// Decided by majority rather than by the first newline found, because a CR
+/// can also appear inside a multi-line string, where it is content and says
+/// nothing about the layout.
+fn wants_crlf(text: &str) -> bool {
+    let crlf = text.matches("\r\n").count();
+    let total = text.matches('\n').count();
+    crlf * 2 > total
+}
+
+/// Restore CRLF to a rendered document.
+///
+/// `toml_edit` normalizes the newlines it controls — indentation, the blank
+/// line before a header, the break inside a wrapped array — to LF, and leaves
+/// the bytes of a multi-line string exactly as they were parsed. So a CR that
+/// survived to here belongs to a string, and the LF after it must not gain a
+/// second one.
+fn with_crlf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut previous = '\0';
+    for character in text.chars() {
+        if character == '\n' && previous != '\r' {
+            out.push('\r');
+        }
+        out.push(character);
+        previous = character;
+    }
+    out
 }
 
 /// Renumber every table so it renders in the order the map now holds.
@@ -292,6 +334,55 @@ mod tests {
             assert_eq!(once, twice, "not idempotent for {manifest:?}");
             assert!(is_formatted(&once).unwrap());
         }
+    }
+
+    #[test]
+    fn a_file_keeps_the_line_ending_it_arrived_with() {
+        // Windows checks a manifest out with CRLF whenever `core.autocrlf` is
+        // on, which is the default there. A formatter that called every such
+        // file unformatted, and then rewrote it whole, would be arguing with
+        // the checkout rather than formatting the manifest — and `--check`
+        // would fail on that machine forever. Found by CI, which is the only
+        // host in this project that could.
+        let lf = "[workspace]\ndefault_targets = [\"app\"]\n\n\
+                  [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/main.c\"]\n";
+        let crlf = lf.replace('\n', "\r\n");
+
+        assert!(is_formatted(lf).unwrap(), "the LF spelling is canonical");
+        assert!(
+            is_formatted(&crlf).unwrap(),
+            "and so is the same manifest in CRLF"
+        );
+        assert_eq!(format(&crlf).unwrap(), crlf, "which means it is left alone");
+        assert_eq!(format(lf).unwrap(), lf);
+
+        // Reordering a CRLF file keeps CRLF, rather than emitting a mixture.
+        let scrambled = "[target.app]\r\nsrcs = [\"a.c\"]\r\nkind = \"cc_binary\"\r\n";
+        let formatted = format(scrambled).unwrap();
+        assert!(
+            formatted.starts_with("[target.app]\r\nkind"),
+            "{formatted:?}"
+        );
+        assert!(
+            !formatted.contains('\r') || !formatted.replace("\r\n", "").contains('\n'),
+            "no bare LF survives in a CRLF file: {formatted:?}"
+        );
+        assert_eq!(format(&formatted).unwrap(), formatted, "and it settles");
+    }
+
+    #[test]
+    fn a_carriage_return_inside_a_string_is_not_a_line_ending() {
+        // `toml_edit` normalizes the newlines it controls and leaves a
+        // multi-line string's bytes alone, so restoring CRLF has to skip an LF
+        // that already has a CR. Doubling one would corrupt the string, which
+        // for a `cmd` means corrupting the build.
+        let manifest = "[target.gen]\r\nkind = \"genrule\"\r\n\
+                        cmd = \"\"\"one\r\ntwo\"\"\"\r\n\
+                        inputs = [\"a\"]\r\noutputs = [\"b\"]\r\n";
+        let formatted = format(manifest).unwrap();
+        assert!(!formatted.contains("\r\r"), "{formatted:?}");
+        assert!(formatted.contains("one\r\ntwo"), "{formatted:?}");
+        assert_eq!(format(&formatted).unwrap(), formatted);
     }
 
     #[test]

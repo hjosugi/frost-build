@@ -352,6 +352,13 @@ the state a manifest is in for most of the time it is being edited and the
 moment formatting is most wanted. Running it twice changes nothing the first
 run did not, and a property test over generated manifests holds it to that.
 
+A file keeps the line ending it arrived with. `core.autocrlf` is on by default
+on Windows, so a manifest is checked out there with CRLF; a formatter that
+called every such file unformatted and then rewrote it whole would be arguing
+with the checkout rather than formatting the manifest. `*.toml` is deliberately
+not pinned in `.gitattributes`, so the Windows CI job keeps exercising that
+path — it is the only host in this project that can.
+
 `frost lint` reports what the parser cannot: a manifest that is valid and
 unwise. Every rule has a stable identifier, one sentence saying what it costs,
 and a legitimate exception — which is why each is a lint rather than an error,
