@@ -578,3 +578,51 @@ Two properties are tested rather than asserted in prose. Formatting is
 formatting **never changes what the manifest means** — the same manifest parses
 to the same targets, sources, dependencies and flags before and after, which is
 the property reordering keys and tables could plausibly break.
+
+## .frostrc
+
+`frost.toml` says *what* to build. `.frostrc` says *how*, so a team default does
+not have to live in a shell alias.
+
+Two files are read, in this order: `~/.config/frost/frostrc` (or
+`$XDG_CONFIG_HOME/frost/frostrc`) and then `<workspace>/.frostrc`. Within each,
+sections apply in a fixed order: `[common]`, then the subcommand's own section,
+then each `--config NAME` in the order it was given.
+
+```toml
+[common]
+jobs = 16
+
+[build]
+profile = "release"
+
+[config.ci]
+sandbox = true
+remote-cache = "https://cache.example.com/frost"
+```
+
+Precedence, lowest to highest:
+
+    built-in default  <  user file  <  workspace file  <  --config section  <  what you typed
+
+Keys are long option names, with `_` or `-` — `no_tui` and `no-tui` are the same
+option. A boolean `true` is the flag; `false` contributes nothing, so turning
+off a workspace default does what it looks like. An array repeats the option.
+`--no-frostrc` ignores both files entirely, and `frost doctor` lists every
+setting in effect with the file, line and section, because "a setting applies"
+is not useful without the line to go and change.
+
+A key no subcommand accepts is refused at startup with the file, the line, the
+key and a suggestion — checked against the real argument tree, so a new option
+works in a config file the moment it exists on the command line.
+
+**A flag from a file is a flag.** It is spliced ahead of the real command line
+and parsed by exactly the code that parses a typed one, so it is validated the
+same way and reaches the action key the same way. Whether an option is key
+material is a property of the option, never of where its value came from —
+changing `profile` in `.frostrc` rebuilds, and `sandbox` does not, for the same
+reasons they do or do not on the command line.
+
+Not supported, deliberately: conditional syntax like `build:linux --foo`
+(platform differences belong to `[platform.*]`), and `--config` sections that
+reference other `--config` sections. One level only.

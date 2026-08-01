@@ -43,6 +43,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `.frostrc`, a config file for *how* to build, keeping it out of `frost.toml`,
+  which says *what* to build. `~/.config/frost/frostrc` then `<workspace>/.frostrc`,
+  with `[common]`, a section per subcommand, and named `[config.NAME]` sections
+  selected by a repeatable `--config NAME`. Precedence runs built-in default <
+  user file < workspace file < named section < what you typed, and `--no-frostrc`
+  ignores both files. `frost doctor` lists every setting in effect with its file,
+  line and section. A key no subcommand accepts is refused at startup with the
+  file, the line, the key and a suggestion, checked against the real argument
+  tree so a new option works in a config file the moment it exists on the command
+  line. A flag from a file is spliced ahead of the real command line and parsed
+  by the same code that parses a typed one, so it validates and reaches the
+  action key identically — whether an option is key material is a property of the
+  option, never of where its value came from.
+
 - `frost fmt` and `frost fmt --check`, which rewrite every manifest in the
   workspace in one canonical form: a fixed key order inside each target, targets
   in name order, and arrays inline when short and one-per-line when long.

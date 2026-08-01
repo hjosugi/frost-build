@@ -1,4 +1,4 @@
-frost -C/--workspace=VALUE
+frost --config=VALUE --no-frostrc -C/--workspace=VALUE
 frost bazel-dev <target> <args...> --bazel-arg=VALUE --bazel=VALUE --debounce-ms=VALUE
 frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --sandbox --scheduler=VALUE --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
 frost cache
