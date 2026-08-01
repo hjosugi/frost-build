@@ -271,6 +271,7 @@ pub const TARGET_KEYS: &[&str] = &[
     "shard_count",
     "flaky_retries",
     "lint_allow",
+    "visibility",
     "depfile",
     "depfile_format",
     "inputs",
@@ -323,6 +324,9 @@ struct RawTarget {
     /// Lint rule ids this target has decided it can live with.
     #[serde(default)]
     lint_allow: Vec<String>,
+    /// Who may depend on this target. Absent means every package may, which is
+    /// what keeps an existing workspace building; see `crate::visibility`.
+    visibility: Option<Vec<String>>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -347,6 +351,14 @@ struct RawCommandStep {
     args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStamp {
+    #[serde(default)]
+    command: Vec<String>,
+    stable_prefix: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
@@ -360,6 +372,31 @@ struct RawManifest {
     profile: BTreeMap<String, RawProfile>,
     #[serde(default)]
     target: BTreeMap<String, RawTarget>,
+    stamp: Option<RawStamp>,
+    #[serde(default)]
+    visibility: BTreeMap<String, RawVisibilityGroup>,
+}
+
+/// A named visibility list, declared once in the root manifest and referenced
+/// as `group:NAME`. The point is that a boundary shared by twenty targets is
+/// written down once, so widening it is one reviewable edit rather than twenty.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVisibilityGroup {
+    #[serde(default)]
+    allow: Vec<String>,
+}
+
+/// How a workspace obtains values from outside the build; see
+/// [`crate::stamp`] for what the split buys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stamp {
+    /// Direct argv, run once per build from the workspace root. Not a shell
+    /// string: a workspace that wants a shell writes `["sh", "-c", "…"]` and
+    /// can see that it did, which is the same rule command targets follow.
+    pub command: Vec<String>,
+    /// Keys beginning with this participate in action keys; the rest do not.
+    pub stable_prefix: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -434,6 +471,16 @@ pub struct Target {
     /// written down next to the thing that pays it, which a global ignore file
     /// does not.
     pub lint_allow: Vec<String>,
+    /// Who may depend on this target, as written. `None` is the default and
+    /// means every package; `Some([])` means nothing outside its own package.
+    ///
+    /// Kept as text rather than parsed rules because a group reference can only
+    /// be checked once the whole workspace is loaded, and a target in a package
+    /// manifest is built before the root's groups are known.
+    ///
+    /// Deliberately not action-key material: visibility says who may ask for a
+    /// target, not what building it produces (docs/16).
+    pub visibility: Option<Vec<String>>,
     /// How many extra attempts a failing test gets before it is reported as
     /// failed. 0 means the first failure is the verdict.
     ///
@@ -468,6 +515,12 @@ pub struct Manifest {
     pub platforms: BTreeMap<String, Platform>,
     pub profiles: BTreeMap<String, Profile>,
     pub targets: BTreeMap<String, Target>,
+    /// Workspace-level, so it is declared in the root manifest only.
+    #[serde(default)]
+    pub stamp: Option<Stamp>,
+    /// Named visibility lists, workspace-level for the same reason.
+    #[serde(default)]
+    pub visibility_groups: BTreeMap<String, Vec<String>>,
     /// Manifests which contributed to this workspace, used by graph caching.
     pub manifest_paths: Vec<String>,
 }
@@ -659,6 +712,7 @@ impl Manifest {
             Ok(manifest) => {
                 let error = validate_dependencies(&manifest.targets)
                     .and_then(|()| validate_default_targets(&manifest))
+                    .and_then(|()| validate_visibility(&manifest))
                     .err();
                 Load {
                     manifest: Some(manifest),
@@ -723,6 +777,23 @@ impl Manifest {
                 let package_raw: RawManifest = toml::from_str(&package_text)
                     .map_err(|error| ManifestError::from_toml(&rel, &package_text, &error))?;
                 let mut child = Self::from_raw_unvalidated(package_raw)?;
+                if !child.visibility_groups.is_empty() {
+                    bail!(
+                        "[visibility.*] groups in {} are workspace-level and belong in the \
+                         root {MANIFEST_FILE}",
+                        rel.display()
+                    );
+                }
+                if child.stamp.is_some() {
+                    // One build has one set of stamp values. A package section
+                    // would either be ignored — the failure this rejects — or
+                    // mean the command runs per package, which is a different
+                    // and much worse feature.
+                    bail!(
+                        "[stamp] in {} is workspace-level and belongs in the root {MANIFEST_FILE}",
+                        rel.display()
+                    );
+                }
                 expand_manifest_paths(&mut child, workspace_root, &package)?;
                 for (local, mut target) in child.targets {
                     let canonical = format!("//{package}:{local}");
@@ -821,6 +892,7 @@ impl Manifest {
         }
         validate_dependencies(&manifest.targets)?;
         validate_default_targets(&manifest)?;
+        validate_visibility(&manifest)?;
         Ok(manifest)
     }
 
@@ -907,9 +979,28 @@ impl Manifest {
                 })
                 .collect(),
             targets,
+            stamp: raw.stamp.map(build_stamp).transpose()?,
+            visibility_groups: raw
+                .visibility
+                .into_iter()
+                .map(|(name, group)| (name, group.allow))
+                .collect(),
             manifest_paths: Vec::new(),
         })
     }
+}
+
+fn build_stamp(raw: RawStamp) -> Result<Stamp> {
+    if raw.command.is_empty() {
+        bail!("[stamp] needs a command, e.g. command = [\"tools/workspace_status.sh\"]");
+    }
+    let stable_prefix = raw
+        .stable_prefix
+        .unwrap_or_else(|| crate::stamp::DEFAULT_STABLE_PREFIX.to_string());
+    Ok(Stamp {
+        command: raw.command,
+        stable_prefix,
+    })
 }
 
 fn valid_target_name(name: &str) -> bool {
@@ -1210,6 +1301,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         shard_count: spec.shard_count.unwrap_or(1),
         flaky_retries: spec.flaky_retries.unwrap_or(0),
         lint_allow: spec.lint_allow.clone(),
+        visibility: spec.visibility.clone(),
         depfile,
         depfile_format,
         inputs,
@@ -1424,6 +1516,78 @@ fn validate_dependencies(targets: &BTreeMap<String, Target>) -> Result<()> {
             if !targets.contains_key(dep) {
                 bail!("target {:?} has unknown dep {dep:?}", target.name);
             }
+        }
+    }
+    Ok(())
+}
+
+/// Every dependency crosses a boundary its target allows.
+///
+/// At load rather than at build: a dependency that is not permitted is a
+/// statement about the manifest, and reporting it only when someone happens to
+/// build that path would make the boundary depend on what you asked for.
+fn validate_visibility(manifest: &Manifest) -> Result<()> {
+    let mut groups: BTreeMap<String, Vec<crate::visibility::Rule>> = BTreeMap::new();
+    // Two passes: the names have to exist before a rule may reference one, and
+    // a group referencing a group is refused rather than resolved, so the
+    // matcher never has to terminate a cycle.
+    let empty = BTreeMap::new();
+    for (name, entries) in &manifest.visibility_groups {
+        let mut rules = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if entry.starts_with("group:") {
+                bail!(
+                    "visibility group {name:?} names another group in {entry:?}. \
+                     Groups are one level deep: list the packages instead"
+                );
+            }
+            rules.push(
+                crate::visibility::Rule::parse(entry, &empty)
+                    .with_context(|| format!("invalid [visibility.{name}]"))?,
+            );
+        }
+        groups.insert(name.clone(), rules);
+    }
+
+    let mut parsed: BTreeMap<&str, Vec<crate::visibility::Rule>> = BTreeMap::new();
+    for (name, target) in &manifest.targets {
+        let Some(entries) = target.visibility.as_ref() else {
+            continue;
+        };
+        let mut rules = Vec::with_capacity(entries.len());
+        for entry in entries {
+            rules.push(
+                crate::visibility::Rule::parse(entry, &groups)
+                    .with_context(|| format!("invalid visibility on target {name:?}"))?,
+            );
+        }
+        parsed.insert(name.as_str(), rules);
+    }
+
+    for (name, target) in &manifest.targets {
+        for dep in &target.deps {
+            let Some(rules) = parsed.get(dep.as_str()) else {
+                // No declaration is the default, and the default is public.
+                continue;
+            };
+            let dependency = &manifest.targets[dep];
+            if crate::visibility::admits(rules, name, &target.package, &dependency.package, &groups)
+            {
+                continue;
+            }
+            // Both ends and the rule that applied: the reader is usually the
+            // author of the dependent, who can see their own manifest and not
+            // the one that decided this.
+            bail!(
+                "target {name:?} depends on {dep:?}, which is visible to {}. \
+                 Either add {:?} to {dep}'s visibility, or depend on something \
+                 that package exports",
+                crate::visibility::describe(rules),
+                match target.package.is_empty() {
+                    true => name.clone(),
+                    false => format!("//{}/...", target.package),
+                }
+            );
         }
     }
     Ok(())

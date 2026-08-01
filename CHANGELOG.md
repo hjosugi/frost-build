@@ -69,6 +69,38 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   CI job runs it on `sample_multi`, so the rendering is something you can look at
   rather than something the documentation asserts.
 
+- `visibility` on targets, and named `[visibility.*]` groups in the root
+  manifest. Multi-package labels let a workspace split into modules; this is what
+  makes those modules mean something, enforced when the manifest loads rather
+  than when something is built. Four spellings — `//...`, `//pkg/...`,
+  `//pkg:target`, `group:NAME` — and `//pkg` on its own is refused, because it is
+  one character from `//pkg/...` and means something else. A target is always
+  visible inside its own package.
+
+  The default is public, unlike Bazel. A private-by-default rule would break
+  every existing workspace on upgrade, and a correctness feature that arrives as
+  a wall of errors is one people turn off, after which it protects nothing.
+  Instead a new `undeclared-visibility` lint names the targets where a boundary
+  is *already* being crossed, so the migration is a list rather than a flag day;
+  `sample_multi` now declares its own. Not action-key material, so declaring a
+  boundary costs no rebuild.
+
+- Build stamping: a `[stamp]` section whose `command` prints `KEY=VALUE` lines,
+  and `${stamp.KEY}` expansion in a command target's `args` and `env`. The split
+  is by rate of change and is decided by the key's *name*, so frost can classify
+  a reference without running the command and the graph stays a pure function of
+  the manifest. `STABLE_*` values are action-key material — a new commit
+  rebuilding the binary that embeds its SHA is the correct answer, not cache
+  thrash. Everything else is not: a wall clock in an action key would rebuild the
+  workspace every second, so an action that reads one is re-executed
+  unconditionally instead, costing one action rather than the graph above it.
+  A volatile value that reaches a *compile* is rejected when the graph loads,
+  since that turns one unconditional action into a full rebuild — the symptom
+  ("our builds stopped being incremental") otherwise appears months later and
+  nowhere near the manifest that caused it. The command runs only when something
+  in the closure reads a stamp, fails the build when it fails, and is skipped by
+  `--no-stamp` or downgraded to a warning by `--stamp-optional`.
+
 ### Changed
 
 - `ProgressState` gained a `Flaky` variant. A retried-and-passed test was

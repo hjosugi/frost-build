@@ -12,7 +12,9 @@ use crate::manifest::{Manifest, HOST_PLATFORM};
 
 const MAGIC: &[u8; 8] = b"FRSTGR01";
 // Version 7 adds the host executable suffix to native binary graph paths.
-const VERSION: u32 = 8;
+// Version 9 adds `[stamp]` and per-action stamp references, which a warm
+// invocation reads without parsing a manifest.
+const VERSION: u32 = 9;
 
 /// Evidence that the manifest inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every

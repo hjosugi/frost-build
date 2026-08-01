@@ -48,6 +48,7 @@ pub fn lint(manifest: &Manifest, root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
     let generated = generated_directories(manifest);
     findings.extend(unreachable_targets(manifest));
+    findings.extend(undeclared_visibility(manifest));
     for (name, target) in &manifest.targets {
         findings.extend(missing_include_dirs(name, target, root, &generated));
         findings.extend(volatile_pass_env(name, target));
@@ -110,6 +111,45 @@ fn unreachable_targets(manifest: &Manifest) -> Vec<Finding> {
             target: name.clone(),
             message: format!("{name:?} is not a default target and nothing depends on it"),
             why: "it is never built unless named explicitly, so it rots without anyone noticing",
+        })
+        .collect()
+}
+
+/// Targets already depended on from another package that say nothing about who
+/// may do so.
+///
+/// Narrow on purpose. "Every target should declare visibility" would fire on
+/// every line of every workspace and be turned off the same afternoon; the
+/// boundary only means anything where one is already being crossed. What is
+/// left is a list a team can work through, and each entry is a real question:
+/// is this module's surface, or did someone reach into it?
+///
+/// Silent in a single-manifest workspace, where there is one package and
+/// nothing to cross.
+fn undeclared_visibility(manifest: &Manifest) -> Vec<Finding> {
+    let mut crossed: BTreeMap<&str, &str> = BTreeMap::new();
+    for (name, target) in &manifest.targets {
+        for dep in &target.deps {
+            let Some(dependency) = manifest.targets.get(dep) else {
+                continue;
+            };
+            if dependency.package == target.package || dependency.visibility.is_some() {
+                continue;
+            }
+            // First dependent by name, so the message is the same on every run.
+            crossed.entry(dep.as_str()).or_insert(name.as_str());
+        }
+    }
+    crossed
+        .into_iter()
+        .map(|(name, dependent)| Finding {
+            rule: "undeclared-visibility",
+            target: name.to_string(),
+            message: format!(
+                "{name:?} is depended on from another package ({dependent:?}) but declares \
+                 no visibility, so every package may depend on it"
+            ),
+            why: "a module boundary nothing enforces is one the next deadline erases",
         })
         .collect()
 }

@@ -11,6 +11,8 @@ pub mod lint;
 pub mod manifest;
 pub mod paths;
 pub mod remote;
+pub mod stamp;
+pub mod visibility;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

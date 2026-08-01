@@ -120,6 +120,18 @@ enum Cmd {
         /// Disable successful test-result cache
         #[arg(long)]
         no_cache: bool,
+        /// Skip the workspace's [stamp] command. Every ${stamp.KEY} then
+        /// expands to nothing, which changes the action key of anything that
+        /// reads a stable value — a stamp-free build is a different build, and
+        /// says so rather than reusing results that embedded a value
+        #[arg(long)]
+        no_stamp: bool,
+        /// A failing [stamp] command leaves the values empty instead of
+        /// failing the build. Off by default: a status script that stopped
+        /// working should be noticed, not silently ship a binary with no
+        /// version in it
+        #[arg(long, conflicts_with = "no_stamp")]
+        stamp_optional: bool,
         /// Shared cache consulted when the local journal misses: a directory
         /// path, file:///path, or http://host/prefix. Never required for
         /// correctness — every response is verified and any failure falls back
@@ -342,6 +354,18 @@ enum Cmd {
         all: bool,
         #[arg(long)]
         no_cache: bool,
+        /// Skip the workspace's [stamp] command. Every ${stamp.KEY} then
+        /// expands to nothing, which changes the action key of anything that
+        /// reads a stable value — a stamp-free build is a different build, and
+        /// says so rather than reusing results that embedded a value
+        #[arg(long)]
+        no_stamp: bool,
+        /// A failing [stamp] command leaves the values empty instead of
+        /// failing the build. Off by default: a status script that stopped
+        /// working should be noticed, not silently ship a binary with no
+        /// version in it
+        #[arg(long, conflicts_with = "no_stamp")]
+        stamp_optional: bool,
         /// Run only cases matching this pattern. Passed to the runner through
         /// TESTBRIDGE_TEST_ONLY and GTEST_FILTER, and part of the action key,
         /// so a filtered run is a separate result rather than one that
@@ -1407,6 +1431,8 @@ fn run(cli: Cli) -> Result<i32> {
             platform,
             all_platforms,
             no_cache,
+            no_stamp,
+            stamp_optional,
             remote_cache,
             remote_upload,
             remote_timeout,
@@ -1446,6 +1472,8 @@ fn run(cli: Cli) -> Result<i32> {
                 runs_per_test: 1,
                 test_output: TestOutputArg::Errors,
                 build_event_json: cli.build_event_json.clone(),
+                no_stamp,
+                stamp_optional,
                 daemon,
                 affected: false,
                 predictive: false,
@@ -1559,6 +1587,8 @@ fn run(cli: Cli) -> Result<i32> {
             predictive,
             all,
             no_cache,
+            no_stamp,
+            stamp_optional,
             test_filter,
             test_env,
             test_arg,
@@ -1603,6 +1633,8 @@ fn run(cli: Cli) -> Result<i32> {
                 runs_per_test,
                 test_output,
                 build_event_json: cli.build_event_json.clone(),
+                no_stamp,
+                stamp_optional,
                 daemon,
                 affected,
                 predictive,
@@ -2344,6 +2376,12 @@ struct BuildRequest {
     test_output: TestOutputArg,
     /// Where to write the ndjson build event stream, if anywhere.
     build_event_json: Option<PathBuf>,
+    /// Skip the workspace's `[stamp]` command; every `${stamp.KEY}` expands to
+    /// nothing.
+    no_stamp: bool,
+    /// A stamp command that fails leaves the values empty instead of failing
+    /// the build.
+    stamp_optional: bool,
     daemon: bool,
     affected: bool,
     predictive: bool,
@@ -2399,6 +2437,8 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         runs_per_test: 1,
         test_output: TestOutputArg::Errors,
         build_event_json: None,
+        no_stamp: false,
+        stamp_optional: false,
         daemon: false,
         affected: false,
         predictive: false,
@@ -3046,6 +3086,8 @@ fn run_target(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            no_stamp: false,
+            stamp_optional: false,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3236,6 +3278,8 @@ fn run_ide(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            no_stamp: false,
+            stamp_optional: false,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3639,6 +3683,8 @@ fn run_debug(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            no_stamp: false,
+            stamp_optional: false,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3819,6 +3865,8 @@ fn run_pick(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            no_stamp: false,
+            stamp_optional: false,
             jobs: None,
             keep_going: false,
             explain: false,
@@ -3875,6 +3923,14 @@ fn run_build_via_daemon(
     }
     if request.no_cache {
         args.push("--no-cache".into());
+    }
+    // A flag dropped here is a build the daemon runs differently from the one
+    // that was asked for, silently: `--no-stamp` would come back stamped.
+    if request.no_stamp {
+        args.push("--no-stamp".into());
+    }
+    if request.stamp_optional {
+        args.push("--stamp-optional".into());
     }
     if let Some(endpoint) = &request.remote_cache {
         args.extend(["--remote-cache".into(), endpoint.clone()]);
@@ -4002,6 +4058,81 @@ fn replace_daemon_and_retry(
     frostbuild_daemon::request(root, request_message)
         .ok()
         .filter(|response| !is_protocol_mismatch(response))
+}
+
+/// Run the workspace's `[stamp]` command and read its `KEY=VALUE` output.
+///
+/// Once per build, never per action: a stamp names a property of the
+/// invocation, and two actions that disagreed about the build time would make
+/// "which build produced this binary" unanswerable.
+///
+/// Skipped entirely when nothing in this closure reads a stamp. A workspace
+/// that stamps its release binary should not pay for a `git describe` — or be
+/// broken by a status script that stopped working — when it builds a library.
+fn build_stamps(
+    root: &Path,
+    graph: &frostbuild_core::graph::BuildGraph,
+    closure: &[usize],
+    no_stamp: bool,
+    stamp_optional: bool,
+) -> Result<Option<std::collections::BTreeMap<String, String>>> {
+    let Some(stamp) = graph.stamp.as_ref() else {
+        return Ok(None);
+    };
+    if no_stamp {
+        return Ok(None);
+    }
+    let referenced = closure.iter().any(|&action| {
+        let action = &graph.actions[action];
+        !action.stable_stamps.is_empty() || !action.volatile_stamps.is_empty()
+    });
+    if !referenced {
+        return Ok(None);
+    }
+
+    // Inherits the environment rather than being handed frost's action
+    // baseline. This is not an action: its output is not cached, it is not
+    // sandboxed, and a status script needs the PATH and credentials of the
+    // person or the CI job invoking frost to ask git or a registry anything.
+    // Windows resolves a relative program name against the process working
+    // directory, before `current_dir` applies — the same trap actions go
+    // through `resolve_action_program` to avoid. A bare name stays bare so it
+    // is still found on PATH.
+    let program = Path::new(&stamp.command[0]);
+    let program = match program.is_relative() && program.components().count() > 1 {
+        true => root.join(program),
+        false => program.to_path_buf(),
+    };
+    let output = std::process::Command::new(program)
+        .args(&stamp.command[1..])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let failure = match output {
+        Err(error) => format!("failed to run {:?}: {error}", stamp.command[0]),
+        Ok(output) if !output.status.success() => format!(
+            "{} exited with {}{}",
+            stamp.command.join(" "),
+            output.status,
+            match String::from_utf8_lossy(&output.stderr).trim() {
+                "" => String::new(),
+                stderr => format!("\n{stderr}"),
+            }
+        ),
+        Ok(output) => {
+            return frostbuild_core::stamp::parse(&String::from_utf8_lossy(&output.stdout))
+                .map(Some)
+                .with_context(|| format!("[stamp] command {:?}", stamp.command.join(" ")))
+        }
+    };
+    if stamp_optional {
+        eprintln!("frost: [stamp] command failed, continuing with no values: {failure}");
+        return Ok(None);
+    }
+    // Failing by default: a status script that stopped working is how a
+    // release binary ends up reporting no version at all, and the build that
+    // shipped it looked green.
+    anyhow::bail!("[stamp] {failure}\n(--stamp-optional treats this as no values)")
 }
 
 fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
@@ -4139,6 +4270,13 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         .as_deref()
         .map(events::EventLog::create)
         .transpose()?;
+    let stamps = build_stamps(
+        root,
+        &graph,
+        &closure,
+        request.no_stamp,
+        request.stamp_optional,
+    )?;
     let (progress, renderer) =
         progress::start(request.no_tui, request.verbose, echo_success, events);
     let opts = BuildOptions {
@@ -4164,6 +4302,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         remote: remote.clone(),
         timeout: request.timeout.map(std::time::Duration::from_secs),
         runs_per_test: request.runs_per_test,
+        stamps,
         ..BuildOptions::default()
     };
 

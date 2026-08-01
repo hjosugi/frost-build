@@ -7,6 +7,11 @@ srcs = ["src/core.c"]
 # The generated header lives in the root package; the dep is what puts
 # gen/version.h on this compile's include path and in its order-only inputs.
 deps = ["//:gen_version"]
+# The diamond's shared bottom is reached *through* //text and //render. Saying
+# so is what stops the next change from reaching past them into it: //apps/cli
+# gets core's behaviour through the two libraries that shape it, and a direct
+# dependency would be a boundary crossed by accident rather than on purpose.
+visibility = ["group:middle"]
 includes = ["include"]
 
 [target.core_test]
