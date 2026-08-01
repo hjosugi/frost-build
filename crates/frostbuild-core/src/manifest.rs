@@ -453,7 +453,11 @@ impl ManifestError {
             notes.push(format!("expected one of {alternatives}"));
         }
         Self {
-            path: path.to_path_buf(),
+            // `/` on every host. A manifest writes its own paths that way — the
+            // spec says so — and the reason to report a workspace-relative path
+            // at all was that it reads the same everywhere; `core\frost.toml`
+            // on Windows and `core/frost.toml` elsewhere would give that up.
+            path: PathBuf::from(path.to_string_lossy().replace('\\', "/")),
             span,
             line,
             column,
@@ -2990,6 +2994,27 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn a_manifest_error_reads_the_same_on_every_host() {
+        // Package manifests are discovered by walking the filesystem, so their
+        // paths arrive with the host's separator. The message is meant to be
+        // the same string everywhere — that is why it is workspace-relative
+        // rather than absolute — so the separator is normalized with it.
+        let text = "[target.core]\nkind = \"cc_library\"\nsrc = [\"src/core.c\"]\n";
+        let error = Manifest::parse_document(
+            &PathBuf::from("core").join("nested").join(MANIFEST_FILE),
+            text,
+        )
+        .unwrap_err();
+
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.starts_with("core/nested/frost.toml:3:1: unknown field `src`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains('\\'), "{rendered}");
     }
 
     #[test]
