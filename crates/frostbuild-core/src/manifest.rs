@@ -347,6 +347,14 @@ struct RawCommandStep {
     args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStamp {
+    #[serde(default)]
+    command: Vec<String>,
+    stable_prefix: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
@@ -360,6 +368,19 @@ struct RawManifest {
     profile: BTreeMap<String, RawProfile>,
     #[serde(default)]
     target: BTreeMap<String, RawTarget>,
+    stamp: Option<RawStamp>,
+}
+
+/// How a workspace obtains values from outside the build; see
+/// [`crate::stamp`] for what the split buys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stamp {
+    /// Direct argv, run once per build from the workspace root. Not a shell
+    /// string: a workspace that wants a shell writes `["sh", "-c", "…"]` and
+    /// can see that it did, which is the same rule command targets follow.
+    pub command: Vec<String>,
+    /// Keys beginning with this participate in action keys; the rest do not.
+    pub stable_prefix: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -468,6 +489,9 @@ pub struct Manifest {
     pub platforms: BTreeMap<String, Platform>,
     pub profiles: BTreeMap<String, Profile>,
     pub targets: BTreeMap<String, Target>,
+    /// Workspace-level, so it is declared in the root manifest only.
+    #[serde(default)]
+    pub stamp: Option<Stamp>,
     /// Manifests which contributed to this workspace, used by graph caching.
     pub manifest_paths: Vec<String>,
 }
@@ -524,6 +548,16 @@ impl Manifest {
                     .map_err(with_key_suggestion)
                     .with_context(|| format!("failed to parse {}", rel.display()))?;
                 let mut child = Self::from_raw_unvalidated(package_raw)?;
+                if child.stamp.is_some() {
+                    // One build has one set of stamp values. A package section
+                    // would either be ignored — the failure this rejects — or
+                    // mean the command runs per package, which is a different
+                    // and much worse feature.
+                    bail!(
+                        "[stamp] in {} is workspace-level and belongs in the root {MANIFEST_FILE}",
+                        rel.display()
+                    );
+                }
                 expand_manifest_paths(&mut child, workspace_root, &package)?;
                 for (local, mut target) in child.targets {
                     let canonical = format!("//{package}:{local}");
@@ -695,9 +729,23 @@ impl Manifest {
                 })
                 .collect(),
             targets,
+            stamp: raw.stamp.map(build_stamp).transpose()?,
             manifest_paths: Vec::new(),
         })
     }
+}
+
+fn build_stamp(raw: RawStamp) -> Result<Stamp> {
+    if raw.command.is_empty() {
+        bail!("[stamp] needs a command, e.g. command = [\"tools/workspace_status.sh\"]");
+    }
+    let stable_prefix = raw
+        .stable_prefix
+        .unwrap_or_else(|| crate::stamp::DEFAULT_STABLE_PREFIX.to_string());
+    Ok(Stamp {
+        command: raw.command,
+        stable_prefix,
+    })
 }
 
 fn valid_target_name(name: &str) -> bool {

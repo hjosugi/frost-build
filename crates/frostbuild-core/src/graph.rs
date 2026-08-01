@@ -16,6 +16,12 @@ pub const BIN_DIR: &str = ".frost/bin";
 /// Frost-owned stamps recording the contents of declared `output_dirs`.
 pub const TREE_STAMP_DIR: &str = ".frost/tree";
 
+/// How a build-stamp value is referenced from a manifest. The reference — not
+/// the value — is what survives graph construction: values arrive once per
+/// build, and the graph must stay a pure function of the manifest so that
+/// caching it is sound. See [`crate::stamp`].
+const STAMP_OPEN: &str = "${stamp.";
+
 /// The interpreter frost runs every genrule and shell test through.
 ///
 /// frost chooses it, so its identity is frost's responsibility in exactly the
@@ -96,6 +102,17 @@ pub struct ActionNode {
     /// that failed does not deserve another try.
     #[serde(default)]
     pub flaky_retries: u32,
+    /// Stamp keys this action references whose values *are* action-key
+    /// material. A new commit rebuilding the binary that embeds its SHA is the
+    /// correct answer, not cache thrash.
+    #[serde(default)]
+    pub stable_stamps: Vec<String>,
+    /// Stamp keys this action references whose values are not. Feeding a wall
+    /// clock to a key would rebuild the world every second; instead an action
+    /// that reads one is re-executed unconditionally, which costs one action
+    /// rather than the graph below it.
+    #[serde(default)]
+    pub volatile_stamps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -165,6 +182,11 @@ pub struct BuildGraph {
     pub toolchain: Toolchain,
     /// Workspace default targets, embedded for the same reason.
     pub default_targets: Vec<String>,
+    /// The `[stamp]` section, embedded for the same reason again: a warm
+    /// invocation has to run the stamp command before it can execute anything
+    /// that reads one, and it gets here without having parsed a manifest.
+    #[serde(default)]
+    pub stamp: Option<crate::manifest::Stamp>,
     #[serde(skip)]
     file_ids: HashMap<String, FileId>,
 }
@@ -289,6 +311,7 @@ impl BuildGraph {
             platform: platform.to_string(),
             toolchain: toolchain.clone(),
             default_targets: manifest.default_targets.clone(),
+            stamp: manifest.stamp.clone(),
             ..BuildGraph::default()
         };
         let profile_flags = manifest.profiles.get(profile).cloned().unwrap_or_default();
@@ -369,6 +392,8 @@ impl BuildGraph {
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
                         flaky_retries: 0,
+                        stable_stamps: Vec::new(),
+                        volatile_stamps: Vec::new(),
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = outputs;
@@ -480,6 +505,8 @@ impl BuildGraph {
                             depfile: None,
                             depfile_format: crate::depfile::Format::Make,
                             flaky_retries: target.flaky_retries,
+                            stable_stamps: Vec::new(),
+                            volatile_stamps: Vec::new(),
                         })?;
                         target_node.actions.push(action);
                         stamp_ids.push(stamp_id);
@@ -543,22 +570,22 @@ impl BuildGraph {
                     let outputs = target
                         .outputs
                         .iter()
-                        .map(|path| expand_config_template(path, &tree, profile, platform))
+                        .map(|path| expand_config_template(path, &tree, profile, platform, false))
                         .collect::<Result<Vec<_>>>()?;
                     let depfile = target
                         .depfile
                         .as_ref()
-                        .map(|path| expand_config_template(path, &tree, profile, platform))
+                        .map(|path| expand_config_template(path, &tree, profile, platform, false))
                         .transpose()?;
                     let output_dirs = target
                         .output_dirs
                         .iter()
-                        .map(|path| expand_config_template(path, &tree, profile, platform))
+                        .map(|path| expand_config_template(path, &tree, profile, platform, false))
                         .collect::<Result<Vec<_>>>()?;
                     let clean_dirs = target
                         .clean_dirs
                         .iter()
-                        .map(|path| expand_config_template(path, &tree, profile, platform))
+                        .map(|path| expand_config_template(path, &tree, profile, platform, false))
                         .collect::<Result<Vec<_>>>()?;
                     let argv = expand_command_args(
                         driver,
@@ -622,6 +649,15 @@ impl BuildGraph {
                         .iter()
                         .map(|path| graph.file(path))
                         .collect::<Vec<_>>();
+                    let env = expand_env_dep_refs(&target.env, &dependency_map, name)?;
+                    let (stable_stamps, volatile_stamps) = collect_stamps(
+                        std::iter::once(&argv)
+                            .chain(followup_argv.iter())
+                            .flat_map(|command| command.iter())
+                            .chain(env.values()),
+                        manifest.stamp.as_ref(),
+                        name,
+                    )?;
                     let action = graph.push_action(ActionNode {
                         id: format!("command:{name}"),
                         desc: format!("RUN {name} [{tool_name}]"),
@@ -632,7 +668,7 @@ impl BuildGraph {
                         followup_argv,
                         clean_dirs,
                         preserve_outputs: target.preserve_outputs,
-                        env: expand_env_dep_refs(&target.env, &dependency_map, name)?,
+                        env,
                         pass_env: target.pass_env.clone(),
                         inputs,
                         order_only_inputs: Vec::new(),
@@ -641,6 +677,8 @@ impl BuildGraph {
                         depfile,
                         depfile_format: target.depfile_format,
                         flaky_retries: 0,
+                        stable_stamps,
+                        volatile_stamps,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = output_ids;
@@ -703,6 +741,8 @@ impl BuildGraph {
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
                         flaky_retries: 0,
+                        stable_stamps: Vec::new(),
+                        volatile_stamps: Vec::new(),
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![bin_id];
@@ -773,6 +813,8 @@ impl BuildGraph {
                             depfile: Some(depfile),
                             depfile_format: crate::depfile::Format::Make,
                             flaky_retries: 0,
+                            stable_stamps: Vec::new(),
+                            volatile_stamps: Vec::new(),
                         })?;
                         target_node.actions.push(action);
                         objs.push(obj);
@@ -806,6 +848,8 @@ impl BuildGraph {
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
                                 flaky_retries: 0,
+                                stable_stamps: Vec::new(),
+                                volatile_stamps: Vec::new(),
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![lib_id];
@@ -852,6 +896,8 @@ impl BuildGraph {
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
                                 flaky_retries: 0,
+                                stable_stamps: Vec::new(),
+                                volatile_stamps: Vec::new(),
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![bin_id];
@@ -882,6 +928,8 @@ impl BuildGraph {
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
                                         flaky_retries: target.flaky_retries,
+                                        stable_stamps: Vec::new(),
+                                        volatile_stamps: Vec::new(),
                                     })?;
                                     target_node.actions.push(test);
                                     stamp_ids.push(stamp_id);
@@ -906,6 +954,7 @@ impl BuildGraph {
         }
 
         graph.validate_clean_dirs()?;
+        graph.validate_volatile_stamps()?;
         Ok(graph)
     }
 
@@ -937,6 +986,58 @@ impl BuildGraph {
         }
         self.actions.push(action);
         Ok(id)
+    }
+
+    /// A volatile stamp value must not reach a compile.
+    ///
+    /// This is the failure the whole stable/volatile split exists to prevent,
+    /// and it is not obvious from the manifest that wrote it. A command target
+    /// that writes `version.h` containing a build timestamp re-runs every
+    /// build by design — that part is cheap and intended. But the header's
+    /// bytes then differ every build, so every translation unit that includes
+    /// it recompiles, and every library and binary above them relinks. One
+    /// unconditional action becomes a full rebuild, and the workspace's
+    /// incremental builds quietly stop being incremental.
+    ///
+    /// Rejected at load rather than warned about: a warning here is one nobody
+    /// reads until they are measuring why the build is slow, months later. The
+    /// fix is usually one character — make the key stable — or to embed the
+    /// value at link time instead of compile time.
+    fn validate_volatile_stamps(&self) -> Result<()> {
+        let mut poisoned: Vec<(usize, &str)> = Vec::new();
+        for action in &self.actions {
+            if action.kind != ActionKind::Compile {
+                continue;
+            }
+            for &input in action.inputs.iter().chain(&action.order_only_inputs) {
+                let Some(producer) = self.files[input].producer else {
+                    continue;
+                };
+                if !self.actions[producer].volatile_stamps.is_empty() {
+                    poisoned.push((producer, &self.files[input].path));
+                }
+            }
+        }
+        let Some(&(producer, path)) = poisoned.first() else {
+            return Ok(());
+        };
+        let producer = &self.actions[producer];
+        let compiles = poisoned.len();
+        bail!(
+            "action {:?} reads the volatile stamp {} and produces {path:?}, which \
+             {compiles} compile action(s) read. A volatile value changes every build, \
+             so every one of those compiles — and everything above them — would rebuild \
+             every time. Either rename the key to a stable one (it then participates in \
+             the action key, and a change rebuilds once), or keep the value out of what \
+             compiles read",
+            producer.id,
+            producer
+                .volatile_stamps
+                .iter()
+                .map(|key| format!("${{stamp.{key}}}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     }
 
     fn validate_clean_dirs(&self) -> Result<()> {
@@ -1555,6 +1656,16 @@ fn expand_genrule_cmd(
         .replace("${outs}", &outputs.join(" "))
         .replace("${out}", &outputs[0])
         .replace("${pathsep}", std::path::MAIN_SEPARATOR_STR);
+    if expanded.contains(STAMP_OPEN) {
+        // Worth its own sentence: a genrule is the obvious place to write a
+        // version header, and "unknown variable" would send the author looking
+        // for a typo in a name that is spelled correctly.
+        bail!(
+            "genrule cmd {cmd:?} uses ${{stamp.…}}, which only `kind = \"command\"` \
+             targets expand. A genrule runs through a shell, where frost cannot \
+             tell a value it substituted from one the shell produced"
+        );
+    }
     if expanded.contains("${") {
         bail!(
             "genrule cmd has unknown variable: {cmd:?} \
@@ -1565,17 +1676,61 @@ fn expand_genrule_cmd(
     Ok(expanded)
 }
 
+/// Which stamp keys a command reads, split by whether the value is action-key
+/// material. Sorted and deduplicated so the pair is a property of the action
+/// rather than of the order its arguments happen to be written in.
+fn collect_stamps<'a>(
+    texts: impl Iterator<Item = &'a String>,
+    stamp: Option<&crate::manifest::Stamp>,
+    target: &str,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut stable = Vec::new();
+    let mut volatile = Vec::new();
+    for text in texts {
+        for key in crate::stamp::references(text, &format!("target {target:?}"))? {
+            let Some(stamp) = stamp else {
+                bail!(
+                    "target {target:?} references ${{stamp.{key}}}, but this workspace \
+                     declares no [stamp] section"
+                );
+            };
+            match crate::stamp::is_stable(&key, &stamp.stable_prefix) {
+                true => stable.push(key),
+                false => volatile.push(key),
+            }
+        }
+    }
+    for keys in [&mut stable, &mut volatile] {
+        keys.sort_unstable();
+        keys.dedup();
+    }
+    Ok((stable, volatile))
+}
+
+/// `${stamp.KEY}` is expanded at execution time, not here, so a check for
+/// leftover variables must not read one as a typo. Callers that expand a
+/// *path* pass `false`: a stamp in an output path would name a different file
+/// every build, which is never what was meant.
+fn unresolved_variable(text: &str, allow_stamp: bool) -> bool {
+    let scanned = match allow_stamp {
+        true => std::borrow::Cow::Owned(text.replace(STAMP_OPEN, "")),
+        false => std::borrow::Cow::Borrowed(text),
+    };
+    scanned.contains("${")
+}
+
 fn expand_config_template(
     value: &str,
     config: &str,
     profile: &str,
     platform: &str,
+    allow_stamp: bool,
 ) -> Result<String> {
     let expanded = value
         .replace("${config}", config)
         .replace("${profile}", profile)
         .replace("${platform}", platform);
-    if expanded.contains("${") {
+    if unresolved_variable(&expanded, allow_stamp) {
         bail!(
             "unknown configuration variable in {value:?} \
              (supported: ${{config}}, ${{profile}}, ${{platform}})"
@@ -1666,14 +1821,15 @@ fn expand_command_args(
                     };
                     expanded = expanded.replace("${clean_dir}", clean_dir);
                 }
-                expanded = expand_config_template(&expanded, config, profile, platform)?;
-                if expanded.contains("${") {
+                expanded = expand_config_template(&expanded, config, profile, platform, true)?;
+                if unresolved_variable(&expanded, true) {
                     bail!(
                         "unknown command variable in {arg:?} (supported: ${{in}}, ${{deps}}, \
                          ${{dep:LABEL}}, ${{deps:LABEL}}, \
                          ${{out}}, ${{out_dir}}, ${{outs}}, ${{output_dir}}, \
                          ${{output_dirs}}, ${{clean_dir}}, ${{clean_dirs}}, \
-                         ${{depfile}}, ${{config}}, ${{profile}}, ${{platform}})"
+                         ${{depfile}}, ${{config}}, ${{profile}}, ${{platform}}, \
+                         ${{stamp.KEY}})"
                     );
                 }
                 argv.push(expanded);
@@ -1716,7 +1872,7 @@ fn expand_test_args(
                 }
                 let expanded =
                     expand_dep_singles(arg, dependency_map, &format!("test arg {arg:?}"))?;
-                let expanded = expand_config_template(&expanded, config, profile, platform)?;
+                let expanded = expand_config_template(&expanded, config, profile, platform, true)?;
                 argv.push(expanded);
             }
         }
@@ -2566,6 +2722,111 @@ mod tests {
         .unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("at most 9"), "{error}");
+    }
+
+    #[test]
+    fn a_stamp_reference_is_classified_by_its_name_alone() {
+        // The point of splitting by name: no subprocess has run, no value
+        // exists yet, and the graph already knows which half each reference is
+        // in. That is what lets a manifest be validated at load, and what keeps
+        // the graph a pure function of the manifest — and therefore cacheable.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            sh = "sh"
+
+            [stamp]
+            command = ["tools/status"]
+
+            [target.release]
+            kind = "command"
+            tool = "sh"
+            args = ["-c", "echo ${stamp.STABLE_V} ${stamp.BUILD_TIME} > ${out}"]
+            env = { NOTE = "built at ${stamp.BUILD_TIME}" }
+            inputs = []
+            outputs = ["gen/${config}/v.txt"]
+            "#,
+        )
+        .unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+        let action = graph
+            .actions
+            .iter()
+            .find(|action| action.id == "command:release")
+            .unwrap();
+        assert_eq!(action.stable_stamps, ["STABLE_V"]);
+        // Once, though it is referenced from both an argument and an
+        // environment value: the pair describes the action, not how many times
+        // the manifest happened to spell the name.
+        assert_eq!(action.volatile_stamps, ["BUILD_TIME"]);
+        // And the reference survives into the argv. Substituting the value here
+        // would put a volatile value into the action key by the back door.
+        assert!(
+            action
+                .argv
+                .iter()
+                .any(|arg| arg.contains("${stamp.BUILD_TIME}")),
+            "{:?}",
+            action.argv
+        );
+    }
+
+    #[test]
+    fn a_stamp_reference_without_a_stamp_section_is_a_manifest_error() {
+        let error = BuildGraph::from_manifest(
+            &Manifest::parse_str(
+                r#"
+                [toolchain.tools]
+                sh = "sh"
+
+                [target.release]
+                kind = "command"
+                tool = "sh"
+                args = ["-c", "echo ${stamp.STABLE_V} > ${out}"]
+                inputs = []
+                outputs = ["gen/${config}/v.txt"]
+                "#,
+            )
+            .unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
+        // Not "unknown command variable": the name is spelled correctly and the
+        // thing that is missing is somewhere else in the file.
+        assert!(error.contains("[stamp] section"), "{error}");
+        assert!(error.contains("STABLE_V"), "{error}");
+    }
+
+    #[test]
+    fn an_empty_stable_prefix_makes_every_value_stable() {
+        // A workspace declaring it has no volatile values, and would like to be
+        // told if it ever adds one.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            sh = "sh"
+
+            [stamp]
+            command = ["tools/status"]
+            stable_prefix = ""
+
+            [target.release]
+            kind = "command"
+            tool = "sh"
+            args = ["-c", "echo ${stamp.BUILD_TIME} > ${out}"]
+            inputs = []
+            outputs = ["gen/${config}/v.txt"]
+            "#,
+        )
+        .unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+        let action = graph
+            .actions
+            .iter()
+            .find(|action| action.id == "command:release")
+            .unwrap();
+        assert_eq!(action.stable_stamps, ["BUILD_TIME"]);
+        assert!(action.volatile_stamps.is_empty());
     }
 
     #[test]
