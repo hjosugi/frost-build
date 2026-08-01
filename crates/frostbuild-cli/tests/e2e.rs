@@ -1475,31 +1475,33 @@ sandbox = false
     );
 }
 
+/// A failing shard reruns; the shards that passed stay cached.
+///
+/// Which shard fails has to be decided by the test command, so this is POSIX
+/// shell command text and runs where that is the shell — the `cfg(unix)` row of
+/// `docs/09_platform_support.md`. What sharding does that is not shell-shaped —
+/// action identity, per-shard stamps, the environment, and both rejections —
+/// is covered by `frostbuild-core` unit tests, which run on every host.
+#[cfg(unix)]
 #[test]
 fn one_shard_failing_leaves_the_other_shards_cached() {
     let ws = Workspace::empty("shard-caching");
     ws.write("failing.txt", "1\n");
     // Shard 1 fails; the others pass. Nothing about the sources differs
     // between them, so this isolates the shard identity itself.
-    #[cfg(unix)]
-    let cmd = r#"grep -qx \"$TEST_SHARD_INDEX\" failing.txt && exit 1; exit 0"#;
-    #[cfg(windows)]
-    let cmd = r#"findstr /X /C:\"%TEST_SHARD_INDEX%\" failing.txt >nul && exit /b 1 || exit /b 0"#;
     ws.write(
         "frost.toml",
-        &format!(
-            r#"
+        r#"
 [workspace]
 default_targets = []
 
 [target.split]
 kind = "test"
-cmd = "{cmd}"
+cmd = "grep -qx \"$TEST_SHARD_INDEX\" failing.txt && exit 1; exit 0"
 shard_count = 3
 inputs = ["failing.txt"]
 sandbox = false
-"#
-        ),
+"#,
     );
 
     let (ok, out) = ws.frost(&["test", "--all"]);
