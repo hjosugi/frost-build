@@ -25,6 +25,7 @@ end of this document.
 | `frost info` keys | A key keeps naming the same thing. New keys are added | `info_answers_path_questions_without_a_graph` |
 | `.frost-version` format | One `X.Y.Z` line, optional `#` comments, whitespace insignificant. A file `frostw` reads today keeps being read the same way, by the wrapper and by frost itself | `wrapper::tests::a_version_is_read_the_way_the_wrapper_scripts_read_it`, `this_repository_checks_in_the_wrapper_frost_writes` |
 | Release asset names and `SHA256SUMS` | `frostbuild-v<version>-<triple>.{tar.gz,zip}` beside a `SHA256SUMS` listing them, under `releases/download/v<version>/`. A checked-in `frostw` from an older release keeps resolving newer ones | `frostw_fetches_verifies_and_runs_the_version_the_workspace_declares` |
+| `--build-event-json` events | Every line carries `schema`. Fields are added, never removed or retyped; `event` and `result` names keep their meaning. A bump means a field changed meaning or left | `the_build_event_stream_is_ndjson_a_ci_job_can_read` |
 | Artifact layout under the configured output tree | `.frost/out/<config>`, `.frost/bin/<config>` and the `${config}` rule stay as documented, and `frost info` answers them so callers need not encode the rule | `info_answers_path_questions_without_a_graph` |
 
 ### Exit codes

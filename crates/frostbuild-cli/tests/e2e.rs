@@ -501,6 +501,151 @@ fn this_repository_and_its_samples_pass_their_own_lint_and_fmt() {
 }
 
 #[test]
+fn the_build_event_stream_is_ndjson_a_ci_job_can_read() {
+    let ws = Workspace::new("build-events");
+    let events = |name: &str| ws.dir.join(name);
+    let read = |name: &str| -> Vec<serde_json::Value> {
+        std::fs::read_to_string(events(name))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+            .collect()
+    };
+
+    let (ok, out) = ws.frost(&[
+        "build",
+        "--build-event-json",
+        events("first.ndjson").to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+
+    let first = read("first.ndjson");
+    // Every line carries the schema and its position, so a consumer can check
+    // compatibility and order without trusting a clock.
+    for (index, event) in first.iter().enumerate() {
+        assert_eq!(event["schema"], "frost-build-events-v1", "{event}");
+        assert_eq!(event["seq"], index, "{event}");
+    }
+    assert_eq!(first.first().unwrap()["event"], "build_started");
+    assert_eq!(first.last().unwrap()["event"], "build_finished");
+    assert_eq!(first.last().unwrap()["success"], true);
+    assert!(
+        first
+            .iter()
+            .any(|event| event["event"] == "action_finished" && event["result"] == "executed"),
+        "a first build executes something: {first:?}"
+    );
+
+    // A fully cached rerun says so, per action, in a field a machine switches
+    // on rather than in prose.
+    let (ok, out) = ws.frost(&[
+        "build",
+        "--build-event-json",
+        events("cached.ndjson").to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+    let cached = read("cached.ndjson");
+    assert!(
+        cached
+            .iter()
+            .any(|event| event["cached"] == true || event["event"] == "all_cached"),
+        "a cached rerun must be visible as such: {cached:?}"
+    );
+
+    // Determinism, stated as what is actually true.
+    //
+    // The *content* of a build's events is deterministic: the same build
+    // produces the same set of actions with the same results. The *order* is
+    // emission order, and under parallelism that follows whichever worker
+    // finished first -- which is real information about the run, not noise.
+    // Promising a stable order would mean buffering the whole build before
+    // writing a line, which defeats the point of a stream a dashboard reads
+    // while the build is going.
+    //
+    // So a consumer that wants to compare two runs sorts by id, and this
+    // asserts the property that sorting makes available.
+    // From scratch, so this is the same *work* rather than the same request:
+    // a cached rerun takes the all-cached fast path and reports one
+    // `all_cached` event instead of one per action, which is the point of
+    // that path and not something to compare against a cold build.
+    let _ = std::fs::remove_dir_all(ws.dir.join(".frost"));
+    let (ok, _) = ws.frost(&[
+        "build",
+        "--build-event-json",
+        events("again.ndjson").to_str().unwrap(),
+    ]);
+    assert!(ok);
+    let finished = |events: &[serde_json::Value]| -> Vec<String> {
+        let mut rows: Vec<String> = events
+            .iter()
+            .filter(|event| event["event"] == "action_finished")
+            .map(|event| format!("{} {}", event["id"], event["result"]))
+            .collect();
+        rows.sort();
+        rows
+    };
+    let first_again = read("again.ndjson");
+    assert_eq!(
+        finished(&first),
+        finished(&first_again),
+        "the same build must report the same actions with the same results"
+    );
+
+    // At one job there is nothing to interleave, so order is stable too, and
+    // that is worth pinning: it is what makes a single-threaded CI job's log
+    // diffable.
+    for name in ["serial-a.ndjson", "serial-b.ndjson"] {
+        let _ = std::fs::remove_dir_all(ws.dir.join(".frost"));
+        let (ok, out) = ws.frost(&[
+            "build",
+            "-j",
+            "1",
+            "--build-event-json",
+            events(name).to_str().unwrap(),
+        ]);
+        assert!(ok, "{out}");
+    }
+    let strip = |events: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+        events
+            .into_iter()
+            .map(|mut event| {
+                // Timings are the one thing that cannot repeat.
+                for key in ["duration_ms", "elapsed_ms", "critical_path_ms"] {
+                    event.as_object_mut().unwrap().remove(key);
+                }
+                event
+            })
+            .collect()
+    };
+    assert_eq!(
+        strip(read("serial-a.ndjson")),
+        strip(read("serial-b.ndjson")),
+        "at -j1 the whole stream repeats exactly, timings aside"
+    );
+
+    // The stream is independent of the terminal output: asking for it does not
+    // change what a person sees.
+    let (ok, with_events) = ws.frost(&[
+        "build",
+        "--build-event-json",
+        events("quiet.ndjson").to_str().unwrap(),
+    ]);
+    assert!(ok);
+    let (ok, without) = ws.frost(&["build"]);
+    assert!(ok);
+    // Elapsed milliseconds are the one thing two runs cannot share, so the
+    // comparison is of everything else -- this asserts that asking for the
+    // stream changes nothing a person sees, not that time stood still.
+    let strip_timing = |text: String| {
+        text.split_whitespace()
+            .filter(|word| !word.chars().all(|c| c.is_ascii_digit()))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert_eq!(strip_timing(with_events), strip_timing(without));
+}
+
+#[test]
 fn frostrc_supplies_defaults_that_the_command_line_can_still_override() {
     let ws = Workspace::new("frostrc");
 

@@ -626,3 +626,40 @@ reasons they do or do not on the command line.
 Not supported, deliberately: conditional syntax like `build:linux --foo`
 (platform differences belong to `[platform.*]`), and `--config` sections that
 reference other `--config` sections. One level only.
+
+## Build event stream
+
+`--build-event-json FILE` writes one JSON object per line describing the build,
+so a CI job can count failures, chart durations or find the slow target without
+parsing terminal output. It is independent of the display: asking for it does
+not change what a person sees.
+
+```json
+{"event":"build_started","actions":5,"jobs":4,"schema":"frost-build-events-v1","seq":0}
+{"event":"action_started","id":"compile:util:src/util.c","desc":"CC src/util.c (util)","schema":"...","seq":1}
+{"event":"action_finished","id":"compile:util:src/util.c","result":"executed","cached":false,"duration_ms":31,"schema":"...","seq":2}
+{"event":"build_finished","success":true,"elapsed_ms":55,"schema":"...","seq":11}
+```
+
+`result` is one of `cached`, `executed`, `flaky`, `failed`, `skipped`,
+`would_run`, `may_run`. These are stable names of their own, deliberately not
+the display strings — the terminal says "cache miss" for an action that ran,
+which is right on a terminal and wrong in a field a machine switches on.
+`detail` appears only when there is something to say, so its absence means
+nothing went wrong rather than requiring a comparison against an empty string.
+
+The events are the same ones the progress display consumes, written by the same
+thread, so a dashboard and a human cannot disagree about what happened.
+
+**On determinism.** The *content* is deterministic: the same build reports the
+same actions with the same results. The *order* is emission order, and under
+parallelism that follows whichever worker finished first — real information
+about the run rather than noise. Promising a stable order would mean buffering
+the whole build before writing a line, which defeats a stream a dashboard reads
+while the build is going. A consumer comparing two runs should sort by `id`; at
+`-j 1` the stream repeats exactly, timings aside.
+
+A fully cached rerun takes the all-cached fast path and reports a single
+`all_cached` event rather than one per action. That is what keeps that path
+O(1), and it is why comparing a cold build's events to a warm one's compares
+two different things.

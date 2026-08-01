@@ -19,6 +19,7 @@ use frostbuild_exec::{
 use notify::{RecursiveMode, Watcher};
 
 mod bazel;
+mod events;
 mod frostrc;
 mod jar;
 mod lsp;
@@ -64,6 +65,16 @@ struct Cli {
     /// defaults apply
     #[arg(long, global = true)]
     no_frostrc: bool,
+
+    /// Write one JSON object per line describing the build, for CI and
+    /// dashboards. Independent of the terminal output
+    #[arg(
+        long,
+        value_name = "FILE",
+        global = true,
+        value_hint = ValueHint::FilePath
+    )]
+    build_event_json: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Cmd,
@@ -1434,6 +1445,7 @@ fn run(cli: Cli) -> Result<i32> {
                 test_options: Default::default(),
                 runs_per_test: 1,
                 test_output: TestOutputArg::Errors,
+                build_event_json: cli.build_event_json.clone(),
                 daemon,
                 affected: false,
                 predictive: false,
@@ -1590,6 +1602,7 @@ fn run(cli: Cli) -> Result<i32> {
                 test_options: parse_test_options(test_filter, test_env, test_arg)?,
                 runs_per_test,
                 test_output,
+                build_event_json: cli.build_event_json.clone(),
                 daemon,
                 affected,
                 predictive,
@@ -2329,6 +2342,8 @@ struct BuildRequest {
     runs_per_test: u32,
     /// How much of what the tests wrote to show.
     test_output: TestOutputArg,
+    /// Where to write the ndjson build event stream, if anywhere.
+    build_event_json: Option<PathBuf>,
     daemon: bool,
     affected: bool,
     predictive: bool,
@@ -2383,6 +2398,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         test_options: Default::default(),
         runs_per_test: 1,
         test_output: TestOutputArg::Errors,
+        build_event_json: None,
         daemon: false,
         affected: false,
         predictive: false,
@@ -3029,6 +3045,7 @@ fn run_target(
             test_options: Default::default(),
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
+            build_event_json: None,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3218,6 +3235,7 @@ fn run_ide(
             test_options: Default::default(),
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
+            build_event_json: None,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3620,6 +3638,7 @@ fn run_debug(
             test_options: Default::default(),
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
+            build_event_json: None,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3799,6 +3818,7 @@ fn run_pick(
             test_options: Default::default(),
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
+            build_event_json: None,
             jobs: None,
             keep_going: false,
             explain: false,
@@ -4114,7 +4134,13 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     // Only `--test-output=all` echoes what a passing test wrote. A green
     // suite's output is the noise that buries the one failure worth reading.
     let echo_success = !request.test_mode || request.test_output == TestOutputArg::All;
-    let (progress, renderer) = progress::start(request.no_tui, request.verbose, echo_success);
+    let events = request
+        .build_event_json
+        .as_deref()
+        .map(events::EventLog::create)
+        .transpose()?;
+    let (progress, renderer) =
+        progress::start(request.no_tui, request.verbose, echo_success, events);
     let opts = BuildOptions {
         jobs: request.jobs.unwrap_or_else(default_jobs),
         keep_going: request.keep_going,
