@@ -45,6 +45,11 @@ pass_env = [
   "HTTPS_PROXY",
   "NO_PROXY",
 ]
+# `frost lint` is right that passing HOME makes this target's key per-machine,
+# so nothing it builds is shared between them. Maven resolves its dependency
+# cache under HOME and there is no flag that moves it without also moving the
+# cache, so the cost is accepted here rather than argued with.
+lint_allow = ["volatile-pass-env"]
 # Maven reads a JDK, its local repository and the network, all outside the
 # workspace.
 sandbox = false

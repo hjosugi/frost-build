@@ -442,6 +442,46 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+fn this_repository_and_its_samples_pass_their_own_lint() {
+    // A rule that is not run against a real manifest is a rule nobody has
+    // checked. Both false positives this rule set shipped with -- a generated
+    // include directory reported as missing, and a `cc_test` reported as
+    // unreachable -- were found by pointing it at these exact files.
+    //
+    // A test rather than a stage in `frost.toml`: the gate must not depend on
+    // the binary it is gating, which is the same reason `scripts/check.sh`
+    // exists.
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut offenders = Vec::new();
+    for workspace in [
+        ".",
+        "sample_c",
+        "sample_multi",
+        "sample_java",
+        "sample_spring",
+        "sample_maven",
+    ] {
+        let root = repo.join(workspace);
+        if !root.join("frost.toml").is_file() {
+            continue;
+        }
+        let manifest = frostbuild_core::manifest::Manifest::load(&root)
+            .unwrap_or_else(|error| panic!("{workspace} failed to load: {error:#}"));
+        for finding in frostbuild_core::lint::lint(&manifest, &root) {
+            offenders.push(format!(
+                "{workspace}: {} {} ({})",
+                finding.target, finding.message, finding.rule
+            ));
+        }
+    }
+    assert_eq!(
+        offenders,
+        Vec::<String>::new(),
+        "fix the manifest, or record the accepted cost with lint_allow"
+    );
+}
+
+#[test]
 fn query_targets_answers_what_is_in_this_workspace() {
     let ws = Workspace::multi("query-targets");
 

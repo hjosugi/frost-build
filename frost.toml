@@ -59,7 +59,13 @@ inputs = [
 # everything cargo genuinely needs is named. Each one's present-or-absent value
 # is action-key material, which is what makes a toolchain change invalidate the
 # stage rather than silently reuse a verdict from another compiler.
+#
+# `frost lint` is right that HOME and PATH make these keys per-machine. That is
+# the point here: this is a local gate, its verdicts are never shared through a
+# remote cache, and cargo cannot find a toolchain without them. The cost is
+# accepted rather than argued with, and every stage says so.
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+lint_allow = ["volatile-pass-env"]
 # cargo reads a toolchain, a registry cache and a shared target directory, all
 # outside anything Frost declares.
 sandbox = false
@@ -88,6 +94,7 @@ inputs = [
   "crates/**/*.toml",
 ]
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+lint_allow = ["volatile-pass-env"]
 sandbox = false
 timeout = 1800
 
@@ -97,6 +104,7 @@ tool = "cargo"
 args = ["fmt", "--all", "--", "--check"]
 inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
 pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+lint_allow = ["volatile-pass-env"]
 sandbox = false
 
 [target.python_test]
@@ -107,6 +115,7 @@ args = ["-m", "unittest", "discover", "-s", "tests"]
 # leaves it cached, which `scripts/check.sh` cannot do.
 inputs = ["frost.py", "tests/**/*.py"]
 pass_env = ["HOME", "PATH"]
+lint_allow = ["volatile-pass-env"]
 sandbox = false
 
 [target.vscode_test]
@@ -125,5 +134,6 @@ inputs = [
 # stages. It does need `node_modules`, which is gitignored: run `npm ci` in
 # tools/vscode once.
 pass_env = ["HOME", "PATH"]
+lint_allow = ["volatile-pass-env"]
 sandbox = false
 timeout = 900

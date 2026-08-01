@@ -508,6 +508,12 @@ enum Cmd {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Report manifest patterns that build but cost something later
+    Lint {
+        /// Emit findings as one machine-readable JSON object
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain why a build reused a result or did not
     Journal {
         #[command(subcommand)]
@@ -1737,6 +1743,7 @@ fn run(cli: Cli) -> Result<i32> {
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => run_query(&root, &function),
+        Cmd::Lint { json } => run_lint(&root, json),
         Cmd::Journal { command } => match command {
             JournalCmd::Export {
                 out,
@@ -4195,6 +4202,32 @@ fn parse_test_options(
 /// environment, the toolchain fingerprint is computed per run, and the profile
 /// and platform come from this invocation. Only together do they explain a
 /// cache miss.
+/// Report manifest patterns that parse, build, and cost something later.
+fn run_lint(root: &std::path::Path, json: bool) -> Result<i32> {
+    let manifest = Manifest::load(root)?;
+    let findings = frostbuild_core::lint::lint(&manifest, root);
+    if json {
+        let report = frostbuild_core::lint::LintReport::new(&findings);
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if findings.is_empty() {
+        println!("lint: clean");
+    } else {
+        for finding in &findings {
+            println!("{}: {}", finding.target, finding.message);
+            println!("  {} ({})", finding.why, finding.rule);
+        }
+        println!(
+            "lint: {} finding{}",
+            findings.len(),
+            if findings.len() == 1 { "" } else { "s" }
+        );
+    }
+    // Findings are an answer about the manifest, which is the "your code" side
+    // of the exit-code split -- the same 1 a failing test returns, so `frost
+    // lint` can gate CI without a wrapper that interprets output.
+    Ok(i32::from(!findings.is_empty()))
+}
+
 fn run_journal_export(
     root: &std::path::Path,
     profile: &str,

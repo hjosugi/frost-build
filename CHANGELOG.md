@@ -39,6 +39,19 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost lint`, and a `lint_allow` manifest key. It reports patterns that parse,
+  build and cost something later: a target nothing reaches, an `-I` pointing at
+  a directory nothing creates, a `pass_env` naming a variable that is
+  deliberately outside the action key (so nothing that target builds is ever
+  shared between machines), an absolute path in `args`/`cmd`/`env` where nothing
+  else validates it, and shell metacharacters in a genrule `cmd` that mean
+  different things under `/bin/sh` and `cmd.exe`. Exits 1 on findings so it
+  gates CI directly, with `--json` carrying a `by_rule` count. Every rule had to
+  catch something nothing else does, which excluded duplicate outputs,
+  undeclared profiles, absolute paths in declared path fields and empty globs —
+  all already hard errors. `lint_allow` records a finding that is true and
+  unavoidable next to the target that pays for it.
+
 - `frost query targets`: the one query with no starting point. `deps` and
   `rdeps` both need a target to walk from, which made "what is in this
   workspace" the question they could not answer — tooling was deriving it from
