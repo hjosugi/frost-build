@@ -19,6 +19,7 @@ use frostbuild_exec::{
 use notify::{RecursiveMode, Watcher};
 
 mod bazel;
+mod frostrc;
 mod jar;
 mod npm;
 mod progress;
@@ -28,7 +29,12 @@ mod wheel;
 #[command(
     name = "frost",
     version,
-    about = "frostbuild: correct, fast incremental builds"
+    about = "frostbuild: correct, fast incremental builds",
+    // A later occurrence of an option wins instead of being an error. This is
+    // what lets `.frostrc` defaults be injected ahead of the real command line
+    // and get the documented precedence for free, rather than reimplementing
+    // clap's parsing and type checking to merge two sources by hand.
+    args_override_self = true
 )]
 struct Cli {
     /// Workspace root (frost.toml for Frost commands; Bazel workspace for bazel-dev)
@@ -40,6 +46,21 @@ struct Cli {
         value_hint = ValueHint::DirPath
     )]
     workspace: PathBuf,
+
+    /// Apply a named `[config.NAME]` section from `.frostrc`. Repeatable;
+    /// applied in the order given
+    #[arg(
+        long,
+        value_name = "NAME",
+        global = true,
+        add = ArgValueCompleter::new(complete_config)
+    )]
+    config: Vec<String>,
+
+    /// Ignore `.frostrc` entirely, so only the command line and built-in
+    /// defaults apply
+    #[arg(long, global = true)]
+    no_frostrc: bool,
 
     #[command(subcommand)]
     command: Cmd,
@@ -958,6 +979,33 @@ fn complete_target_kind(current: &OsStr) -> Vec<CompletionCandidate> {
     )
 }
 
+/// `[config.NAME]` sections, from whichever `.frostrc` files exist.
+///
+/// These are enumerable, unlike a test runner's filter grammar, so offering
+/// them is a keystroke rather than a guess. A file that does not parse yields
+/// nothing rather than an error: completion runs on every Tab, and a broken
+/// config should be reported when a command runs, not while typing one.
+fn complete_config(current: &OsStr) -> Vec<CompletionCandidate> {
+    let mut values = Vec::new();
+    let files = frostrc::user_config_path()
+        .into_iter()
+        .chain(std::iter::once(PathBuf::from(frostrc::WORKSPACE_FILE)));
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = toml::from_str::<toml::Table>(&text) else {
+            continue;
+        };
+        if let Some(toml::Value::Table(named)) = document.get("config") {
+            values.extend(named.keys().cloned());
+        }
+    }
+    values.sort();
+    values.dedup();
+    candidates(current, values)
+}
+
 fn complete_profile(current: &OsStr) -> Vec<CompletionCandidate> {
     let mut values = vec![frostbuild_core::manifest::DEFAULT_PROFILE.to_string()];
     if let Some(manifest) = completion_manifest() {
@@ -1227,7 +1275,13 @@ fn frost_main() {
         eprintln!("frost: failed to install signal handler: {error:#}");
         std::process::exit(2);
     }
-    let cli = Cli::parse();
+    let cli = match resolve_command_line() {
+        Ok(cli) => cli,
+        Err(error) => {
+            eprintln!("frost: error: {error:#}");
+            std::process::exit(2);
+        }
+    };
     match run(cli) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
@@ -1235,6 +1289,59 @@ fn frost_main() {
             std::process::exit(2);
         }
     }
+}
+
+/// Parse the command line, with `.frostrc` spliced in ahead of it.
+///
+/// Two passes: the first learns the workspace, the subcommand and which
+/// `--config` sections were asked for, because all three are needed to know
+/// what the file contributes. The second parses the real thing.
+///
+/// Config arguments go *before* the user's, so clap's last-occurrence-wins
+/// rule gives the documented precedence without this module reimplementing it.
+fn resolve_command_line() -> Result<Cli> {
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let first = Cli::try_parse_from(&argv);
+    // A command line clap rejects is reported by clap, not by this: a config
+    // file cannot fix a typo, and a parse error here would replace a good
+    // message with a worse one.
+    let Ok(first) = first else {
+        return Ok(Cli::parse_from(&argv));
+    };
+    if first.no_frostrc {
+        return Ok(first);
+    }
+    // From clap's own parse, not from argv[1]: a global flag may come first,
+    // as in `frost -C dir build`, and guessing the position meant the file was
+    // silently ignored for exactly the invocation `-C` exists for.
+    let command = Cli::command();
+    let Some(subcommand) = command
+        .clone()
+        .try_get_matches_from(&argv)
+        .ok()
+        .and_then(|matches| matches.subcommand_name().map(str::to_string))
+    else {
+        return Ok(first);
+    };
+    let resolved = frostrc::resolve(&first.workspace, &subcommand, &first.config)?;
+    frostrc::validate(&command, &subcommand, &resolved)?;
+    if resolved.args.is_empty() {
+        return Ok(first);
+    }
+
+    // Rebuilt as [program, subcommand, <from file>, <everything the user
+    // typed>]. Splicing after the subcommand keeps a global flag typed before
+    // it — `frost -C dir build` — in front of the file's arguments, which is
+    // where it has to be for clap to see it at all.
+    let mut spliced: Vec<std::ffi::OsString> = Vec::with_capacity(argv.len() + resolved.args.len());
+    let position = argv
+        .iter()
+        .position(|arg| arg == std::ffi::OsStr::new(&subcommand))
+        .unwrap_or(1);
+    spliced.extend(argv[..=position].iter().cloned());
+    spliced.extend(resolved.args.iter().map(std::ffi::OsString::from));
+    spliced.extend(argv[position + 1..].iter().cloned());
+    Ok(Cli::parse_from(spliced))
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -1399,7 +1506,16 @@ fn run(cli: Cli) -> Result<i32> {
             profile,
             platform,
             json,
-        } => run_doctor(&root, &profile, &platform, json),
+        } => {
+            // Resolved again here rather than threaded through every command:
+            // `doctor` is the only one that reports it, and the read is a
+            // couple of small files.
+            let frostrc = (!cli.no_frostrc)
+                .then(|| frostrc::resolve(&root, "build", &cli.config))
+                .transpose()?
+                .unwrap_or_default();
+            run_doctor(&root, &profile, &platform, json, &frostrc)
+        }
         Cmd::Test {
             targets,
             jobs,
@@ -3265,7 +3381,13 @@ fn run_info(
     Ok(0)
 }
 
-fn run_doctor(root: &Path, profile: &str, platform: &str, json: bool) -> Result<i32> {
+fn run_doctor(
+    root: &Path,
+    profile: &str,
+    platform: &str,
+    json: bool,
+    frostrc: &frostrc::Resolved,
+) -> Result<i32> {
     let graph = load_graph(root, profile, platform)?;
     let mut required = vec![
         inspect_tool(root, "C compiler", &graph.toolchain.cc, true),
@@ -3310,6 +3432,16 @@ fn run_doctor(root: &Path, profile: &str, platform: &str, json: bool) -> Result<
                 "actions": graph.actions.len(),
                 "required_tools": required,
                 "optional_integrations": extras,
+                "frostrc": frostrc
+                    .origins
+                    .iter()
+                    .map(|origin| serde_json::json!({
+                        "file": origin.file,
+                        "line": origin.line,
+                        "section": origin.section,
+                        "key": origin.key,
+                    }))
+                    .collect::<Vec<_>>(),
             }))?
         );
         return Ok(if ready { 0 } else { 1 });
@@ -3321,6 +3453,27 @@ fn run_doctor(root: &Path, profile: &str, platform: &str, json: bool) -> Result<
     );
     println!("|-- workspace  {}", root.display());
     println!("|-- config     {profile} / {platform}");
+    // Which file, which section, which key. "A setting is in effect" is not
+    // useful without the line to go and change.
+    if !frostrc.origins.is_empty() {
+        println!(
+            "|-- frostrc    {} setting(s) in effect",
+            frostrc.origins.len()
+        );
+        for origin in &frostrc.origins {
+            println!(
+                "|     {}:{} [{}] {}",
+                origin
+                    .file
+                    .strip_prefix(root)
+                    .unwrap_or(&origin.file)
+                    .display(),
+                origin.line,
+                origin.section,
+                origin.key
+            );
+        }
+    }
     println!(
         "|-- graph      {} targets / {} actions",
         graph.targets.len(),

@@ -108,13 +108,22 @@ impl Workspace {
         Self { dir }
     }
 
+    /// Point `.frostrc` discovery at a directory that has none.
+    ///
+    /// Without this every test inherits whatever `~/.config/frost/frostrc` the
+    /// person running it happens to have, so a developer with `jobs = 1` or
+    /// `profile = "release"` in their own config would see unrelated tests
+    /// fail in ways nobody could reproduce. A user config is a feature; a user
+    /// config silently participating in the suite is not.
+    fn isolated(&self, command: &mut Command) {
+        command.env("XDG_CONFIG_HOME", self.dir.join(".no-user-config"));
+    }
+
     fn frost(&self, args: &[&str]) -> (bool, String) {
-        let out = Command::new(frost_bin())
-            .arg("-C")
-            .arg(&self.dir)
-            .args(args)
-            .output()
-            .expect("spawn frost");
+        let mut command = Command::new(frost_bin());
+        command.arg("-C").arg(&self.dir).args(args);
+        self.isolated(&mut command);
+        let out = command.output().expect("spawn frost");
         let text = normalized_output(&out.stdout) + &normalized_output(&out.stderr);
         (out.status.success(), text)
     }
@@ -123,12 +132,10 @@ impl Workspace {
     /// distinguishes 1 ("your code") from 2 ("your invocation"), and a bool
     /// cannot tell those apart.
     fn frost_code(&self, args: &[&str]) -> (i32, String) {
-        let out = Command::new(frost_bin())
-            .arg("-C")
-            .arg(&self.dir)
-            .args(args)
-            .output()
-            .expect("spawn frost");
+        let mut command = Command::new(frost_bin());
+        command.arg("-C").arg(&self.dir).args(args);
+        self.isolated(&mut command);
+        let out = command.output().expect("spawn frost");
         let text = normalized_output(&out.stdout) + &normalized_output(&out.stderr);
         (out.status.code().unwrap_or(-1), text)
     }
@@ -136,6 +143,8 @@ impl Workspace {
     fn frost_env(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
         let mut command = Command::new(frost_bin());
         command.arg("-C").arg(&self.dir).args(args);
+        // Before the caller's, so a test can still set XDG_CONFIG_HOME itself.
+        self.isolated(&mut command);
         for (key, value) in env {
             command.env(key, value);
         }
@@ -489,6 +498,99 @@ fn this_repository_and_its_samples_pass_their_own_lint_and_fmt() {
         Vec::<String>::new(),
         "run `frost fmt`, fix the manifest, or record the cost with lint_allow"
     );
+}
+
+#[test]
+fn frostrc_supplies_defaults_that_the_command_line_can_still_override() {
+    let ws = Workspace::new("frostrc");
+
+    // `[common]` applies to every subcommand; `[config.NAME]` only when asked
+    // for. Both are ordinary option names, so nothing new has to be learned.
+    ws.write(
+        ".frostrc",
+        "[common]\nprofile = \"release\"\n\n[config.ci]\nprofile = \"debug\"\njobs = 1\n",
+    );
+    let built_into = || {
+        std::fs::read_dir(ws.dir.join(".frost/bin"))
+            .map(|entries| {
+                let mut names: Vec<String> = entries
+                    .filter_map(|entry| Some(entry.ok()?.file_name().to_str()?.to_string()))
+                    .collect();
+                names.sort();
+                names.join(",")
+            })
+            .unwrap_or_default()
+    };
+    let reset = || {
+        let _ = std::fs::remove_dir_all(ws.dir.join(".frost"));
+    };
+
+    // The workspace default.
+    reset();
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert_eq!(built_into(), "release");
+
+    // A named section overrides `[common]`.
+    reset();
+    let (ok, out) = ws.frost(&["build", "--config", "ci"]);
+    assert!(ok, "{out}");
+    assert_eq!(built_into(), "debug");
+
+    // And what someone actually typed overrides everything. This is the whole
+    // precedence chain in one line: built-in < file < named section < CLI.
+    reset();
+    let (ok, out) = ws.frost(&["build", "--config", "ci", "--profile", "release"]);
+    assert!(ok, "{out}");
+    assert_eq!(built_into(), "release");
+
+    // `--no-frostrc` falls back to the built-in default, so the file can be
+    // taken out of the picture without editing it.
+    reset();
+    let (ok, out) = ws.frost(&["build", "--no-frostrc"]);
+    assert!(ok, "{out}");
+    assert_eq!(built_into(), "debug");
+
+    // A flag from a file is a flag: it lands in the action key exactly as a
+    // typed one does, so changing the file rebuilds rather than reporting the
+    // previous configuration as current.
+    reset();
+    let (ok, _) = ws.frost(&["build"]);
+    assert!(ok);
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+    ws.write(".frostrc", "[common]\nprofile = \"debug\"\n");
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("up to date"),
+        "a changed setting must rebuild:\n{out}"
+    );
+    assert_eq!(built_into(), "debug,release");
+
+    // `doctor` says which file, line and section is in effect -- "a setting
+    // applies" is not useful without the line to go and change.
+    let (ok, out) = ws.frost(&["doctor"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("frostrc"), "{out}");
+    assert!(out.contains(".frostrc:2 [common] profile"), "{out}");
+
+    let (ok, out) = ws.frost(&["doctor", "--no-frostrc"]);
+    assert!(ok, "{out}");
+    assert!(!out.contains("frostrc    "), "{out}");
+
+    // An unrecognised key is refused at startup, with the file, the line and
+    // the key -- and a suggestion, since a config file is usually written by
+    // someone who is not looking at `--help`.
+    ws.write(".frostrc", "[build]\njobz = 4\n");
+    let (code, out) = ws.frost_code(&["build"]);
+    assert_eq!(
+        code, 2,
+        "an unusable invocation, not a failed build:\n{out}"
+    );
+    assert!(out.contains(".frostrc:2"), "{out}");
+    assert!(out.contains("jobz"), "{out}");
+    assert!(out.contains("did you mean `jobs`?"), "{out}");
 }
 
 #[test]
