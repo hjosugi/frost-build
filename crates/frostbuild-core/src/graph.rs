@@ -305,13 +305,7 @@ impl BuildGraph {
             );
         }
         let toolchain = manifest.toolchain_for(platform)?;
-        // The host platform keeps historical single-segment output trees so
-        // existing workspaces, journals and docs stay valid verbatim.
-        let tree = if platform == HOST_PLATFORM {
-            profile.to_string()
-        } else {
-            format!("{platform}/{profile}")
-        };
+        let tree = crate::paths::config(platform, profile);
         let order = toposort_targets(manifest)?;
         let mut graph = BuildGraph {
             profile: profile.to_string(),

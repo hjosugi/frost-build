@@ -2457,7 +2457,11 @@ impl<'a> Engine<'a> {
 /// Windows resolves a relative program name before applying `current_dir`.
 /// Make workspace-relative paths explicit while leaving bare tool names for
 /// PATH lookup on every host.
-fn resolve_action_program(root: &Path, program: &str) -> PathBuf {
+///
+/// Public because actions are not the only thing frost spawns from a workspace
+/// path: the `[stamp]` command is spawned by the CLI and hits the same trap.
+/// One copy, so a host that needs a different rule needs one change.
+pub fn resolve_action_program(root: &Path, program: &str) -> PathBuf {
     let path = Path::new(program);
     if path.is_relative() && path.components().count() > 1 {
         root.join(path)
