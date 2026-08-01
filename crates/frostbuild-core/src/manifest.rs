@@ -890,6 +890,16 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
             }
             let ty = entry.file_type()?;
             if ty.is_dir() && !ty.is_symlink() {
+                // A subdirectory whose own manifest declares `[workspace]` is
+                // the root of a separate workspace: a vendored dependency, a
+                // sample, an unrelated project that happens to live in this
+                // tree. Absorbing its targets as packages would silently drop
+                // the toolchain, profiles and default targets it declared for
+                // itself, so discovery stops at that boundary rather than
+                // descending through it.
+                if declares_workspace(&entry.path().join(MANIFEST_FILE)) {
+                    continue;
+                }
                 walk(root, &entry.path(), out)?;
             } else if ty.is_file() && name == MANIFEST_FILE {
                 out.push(entry.path().strip_prefix(root).unwrap().to_path_buf());
@@ -900,6 +910,18 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     walk(root, root, &mut out)?;
     Ok(out)
+}
+
+/// Whether a manifest claims to be a workspace root.
+///
+/// Unreadable and unparseable files answer "no" so that the boundary check
+/// never turns into a second place that reports manifest syntax errors; a file
+/// that is genuinely a package is parsed, and reported on, where packages are.
+fn declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .is_some_and(|value| value.get("workspace").is_some())
 }
 
 fn resolve_label(raw: &str, package: &str) -> String {
@@ -2716,5 +2738,80 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn package_discovery_stops_at_a_nested_workspace_root() {
+        // A repository that builds itself with Frost also contains sample and
+        // vendored workspaces. Those declare their own toolchain and default
+        // targets, so absorbing their targets as packages would build them
+        // with the outer workspace's configuration — silently, and wrongly.
+        let root = std::env::temp_dir().join(format!(
+            "frost-core-nested-workspace-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("lib/src")).unwrap();
+        std::fs::create_dir_all(root.join("vendor/demo/src")).unwrap();
+        std::fs::create_dir_all(root.join("vendor/demo/nested")).unwrap();
+        std::fs::write(root.join("lib/src/lib.c"), "int lib(void) { return 1; }\n").unwrap();
+        std::fs::write(
+            root.join("vendor/demo/src/a.c"),
+            "int a(void) { return 2; }\n",
+        )
+        .unwrap();
+
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            "[workspace]\ndefault_targets = [\"//lib:lib\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("lib/frost.toml"),
+            "[target.lib]\nkind = \"cc_library\"\nsrcs = [\"src/lib.c\"]\n",
+        )
+        .unwrap();
+        // Its own root, with its own toolchain — not a package of the above.
+        std::fs::write(
+            root.join("vendor/demo/frost.toml"),
+            "[workspace]\ndefault_targets = [\"a\"]\n\n\
+             [target.a]\nkind = \"cc_library\"\nsrcs = [\"src/a.c\"]\n",
+        )
+        .unwrap();
+        // A package of the vendored workspace. It is reached only by
+        // descending through that workspace's root, so the outer workspace
+        // must not see it either — the boundary skips the subtree, not just
+        // the manifest that marks it.
+        std::fs::write(
+            root.join("vendor/demo/nested/b.c"),
+            "int b(void) { return 3; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("vendor/demo/nested/frost.toml"),
+            "[target.b]\nkind = \"cc_library\"\nsrcs = [\"b.c\"]\n",
+        )
+        .unwrap();
+
+        let manifest = Manifest::load(&root).unwrap();
+
+        assert_eq!(
+            manifest.targets.keys().collect::<Vec<_>>(),
+            vec!["//lib:lib"],
+            "only the outer workspace's own packages are packages"
+        );
+        assert_eq!(
+            manifest.manifest_paths,
+            vec!["frost.toml", "lib/frost.toml"]
+        );
+
+        // The vendored workspace still builds as one, from its own root.
+        let vendored = Manifest::load(&root.join("vendor/demo")).unwrap();
+        assert_eq!(
+            vendored.targets.keys().collect::<Vec<_>>(),
+            vec!["//nested:b", "a"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
