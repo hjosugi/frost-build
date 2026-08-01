@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { queryLabelKind, runFrost } from './frost/cli';
 import { parseBuildOutput, normalizeDiagnosticPath } from './frost/diagnostics';
 import { parseDotGraph, rootTargets } from './frost/graph';
+import { isAbsolutePath } from './frost/paths';
 import {
   buildTargetTree,
   isTestKind,
@@ -237,8 +238,15 @@ function publishDiagnostics(
 ): void {
   const byFile = new Map<string, vscode.Diagnostic[]>();
   for (const item of items) {
-    const relative = normalizeDiagnosticPath(item.file);
-    const uri = vscode.Uri.joinPath(folder.uri, relative).toString();
+    const path = normalizeDiagnosticPath(item.file);
+    // A compiler reporting a system header gives an absolute path. Joining it
+    // onto the workspace root would produce a file that does not exist, and
+    // the diagnostic would attach to nothing at all.
+    const uri = (
+      isAbsolutePath(path)
+        ? vscode.Uri.file(path)
+        : vscode.Uri.joinPath(folder.uri, path)
+    ).toString();
     const line = Math.max(0, item.line - 1);
     const column = Math.max(0, (item.column ?? 1) - 1);
     const range = new vscode.Range(line, column, line, Number.MAX_SAFE_INTEGER);
