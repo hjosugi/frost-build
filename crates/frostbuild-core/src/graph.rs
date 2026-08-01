@@ -169,6 +169,71 @@ pub struct BuildGraph {
     file_ids: HashMap<String, FileId>,
 }
 
+/// Test options supplied on the command line rather than in the manifest.
+///
+/// These are applied to the loaded graph in memory, never to the stored one:
+/// a graph compiled with `--test-filter parse` must not be reused by the next
+/// invocation without it.
+#[derive(Debug, Default, Clone)]
+pub struct TestOptions {
+    /// Which cases to run, passed to the runner through the environment.
+    pub filter: Option<String>,
+    /// Extra environment for every test action.
+    pub env: Vec<(String, String)>,
+    /// Extra arguments appended to every test's argv.
+    pub args: Vec<String>,
+}
+
+impl TestOptions {
+    pub fn is_empty(&self) -> bool {
+        self.filter.is_none() && self.env.is_empty() && self.args.is_empty()
+    }
+}
+
+/// The variable Bazel-compatible runners read to learn which cases to run, and
+/// googletest's own spelling of it — the same pair sharding already passes, for
+/// the same reason: Frost cannot know a runner's filter flag, and guessing one
+/// per language is how a build tool acquires a table of special cases.
+pub const TEST_FILTER_VARS: [&str; 2] = ["TESTBRIDGE_TEST_ONLY", "GTEST_FILTER"];
+
+impl BuildGraph {
+    /// Fold command-line test options into every test action.
+    ///
+    /// Nothing new has to enter the action key for these to be safe: argv and
+    /// env are already key material, so a filtered run keys differently from an
+    /// unfiltered one and cannot satisfy it from cache. That is the behaviour
+    /// #142 asked for, and it falls out rather than being bolted on.
+    ///
+    /// The command line wins over a manifest value of the same name. It is the
+    /// person typing now, and because the override lands in the key it changes
+    /// the result visibly instead of silently.
+    pub fn apply_test_options(&mut self, options: &TestOptions) {
+        if options.is_empty() {
+            return;
+        }
+        for action in &mut self.actions {
+            if action.kind != ActionKind::Test {
+                continue;
+            }
+            action.argv.extend(options.args.iter().cloned());
+            if let Some(filter) = &options.filter {
+                for name in TEST_FILTER_VARS {
+                    action.env.insert(name.to_string(), filter.clone());
+                }
+            }
+            for (key, value) in &options.env {
+                action.env.insert(key.clone(), value.clone());
+            }
+            // A name given a value here is no longer inherited from the host,
+            // and leaving it in `pass_env` would put the host's value in the
+            // key beside the one that actually applies.
+            action
+                .pass_env
+                .retain(|name| !action.env.contains_key(name));
+        }
+    }
+}
+
 impl BuildGraph {
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         Self::from_manifest_with_profile(manifest, "debug")
@@ -2296,6 +2361,146 @@ mod tests {
         .unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("TEST_TOTAL_SHARDS"), "{error}");
+    }
+
+    #[test]
+    fn command_line_test_options_reach_every_test_action() {
+        let manifest = r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            args = ["--quiet"]
+            env = { LEVEL = "manifest" }
+            "#;
+        let apply = |options: &TestOptions| {
+            let mut graph =
+                BuildGraph::from_manifest(&Manifest::parse_str(manifest).unwrap()).unwrap();
+            graph.apply_test_options(options);
+            let action = graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .expect("test action");
+            (action.argv.clone(), action.env.clone())
+        };
+
+        // Nothing supplied leaves the action exactly as the manifest wrote it.
+        let (argv, env) = apply(&TestOptions::default());
+        assert_eq!(argv, vec!["runner", "--quiet"]);
+        assert_eq!(env["LEVEL"], "manifest");
+
+        // A filter travels as the environment protocol runners already
+        // implement, under both spellings, because Frost cannot know a
+        // runner's filter flag.
+        let (_, env) = apply(&TestOptions {
+            filter: Some("parse::*".into()),
+            ..Default::default()
+        });
+        assert_eq!(env["TESTBRIDGE_TEST_ONLY"], "parse::*");
+        assert_eq!(env["GTEST_FILTER"], "parse::*");
+
+        // Extra argv is appended, so the manifest's own arguments keep their
+        // order and meaning.
+        let (argv, _) = apply(&TestOptions {
+            args: vec!["--verbose".into()],
+            ..Default::default()
+        });
+        assert_eq!(argv, vec!["runner", "--quiet", "--verbose"]);
+
+        // The command line wins over the manifest: it is the person typing
+        // now, and the override lands in the key rather than passing silently.
+        let (_, env) = apply(&TestOptions {
+            env: vec![("LEVEL".into(), "cli".into())],
+            ..Default::default()
+        });
+        assert_eq!(env["LEVEL"], "cli");
+    }
+
+    #[test]
+    fn a_filtered_run_cannot_be_served_an_unfiltered_result() {
+        // The property #142 asked for. Nothing new enters the action key to
+        // get it: argv and env are already key material, so the filtered
+        // action simply is a different action.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        let plain = BuildGraph::from_manifest(&manifest).unwrap();
+        let mut filtered = BuildGraph::from_manifest(&manifest).unwrap();
+        filtered.apply_test_options(&TestOptions {
+            filter: Some("only_this".into()),
+            ..Default::default()
+        });
+
+        let test_of = |graph: &BuildGraph| {
+            let action = graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .expect("test action");
+            (action.argv.clone(), action.env.clone())
+        };
+        assert_ne!(test_of(&plain), test_of(&filtered));
+        // Same action id and stamp, though: it is the same test, asked a
+        // narrower question. The key separates them through the environment.
+        let id = |graph: &BuildGraph| {
+            graph
+                .actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Test)
+                .unwrap()
+                .id
+                .clone()
+        };
+        assert_eq!(id(&plain), id(&filtered));
+    }
+
+    #[test]
+    fn a_value_given_on_the_command_line_stops_being_inherited() {
+        // `pass_env` puts the host's value in the key. Once the command line
+        // sets the same name, leaving it there would key on a value that no
+        // longer applies.
+        let manifest = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            pass_env = ["RUST_LOG"]
+            "#,
+        )
+        .unwrap();
+        let mut graph = BuildGraph::from_manifest(&manifest).unwrap();
+        graph.apply_test_options(&TestOptions {
+            env: vec![("RUST_LOG".into(), "debug".into())],
+            ..Default::default()
+        });
+        let action = graph
+            .actions
+            .iter()
+            .find(|action| action.kind == ActionKind::Test)
+            .unwrap();
+        assert_eq!(action.env["RUST_LOG"], "debug");
+        assert!(
+            action.pass_env.is_empty(),
+            "an overridden name must not also be inherited: {:?}",
+            action.pass_env
+        );
     }
 
     #[test]

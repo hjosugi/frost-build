@@ -29,6 +29,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost test --test-filter PATTERN`, `--test-env KEY=VALUE` and `--test-arg ARG`
+  supply from the command line what the manifest supplies statically. The filter
+  travels as `TESTBRIDGE_TEST_ONLY` and `GTEST_FILTER` rather than as a flag,
+  because Frost cannot know a runner's filter syntax and inventing one spelling
+  per language is how a build tool acquires a table of special cases — the
+  environment is the protocol runners already implement, exactly as with
+  sharding. Nothing new enters the action key to make these safe: argv and env
+  are already key material, so a filtered run simply is a different action and
+  cannot be served an unfiltered result. The command line wins over a manifest
+  value of the same name, and an overridden name is dropped from `pass_env` so
+  the key does not also carry the host value that no longer applies.
+
 - `flaky_retries = N` on a test or `cc_test` target (default 0, maximum 9): a
   failing test gets N more attempts before the failure is its verdict. Each
   retry starts from the state a first attempt would see — the partial success
