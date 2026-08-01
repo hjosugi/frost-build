@@ -21,6 +21,73 @@ const NodeModule = require('node:module') as {
   _load: (request: string, ...rest: any[]) => unknown;
 };
 
+
+/** Minimal TestController: enough to record what the explorer builds. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeTestController(id: string, label: string): any {
+  const collection = () => {
+    const map = new Map<string, any>();
+    return {
+      map,
+      add: (item: any) => map.set(item.id, item),
+      replace: (items: any[]) => {
+        map.clear();
+        items.forEach((item) => map.set(item.id, item));
+      },
+      forEach: (visit: (item: any) => void) => map.forEach(visit),
+      get size() {
+        return map.size;
+      },
+    };
+  };
+  const runs: any[] = [];
+  return {
+    id,
+    label,
+    items: collection(),
+    runs,
+    resolveHandler: undefined as unknown,
+    profiles: [] as any[],
+    createTestItem: (itemId: string, itemLabel: string) => ({
+      id: itemId,
+      label: itemLabel,
+      children: collection(),
+    }),
+    createRunProfile: (
+      name: string,
+      kind: number,
+      handler: unknown,
+      isDefault: boolean,
+    ) => {
+      return { name, kind, handler, isDefault };
+    },
+    createTestRun: (request: unknown) => {
+      const record = {
+        request,
+        started: [] as string[],
+        passed: [] as string[],
+        failed: [] as { id: string; message: string }[],
+        errored: [] as string[],
+        skipped: [] as string[],
+        ended: false,
+      };
+      runs.push(record);
+      return {
+        started: (item: any) => record.started.push(item.id),
+        passed: (item: any) => record.passed.push(item.id),
+        failed: (item: any, message: any) =>
+          record.failed.push({ id: item.id, message: String(message?.message ?? message) }),
+        errored: (item: any) => record.errored.push(item.id),
+        skipped: (item: any) => record.skipped.push(item.id),
+        end: () => {
+          record.ended = true;
+        },
+      };
+    },
+    dispose: () => undefined,
+  };
+}
+
 /** Everything the stub saw, for tests to assert against. */
 export interface Recorded {
   commands: Map<string, (...args: unknown[]) => unknown>;
@@ -41,6 +108,12 @@ export interface Recorded {
   quickPickItems: unknown[][];
   configuration: Record<string, unknown>;
   workspaceFolders: { uri: StubUri; name: string; index: number }[];
+  treeProviders: Map<string, unknown>;
+  debugProviders: Map<string, unknown>;
+  testControllers: unknown[];
+  startedDebugSessions: unknown[];
+  /** Extension ids `extensions.getExtension` should report as installed. */
+  installedExtensions: Set<string>;
 }
 
 export interface StubUri {
@@ -91,6 +164,11 @@ export function installVscodeStub(): { recorded: Recorded; dispose: () => void }
     quickPickItems: [],
     configuration: {},
     workspaceFolders: [],
+    treeProviders: new Map(),
+    debugProviders: new Map(),
+    testControllers: [],
+    startedDebugSessions: [],
+    installedExtensions: new Set(),
   };
 
   const disposable = { dispose: () => undefined };
@@ -186,6 +264,62 @@ export function installVscodeStub(): { recorded: Recorded; dispose: () => void }
         return Promise.resolve(undefined);
       },
       activeTextEditor: undefined as unknown,
+      registerTreeDataProvider: (id: string, provider: unknown) => {
+        recorded.treeProviders.set(id, provider);
+        return disposable;
+      },
+    },
+    ThemeIcon: class {
+      constructor(public id: string) {}
+    },
+    TreeItem: class {
+      description?: string;
+      tooltip?: string;
+      contextValue?: string;
+      resourceUri?: StubUri;
+      iconPath?: unknown;
+      command?: unknown;
+      constructor(
+        public label: string,
+        public collapsibleState?: number,
+      ) {}
+    },
+    TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+    EventEmitter: class {
+      private handlers: ((value: unknown) => void)[] = [];
+      event = (handler: (value: unknown) => void) => {
+        this.handlers.push(handler);
+        return { dispose: () => undefined };
+      };
+      fire(value?: unknown) {
+        this.handlers.forEach((handler) => handler(value));
+      }
+      dispose() {}
+    },
+    TestRunProfileKind: { Run: 1, Debug: 2, Coverage: 3 },
+    TestMessage: class {
+      constructor(public message: string) {}
+    },
+    extensions: {
+      getExtension: (id: string) =>
+        recorded.installedExtensions.has(id) ? { id } : undefined,
+    },
+    debug: {
+      registerDebugConfigurationProvider: (type: string, provider: unknown) => {
+        recorded.debugProviders.set(type, provider);
+        return disposable;
+      },
+      startDebugging: (folder: unknown, configuration: unknown) => {
+        recorded.startedDebugSessions.push({ folder, configuration });
+        return Promise.resolve(true);
+      },
+    },
+    tests: {
+      createTestController: (id: string, label: string) => {
+        const controller = makeTestController(id, label);
+        recorded.testControllers.push(controller);
+        return controller;
+      },
     },
     languages: {
       createDiagnosticCollection: () => ({
