@@ -5609,3 +5609,149 @@ fn lint_names_the_boundaries_that_are_already_being_crossed() {
     // "every target should declare visibility" is advice people switch off.
     assert!(!out.contains("//core:core_test"), "{out}");
 }
+
+// ---------------------------------------------------------------------------
+// Timeout properties (#154). The limit itself has been enforced since it
+// landed; these pin the four things around it that nothing was checking, each
+// of which would regress silently.
+// ---------------------------------------------------------------------------
+
+/// A workspace with one command target, so a timeout case is one manifest.
+fn timeout_workspace(name: &str, body: &str) -> Workspace {
+    let ws = Workspace::empty(name);
+    std::fs::create_dir_all(ws.dir.join("gen/debug")).unwrap();
+    ws.write(
+        "frost.toml",
+        &format!(
+            r#"[workspace]
+default_targets = ["subject"]
+
+[toolchain.tools]
+sh = "sh"
+
+[target.subject]
+kind = "command"
+tool = "sh"
+{body}
+sandbox = false
+"#
+        ),
+    );
+    ws
+}
+
+#[test]
+#[cfg(unix)]
+fn a_timeout_kills_the_whole_process_group_not_only_the_child_frost_spawned() {
+    // The child frost waits on is a shell. Killing only that pid leaves
+    // whatever it started running — a compiler, a test runner, a server — with
+    // no parent and no limit, which is the hang the timeout was added to end,
+    // moved somewhere nobody is looking.
+    let ws = timeout_workspace(
+        "timeout-group",
+        r#"args = ["-c", "(sleep 4; echo alive > gen/${config}/orphan.txt) & sleep 300"]
+inputs = []
+outputs = ["gen/${config}/out.txt"]
+timeout = 1"#,
+    );
+
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("timed out after 1s"), "{out}");
+
+    // Outlive the orphan's own delay. If the group survived, it writes the
+    // marker; if frost took the group down, the file never appears.
+    std::thread::sleep(std::time::Duration::from_secs(6));
+    assert!(
+        !ws.dir.join("gen/debug/orphan.txt").exists(),
+        "a process the action started outlived the timeout"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_timed_out_action_leaves_no_half_written_output_behind() {
+    // A declared output that exists but is incomplete is worse than none: the
+    // next build sees a file where it expects one, and anything reading it
+    // gets a truncated artifact rather than an error.
+    let ws = timeout_workspace(
+        "timeout-partial",
+        r#"args = ["-c", "echo half > gen/${config}/out.txt; sleep 300"]
+inputs = []
+outputs = ["gen/${config}/out.txt"]
+timeout = 1"#,
+    );
+
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(!ok, "{out}");
+    assert!(
+        !ws.dir.join("gen/debug/out.txt").exists(),
+        "the half-written output survived the timeout"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_test_target_declares_its_own_limit_and_the_report_names_where_it_came_from() {
+    // The case the feature exists for: a deadlocked test, which otherwise
+    // holds a CI job open until the job's own limit.
+    let ws = Workspace::empty("timeout-test-target");
+    ws.write(
+        "frost.toml",
+        r#"[toolchain.tools]
+sh = "sh"
+
+[target.hangs]
+kind = "test"
+tool = "sh"
+args = ["-c", "sleep 300"]
+inputs = []
+timeout = 1
+sandbox = false
+"#,
+    );
+
+    let (code, out) = ws.frost_code(&["test", "--all", "--no-tui"]);
+    assert_eq!(code, 1, "a test that timed out is a failing test: {out}");
+    // Where the limit came from, because there are three places it could have.
+    assert!(
+        out.contains("timed out after 1s (timeout declared by target hangs)"),
+        "{out}"
+    );
+    assert!(out.contains("1 failed"), "{out}");
+
+    // And nothing was recorded: a limit says nothing about the result, so the
+    // next run must ask again rather than replay a verdict it never reached.
+    let (code, out) = ws.frost_code(&["test", "--all", "--no-tui"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("timed out after 1s"), "{out}");
+    assert!(!out.contains("1 cached"), "a timeout was cached:\n{out}");
+}
+
+#[test]
+#[cfg(unix)]
+fn changing_a_timeout_does_not_invalidate_a_result_it_had_nothing_to_do_with() {
+    // docs/16 says a limit is a statement about the environment, not the
+    // result: the same inputs under a longer limit must hit the same cache
+    // entry. A build that is reproducible only because it was allowed more
+    // seconds is not reproducible.
+    let ws = timeout_workspace(
+        "timeout-not-keyed",
+        r#"args = ["-c", "echo done > gen/${config}/out.txt"]
+inputs = []
+outputs = ["gen/${config}/out.txt"]
+timeout = 60"#,
+    );
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(ok, "{out}");
+
+    ws.write_in("frost.toml", |text| {
+        text.replace("timeout = 60", "timeout = 5")
+    });
+    let (ok, out) = ws.frost(&["build", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("ran command:subject"),
+        "changing a limit rebuilt the action:\n{out}"
+    );
+}
