@@ -39,6 +39,24 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `--build-event-json FILE`: one JSON object per line describing the build, so
+  a CI job can count failures, chart durations or find the slow target without
+  parsing terminal output. It is a third consumer of the progress stream the
+  renderers already use, written by the renderer thread itself, so a dashboard
+  and a human cannot disagree about what happened. `result` names (`cached`,
+  `executed`, `flaky`, `failed`, `skipped`, `would_run`, `may_run`) are stable
+  and deliberately not the display strings — the terminal says "cache miss" for
+  an action that ran, which is right on a terminal and wrong in a field a
+  machine switches on. Every line carries `schema` and a sequence number.
+
+### Changed
+
+- `ProgressState` gained a `Flaky` variant. A retried-and-passed test was
+  reported as `Executed` with the flakiness surviving only in a human-facing
+  detail string, which no machine consumer could read without parsing prose.
+
+### Added
+
 - `.frostrc`, a config file for *how* to build, keeping it out of `frost.toml`,
   which says *what* to build. `~/.config/frost/frostrc` then `<workspace>/.frostrc`,
   with `[common]`, a section per subcommand, and named `[config.NAME]` sections
