@@ -1,0 +1,125 @@
+{
+  "name": "frostbuild",
+  "displayName": "FrostBuild",
+  "description": "Build, test and query a FrostBuild workspace from the editor.",
+  "version": "0.1.0",
+  "publisher": "hjosugi",
+  "license": "0BSD",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hjosugi/frost-build"
+  },
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other",
+    "Testing"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "workspaceContains:frost.toml"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+    "lint": "tsc --noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/vscode": "~1.90.0",
+    "typescript": "^5.9.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "frost.build",
+        "title": "Build Target…",
+        "category": "FrostBuild"
+      },
+      {
+        "command": "frost.buildFileOwners",
+        "title": "Build Targets Owning This File",
+        "category": "FrostBuild"
+      },
+      {
+        "command": "frost.test",
+        "title": "Run Test Target…",
+        "category": "FrostBuild"
+      },
+      {
+        "command": "frost.refreshTargets",
+        "title": "Refresh Targets",
+        "category": "FrostBuild"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "frost.buildFileOwners",
+          "group": "frost@1",
+          "when": "resourceScheme == file"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "frost",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build",
+              "test",
+              "run"
+            ],
+            "description": "The frost subcommand to invoke."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target label, for example //pkg:name. Omit to let frost use its default target set."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Build profile passed as --profile. Defaults to the frostbuild.profile setting."
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform passed as --platform. Defaults to the frostbuild.platform setting; empty means the host."
+          }
+        }
+      }
+    ],
+    "configuration": {
+      "title": "FrostBuild",
+      "properties": {
+        "frostbuild.binaryPath": {
+          "type": "string",
+          "default": "frost",
+          "description": "The frost executable to run. A bare name such as \"frost\" is resolved through PATH; give an absolute path to pin a specific build."
+        },
+        "frostbuild.profile": {
+          "type": "string",
+          "default": "debug",
+          "description": "Profile passed to frost as --profile."
+        },
+        "frostbuild.platform": {
+          "type": "string",
+          "default": "",
+          "description": "Platform passed to frost as --platform. Empty means the host platform, which is what frost does without the flag."
+        },
+        "frostbuild.buildOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Build the targets owning a file whenever it is saved. Off by default: a save should not start work the developer did not ask for."
+        }
+      }
+    }
+  }
+}

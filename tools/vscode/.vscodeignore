@@ -1,0 +1,23 @@
+# Deny-list for `vsce package`. Everything not listed here ends up in the
+# .vsix, so this file only has to name what is build input rather than build
+# output. README.md and LICENSE are kept: vsce surfaces both.
+
+# TypeScript sources and their maps. The .vsix ships compiled JavaScript; the
+# sources are in git, which is where anyone reading them should be.
+src/**
+test/**
+**/*.ts
+**/*.map
+
+# Compiled unit tests. They exercise the pure modules under a plain Node
+# runner and have no reason to be present in an installed extension.
+out/test/**
+
+# Build and development tooling.
+tsconfig.json
+package-lock.json
+node_modules/**
+.vscode/**
+.vscode-test/**
+.vscodeignore
+.gitignore

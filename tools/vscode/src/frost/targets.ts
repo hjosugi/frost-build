@@ -86,7 +86,10 @@ export function parseLabelKind(text: string): LabeledTarget[] {
     if (match === null) {
       continue;
     }
-    const [, kind, label] = match as unknown as [string, string, string];
+    // Both groups always participate in a match; the `?? ''` is only so this
+    // keeps compiling if the project turns on `noUncheckedIndexedAccess`.
+    const kind = match[1] ?? '';
+    const label = match[2] ?? '';
     if (!isTargetKind(kind)) {
       continue;
     }
