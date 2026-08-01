@@ -53,6 +53,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   an action that ran, which is right on a terminal and wrong in a field a
   machine switches on. Every line carries `schema` and a sequence number.
 
+- `scripts/frost_junit.py`, which turns that stream into the JUnit XML CI
+  systems already render, plus a Markdown summary for `$GITHUB_STEP_SUMMARY`. A
+  script rather than a subcommand, because the shape of a test report belongs to
+  the CI system reading it. Two of its decisions exist to stop it reporting a
+  green build that was not: a non-test action that failed is reported too, since
+  a build that broke before any test ran otherwise produces zero tests and zero
+  failures, and a fully cached rerun — which emits one `all_cached` event and no
+  per-action events — becomes one passing case that says so. A retried pass is a
+  `flakyFailure` and a `system-out` line, so a viewer that has never heard of the
+  element still shows the pass was not free; shards keep their `#0/3` marker,
+  since same-named cases are deduplicated by most viewers. A stream whose
+  `schema` it does not know is refused rather than guessed at; unknown events and
+  fields are ignored, and an unknown `result` is an error rather than a pass. A
+  CI job runs it on `sample_multi`, so the rendering is something you can look at
+  rather than something the documentation asserts.
+
 ### Changed
 
 - `ProgressState` gained a `Flaky` variant. A retried-and-passed test was

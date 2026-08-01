@@ -156,7 +156,13 @@ tool = "python3"
 args = ["-m", "unittest", "discover", "-s", "tests"]
 # Narrow on purpose: this is the stage that shows the difference. Editing Rust
 # leaves it cached, which `scripts/check.sh` cannot do.
-inputs = ["frost.py", "tests/**/*.py"]
+#
+# `scripts/**/*.py` is here because the suite imports from it — `test_spam_guard`
+# and `test_frost_junit` both put `scripts/` on `sys.path`. Leaving it out made
+# editing a script a change frost could not see, so the stage reported a cached
+# verdict for code it had never run. An undeclared input is the one bug an
+# incremental build tool cannot afford, and it was in its own manifest.
+inputs = ["frost.py", "tests/**/*.py", "scripts/**/*.py"]
 pass_env = ["HOME", "PATH"]
 sandbox = false
 lint_allow = ["volatile-pass-env"]
