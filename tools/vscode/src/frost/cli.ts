@@ -1,0 +1,109 @@
+// The one place that spawns frost. Everything else in `src/frost/` is pure and
+// takes already-captured text, which is what makes it testable without a VS
+// Code instance or a built binary.
+
+import { spawn } from 'node:child_process';
+
+import type { FrostInfo, QueryResult } from './types';
+
+export interface FrostRun {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** stdout and stderr interleaved is not recoverable after the fact, so
+   *  callers that parse progress read this concatenation instead. */
+  output: string;
+}
+
+export interface FrostCliOptions {
+  /** Path to the frost binary. `frost` resolves through PATH. */
+  binary?: string;
+  /** Workspace root passed as `-C`. */
+  cwd: string;
+  /** Extra environment on top of the current process's. */
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}
+
+/**
+ * Run frost and capture its output.
+ *
+ * A non-zero exit is a normal result, not an exception: `build` failing and
+ * `query` finding nothing both exit non-zero and both have output worth
+ * reading. Only a frost that could not be started at all rejects.
+ */
+export function runFrost(
+  args: string[],
+  options: FrostCliOptions,
+): Promise<FrostRun> {
+  const binary = options.binary ?? 'frost';
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, ['-C', options.cwd, ...args], {
+      env: { ...process.env, ...options.env },
+      signal: options.signal,
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      output += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+      output += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({ code: code ?? 1, stdout, stderr, output });
+    });
+  });
+}
+
+/** `frost info --json`. */
+export async function readInfo(options: FrostCliOptions): Promise<FrostInfo> {
+  const run = await runFrost(['info', '--json'], options);
+  if (run.code !== 0) {
+    throw new Error(`frost info failed (${run.code}): ${run.output.trim()}`);
+  }
+  return JSON.parse(run.stdout) as FrostInfo;
+}
+
+/**
+ * `frost query <args...> --json`.
+ *
+ * An empty result exits 1 by design (the "nothing matched" convention shared
+ * with `somepath`), so that is returned as an empty target list rather than
+ * raised: a file with no owning target is an answer.
+ */
+export async function query(
+  args: string[],
+  options: FrostCliOptions,
+): Promise<QueryResult> {
+  const run = await runFrost(['query', ...args, '--json'], options);
+  if (run.code === 0) {
+    return JSON.parse(run.stdout) as QueryResult;
+  }
+  if (run.stdout.trim() === '') {
+    return { query: args.join(' '), targets: [] };
+  }
+  throw new Error(`frost query failed (${run.code}): ${run.output.trim()}`);
+}
+
+/** `frost query <args...> --output label-kind`, returned as raw lines. */
+export async function queryLabelKind(
+  args: string[],
+  options: FrostCliOptions,
+): Promise<string> {
+  const run = await runFrost(
+    ['query', ...args, '--output', 'label-kind'],
+    options,
+  );
+  if (run.code !== 0 && run.stdout.trim() === '') {
+    return '';
+  }
+  return run.stdout;
+}

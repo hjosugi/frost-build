@@ -5,6 +5,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
+  provides a task provider, target and test pickers, "build the targets owning
+  this file", an optional build-on-save, and compiler diagnostics routed into
+  the Problems panel with the target frost attributed them to — attribution a
+  declarative problem matcher cannot do, because it cannot see frost's action
+  framing. Everything under `src/frost/` except the one module that spawns
+  frost is pure and never imports `vscode`, so the suite runs under plain
+  `node --test` with no editor download and no display server; an architecture
+  test enforces that rather than documenting it. The extension reads only
+  documented surfaces — the `--json` payloads and `--output label-kind` — with
+  one exception noted in its source: no CLI primitive lists every target, so
+  the universe is derived from `graph --dot` topology and the kinds come from
+  `query`.
+
 ## [0.9.0] - 2026-08-01
 
 ### Added
