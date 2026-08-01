@@ -6397,9 +6397,13 @@ fn fmt_reaches_every_package_of_a_workspace() {
 
     let (ok, out) = ws.frost(&["fmt", "--check"]);
     assert!(!ok, "{out}");
-    // The point of the test: `--check` from the root reached into a package
-    // rather than stopping at the root manifest. The wording around the name
-    // is not contract, so only the name is asserted.
+    // Two things at once: `--check` from the root reached into a package rather
+    // than stopping at the root manifest, and it named that package with `/`
+    // on every host. The second is why the assertion is not written with
+    // `std::path::MAIN_SEPARATOR` — a workspace-relative path is printed so it
+    // reads the same everywhere, the same rule a manifest error follows, and a
+    // test that accepted either spelling would not hold anything to it.
+    // Windows CI is the only job here that can tell the difference.
     assert!(out.contains("core/frost.toml"), "{out}");
 
     assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);

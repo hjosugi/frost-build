@@ -4330,11 +4330,16 @@ fn run_fmt(root: &std::path::Path, check: bool) -> Result<i32> {
         }
     }
 
+    // `/` on every host, for the reason a manifest error is normalized the same
+    // way (`a_manifest_error_reads_the_same_on_every_host`): the path is
+    // workspace-relative so that it reads identically everywhere, and
+    // `core\frost.toml` on Windows beside `core/frost.toml` elsewhere gives
+    // that up. A manifest spells its own paths with `/` too.
     let relative = |path: &std::path::Path| {
         path.strip_prefix(root)
             .unwrap_or(path)
-            .display()
-            .to_string()
+            .to_string_lossy()
+            .replace('\\', "/")
     };
     if changed.is_empty() {
         println!("fmt: {} manifest(s) already canonical", manifests.len());
