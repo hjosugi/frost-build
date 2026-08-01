@@ -4830,3 +4830,403 @@ fn a_test_report_counts_shards_as_slices_of_their_test() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// frost lsp: the workspace frost already has, spoken as Language Server
+// Protocol. Driven the way an editor drives it — framed messages on a pipe —
+// because the framing and the dispatch are as much of the feature as the
+// answers are.
+// ---------------------------------------------------------------------------
+
+fn lsp_wire(messages: &[serde_json::Value]) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for message in messages {
+        let body = serde_json::to_vec(message).expect("encode a request");
+        wire.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        wire.extend_from_slice(&body);
+    }
+    wire
+}
+
+fn lsp_replies(bytes: &[u8]) -> Vec<serde_json::Value> {
+    let mut replies = Vec::new();
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(4).position(|window| window == b"\r\n\r\n") {
+        let headers = String::from_utf8_lossy(&rest[..at]).into_owned();
+        let length: usize = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())?
+            })
+            .expect("every frame carries a Content-Length");
+        let body = &rest[at + 4..at + 4 + length];
+        replies.push(serde_json::from_slice(body).expect("a reply is JSON"));
+        rest = &rest[at + 4 + length..];
+    }
+    replies
+}
+
+/// Run one whole session and return everything the server sent.
+fn lsp_session(dir: &Path, messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    use std::io::Write as _;
+
+    let mut child = Command::new(frost_bin())
+        .arg("-C")
+        .arg(dir)
+        .arg("lsp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn frost lsp");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&lsp_wire(messages))
+        .expect("write the session");
+    let out = child.wait_with_output().expect("frost lsp exits");
+    assert!(
+        out.status.success(),
+        "frost lsp failed: {}",
+        normalized_output(&out.stderr)
+    );
+    lsp_replies(&out.stdout)
+}
+
+fn lsp_initialize() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "processId": serde_json::Value::Null, "capabilities": {} },
+    })
+}
+
+fn lsp_did_open(uri: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "toml", "version": 1, "text": text,
+        }},
+    })
+}
+
+fn lsp_at(id: u32, method: &str, uri: &str, line: u32, character: u32) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method,
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true },
+        },
+    })
+}
+
+/// `shutdown` then `exit`, which is how a client is supposed to leave. The
+/// protocol asks a server to exit nonzero when it is told to exit without
+/// having been told to shut down, so sending both is part of the test.
+fn lsp_exit() -> [serde_json::Value; 2] {
+    [
+        serde_json::json!({ "jsonrpc": "2.0", "id": 99, "method": "shutdown" }),
+        serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }),
+    ]
+}
+
+fn lsp_uri(path: &Path) -> String {
+    format!("file://{}", path.display().to_string().replace('\\', "/"))
+}
+
+fn reply_to(replies: &[serde_json::Value], id: u32) -> serde_json::Value {
+    replies
+        .iter()
+        .find(|reply| reply["id"] == id)
+        .unwrap_or_else(|| panic!("no reply to request {id}:\n{replies:#?}"))["result"]
+        .clone()
+}
+
+fn diagnostics_for(replies: &[serde_json::Value], uri: &str) -> Vec<serde_json::Value> {
+    replies
+        .iter()
+        .filter(|reply| {
+            reply["method"] == "textDocument/publishDiagnostics" && reply["params"]["uri"] == uri
+        })
+        .flat_map(|reply| {
+            reply["params"]["diagnostics"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The line of a manifest containing `needle`, 0-based.
+fn line_of(text: &str, needle: &str) -> u64 {
+    text.lines()
+        .position(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} is not in this manifest")) as u64
+}
+
+#[test]
+fn frost_lsp_reports_an_undefined_label_where_it_is_written() {
+    let ws = Workspace::multi("lsp-diagnostics");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let broken = std::fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("\"//text:text\"", "\"//text:absent\"");
+    std::fs::write(&manifest, &broken).unwrap();
+    let uri = lsp_uri(&manifest);
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[lsp_initialize(), lsp_did_open(&uri, &broken)]
+            .into_iter()
+            .chain(lsp_exit())
+            .collect::<Vec<_>>(),
+    );
+
+    let capabilities = &reply_to(&replies, 1)["capabilities"];
+    for provider in ["definitionProvider", "referencesProvider", "hoverProvider"] {
+        assert_eq!(capabilities[provider], true, "{capabilities:#?}");
+    }
+
+    let diagnostics = diagnostics_for(&replies, &uri);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(
+        diagnostic["range"]["start"]["line"],
+        line_of(&broken, "//text:absent"),
+        "the squiggle belongs on the line that wrote the label"
+    );
+
+    // Byte for byte the sentence a build prints. Two wordings for one mistake
+    // is a second source of truth, and the editor's is the untested one.
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(!ok, "the workspace was supposed to be broken:\n{out}");
+    let from_cli = out
+        .lines()
+        .find_map(|line| line.strip_prefix("frost: error: "))
+        .expect("the build says what is wrong");
+    assert_eq!(diagnostic["message"], from_cli);
+    assert_eq!(diagnostic["source"], "frost");
+}
+
+#[test]
+fn frost_lsp_completes_labels_across_packages() {
+    let ws = Workspace::multi("lsp-completion");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let deps = line_of(&text, "deps = [") as u32;
+    let srcs = line_of(&text, "srcs = [") as u32;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            // Inside the first string of the deps array.
+            lsp_at(2, "textDocument/completion", &uri, deps, 10),
+            // A key position: the start of a line that holds a key.
+            lsp_at(3, "textDocument/completion", &uri, srcs, 0),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let labels: Vec<String> = reply_to(&replies, 2)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    // The point of a build-aware server: a package the open file has never
+    // mentioned is still offered, spelled the way it would have to be written.
+    assert!(labels.contains(&"//core:core".to_string()), "{labels:?}");
+    assert!(
+        labels.contains(&"//render:render".to_string()),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"//:gen_version".to_string()), "{labels:?}");
+
+    let keys: Vec<String> = reply_to(&replies, 3)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    // `cc_binary`, so `srcs` and `ldflags` are offered and `cmd` is not.
+    assert!(keys.contains(&"srcs".to_string()), "{keys:?}");
+    assert!(keys.contains(&"ldflags".to_string()), "{keys:?}");
+    assert!(!keys.contains(&"cmd".to_string()), "{keys:?}");
+}
+
+#[test]
+fn frost_lsp_jumps_from_a_label_to_the_line_that_declares_it() {
+    let ws = Workspace::multi("lsp-definition");
+    let manifest = ws.dir.join("text/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    // By the assignment, not by the label: this manifest's opening comment
+    // names //core:core too, and a cursor in a comment is not on a label.
+    let deps = line_of(&text, "deps = [") as u32;
+    let column = text
+        .lines()
+        .nth(deps as usize)
+        .unwrap()
+        .find("//core")
+        .unwrap() as u32
+        + 2;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/definition", &uri, deps, column),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let location = reply_to(&replies, 2);
+    let target = ws.dir.join("core/frost.toml");
+    assert_eq!(location["uri"], lsp_uri(&target), "{location:#?}");
+    let core = std::fs::read_to_string(&target).unwrap();
+    assert_eq!(
+        location["range"]["start"]["line"],
+        line_of(&core, "[target.core]"),
+        "the jump lands on the declaration, not the top of the file"
+    );
+}
+
+#[test]
+fn frost_lsp_hover_and_references_are_the_answers_query_gives() {
+    // The rule this enforces is "no second implementation": both features call
+    // the functions `frost query` calls, so a disagreement here would mean the
+    // editor had grown its own idea of the graph.
+    let ws = Workspace::multi("lsp-query-agreement");
+    let manifest = ws.dir.join("core/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let header = line_of(&text, "[target.core]") as u32;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/hover", &uri, header, 9),
+            lsp_at(3, "textDocument/references", &uri, header, 9),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let (ok, out) = ws.frost(&["query", "rdeps", "//core:core", "--json"]);
+    assert!(ok, "{out}");
+    let rdeps: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let expected = rdeps["targets"].as_array().unwrap();
+
+    // One location per target `rdeps` names, each at that target's own
+    // declaration. `includeDeclaration` is set, so the sets match exactly.
+    let references = reply_to(&replies, 3);
+    let references = references.as_array().expect("a location list");
+    assert_eq!(
+        references.len(),
+        expected.len(),
+        "references and `query rdeps` disagree:\n{references:#?}\n{expected:#?}"
+    );
+    for target in expected {
+        let label = target.as_str().unwrap();
+        let (package, name) = label
+            .trim_start_matches("//")
+            .split_once(':')
+            .expect("a workspace label");
+        let declaring = if package.is_empty() {
+            ws.dir.join("frost.toml")
+        } else {
+            ws.dir.join(package).join("frost.toml")
+        };
+        let declaration = std::fs::read_to_string(&declaring).unwrap();
+        let uri = lsp_uri(&declaring);
+        assert!(
+            references.iter().any(|location| {
+                location["uri"] == uri
+                    && location["range"]["start"]["line"]
+                        == line_of(&declaration, &format!("[target.{name}]"))
+            }),
+            "no reference at {label}'s declaration:\n{references:#?}"
+        );
+    }
+
+    let (ok, out) = ws.frost(&["query", "deps", "//core:core", "--json"]);
+    assert!(ok, "{out}");
+    let deps: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let closure = deps["targets"].as_array().unwrap().len();
+
+    let hover = reply_to(&replies, 2);
+    let markdown = hover["contents"]["value"].as_str().expect("markdown");
+    assert!(markdown.contains("**//core:core**"), "{markdown}");
+    assert!(markdown.contains("`cc_library`"), "{markdown}");
+    assert!(
+        markdown.contains(&format!(
+            "{closure} targets in `frost query deps //core:core`"
+        )),
+        "the hover's closure size is not the one query prints ({closure}):\n{markdown}"
+    );
+    // The declared output, which only the configured graph knows.
+    assert!(markdown.contains(".frost/lib/debug/"), "{markdown}");
+}
+
+#[test]
+fn frost_lsp_keeps_answering_while_a_manifest_does_not_parse() {
+    // The state a manifest is in for most of the time it is being edited. A
+    // server that went quiet here would be useless exactly when it is wanted.
+    let ws = Workspace::multi("lsp-mid-edit");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let deps = line_of(&text, "deps = [") as u32;
+    let half_typed = format!(
+        "{}\ndeps = [\n  \"//co",
+        &text[..text.find("deps = [").unwrap()]
+    );
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &half_typed),
+            // Inside the unterminated string on the last line.
+            lsp_at(
+                2,
+                "textDocument/completion",
+                &uri,
+                half_typed.lines().count() as u32 - 1,
+                7,
+            ),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+    let _ = deps;
+
+    let diagnostics = diagnostics_for(&replies, &uri);
+    assert_eq!(diagnostics.len(), 1, "the syntax error is reported once");
+    let labels: Vec<String> = reply_to(&replies, 2)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(
+        labels.contains(&"//core:core".to_string()),
+        "labels are still offered while the document does not parse: {labels:?}"
+    );
+}

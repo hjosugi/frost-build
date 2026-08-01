@@ -267,3 +267,46 @@ Medians of 15 interleaved iterations, 4 workers, from
 with its host metadata. The "rendering" column compares against `--stats`,
 which takes the same full check path without writing anything, so the
 certificate's absence is not attributed to the renderer.
+
+## The manifest, in an editor
+
+```bash
+frost lsp        # Language Server Protocol on stdin/stdout
+```
+
+`frost.toml` is edited as plain TOML today, so an editor knows nothing about
+labels or kinds: a typo in `deps = ["//core:core"]` is valid TOML and stays
+silent until a build says otherwise — correctly, in a terminal, which is not
+where the cursor is. `frost lsp` provides:
+
+- **diagnostics** — the manifest loader's own errors, byte for byte the
+  sentence `frost build` prints, placed on the token the message names
+- **completion** — labels across every package, `kind` values, `[toolchain.tools]`
+  names, and the keys the target's kind accepts
+- **definition** — a label to the `[target.<name>]` line that declares it, in
+  whichever package that is
+- **references** — `graph.rdeps_closure`, the function `frost query rdeps`
+  calls, each dependent reported at its own declaration
+- **hover** — kind, declared outputs, direct dependencies, and the size of the
+  closure `frost query deps` prints
+
+None of it is a second analysis. References and hover call the same functions
+the query subcommands call, which is what
+`frost_lsp_hover_and_references_are_the_answers_query_gives` enforces: a
+disagreement there would mean the editor had grown its own idea of the graph,
+and the editor's would be the untested one.
+
+Two boundaries are worth knowing. The workspace is re-read on save, through the
+graph store's warm path, so an unchanged tree costs a stamp check rather than a
+parse of every manifest; cross-package errors therefore appear when a file is
+saved, while syntax and per-target errors are reported against the buffer as it
+is typed. And when a manifest does not parse, or a label names nothing, the
+server keeps answering from the declarations that did load — that is the state
+a manifest is in for most of the time it is being edited, and going quiet then
+would be going quiet exactly when it is wanted.
+
+The server implements no formatting (that is `frost fmt`'s to provide once it
+exists), no rename, and nothing about files other than `frost.toml`; source
+code belongs to its own language's server. Any LSP client works — the VS Code
+extension in `tools/vscode/` is the first, and Neovim or a JetBrains IDE gets
+the same features from the same server.

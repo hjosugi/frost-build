@@ -366,8 +366,53 @@ pub struct Manifest {
     pub manifest_paths: Vec<String>,
 }
 
+/// A workspace load with the manifest and the verdict kept apart.
+///
+/// A build wants only the verdict: an unknown dependency means it must not
+/// proceed. An editor wants both — the error is the diagnostic, and the
+/// targets that *did* load are what "go to definition" and "find references"
+/// answer from. Those stay correct while one label somewhere is wrong, and a
+/// server that discarded them would go quiet exactly when it is most wanted.
+pub struct Load {
+    /// Every target that parsed, present even when a cross-file check failed.
+    /// `None` only when the workspace could not be assembled at all.
+    pub manifest: Option<Manifest>,
+    pub error: Option<anyhow::Error>,
+}
+
 impl Manifest {
     pub fn load(workspace_root: &Path) -> Result<Self> {
+        let load = Self::load_reporting(workspace_root);
+        match (load.manifest, load.error) {
+            (_, Some(error)) => Err(error),
+            (Some(manifest), None) => Ok(manifest),
+            (None, None) => unreachable!("a load with no manifest reports why"),
+        }
+    }
+
+    /// Read the workspace, reporting what is wrong with it separately from
+    /// what it contains. See [`Load`].
+    pub fn load_reporting(workspace_root: &Path) -> Load {
+        match Self::assemble(workspace_root) {
+            Err(error) => Load {
+                manifest: None,
+                error: Some(error),
+            },
+            Ok(manifest) => {
+                let error = validate_dependencies(&manifest.targets)
+                    .and_then(|()| validate_default_targets(&manifest))
+                    .err();
+                Load {
+                    manifest: Some(manifest),
+                    error,
+                }
+            }
+        }
+    }
+
+    /// Every manifest in the workspace, merged. Cross-file checks are the
+    /// caller's, so that a caller which needs the result anyway can have it.
+    fn assemble(workspace_root: &Path) -> Result<Self> {
         let path = workspace_root.join(MANIFEST_FILE);
         let text = std::fs::read_to_string(&path).map_err(|_| {
             anyhow::anyhow!(
@@ -437,14 +482,28 @@ impl Manifest {
                 );
             }
         }
-        validate_dependencies(&manifest.targets)?;
-        validate_default_targets(&manifest)?;
         Ok(manifest)
     }
 
     pub fn parse_str(text: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(text).context("failed to parse manifest")?;
         Self::from_raw(raw)
+    }
+
+    /// Parse one manifest file the way [`Manifest::load`] parses each of them:
+    /// syntax and per-target shape, and none of the cross-file checks that
+    /// need the rest of the workspace to answer.
+    ///
+    /// `frost lsp` reports on whatever is in an editor's buffer, which is one
+    /// file and is usually mid-edit. Running the whole-workspace validation
+    /// against it alone would call a dependency unknown because the package
+    /// declaring it was never read — a confident diagnostic about the wrong
+    /// thing. `path` only names the file in the error, so the message matches
+    /// the one a build prints for the same mistake.
+    pub fn parse_document(path: &Path, text: &str) -> Result<Self> {
+        let raw: RawManifest =
+            toml::from_str(text).with_context(|| format!("failed to parse {}", path.display()))?;
+        Self::from_raw_unvalidated(raw)
     }
 
     /// Resolves the effective toolchain for a platform: the root `[toolchain]`
@@ -924,7 +983,10 @@ fn declares_workspace(manifest: &Path) -> bool {
         .is_some_and(|value| value.get("workspace").is_some())
 }
 
-fn resolve_label(raw: &str, package: &str) -> String {
+/// A dependency label as written, resolved against the package that wrote it:
+/// `//pkg:name` is already absolute, `//:name` names a root target, and
+/// anything else is local to `package`.
+pub fn resolve_label(raw: &str, package: &str) -> String {
     if let Some(root) = raw.strip_prefix("//:") {
         root.to_string()
     } else if raw.starts_with("//") {

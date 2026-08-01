@@ -28,15 +28,10 @@ quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# `frost lsp` puts a squiggle where a syntax error is, and the span comes from
+# the parse failure itself rather than from a second scan of the document.
+toml.workspace = true
 zip.workspace = true
-
-[dev-dependencies]
-# The frostw E2E builds a release archive and its SHA256SUMS, so it has to
-# compute the checksum the wrapper is going to verify.
-sha2.workspace = true
-# This repository's own frost.toml is configured in-process, so checking that
-# it still describes the tree costs no build and leaves no state behind.
-frostbuild-core.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

@@ -7,6 +7,23 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost lsp` speaks the Language Server Protocol for `frost.toml` on
+  stdin/stdout: diagnostics, completion of labels across packages and of the
+  keys a target's kind accepts, go-to-definition for a label, find-references,
+  and hover. It is a projection of what frost already knows, not a second
+  analysis — references call `graph.rdeps_closure`, the function `frost query
+  rdeps` calls, and hover reports the closure size `frost query deps` prints,
+  with an E2E that compares them so a disagreement fails rather than ships. A
+  diagnostic's message is byte for byte the sentence a build prints for the
+  same mistake, placed on the token that message names. The workspace is
+  re-read on save through the graph store's warm path, so an unchanged tree
+  costs a stamp check; syntax and per-target errors are reported against the
+  editor's buffer as it is typed. While a manifest does not parse, or a label
+  names nothing, the server keeps answering from the declarations that did
+  load, because that is the state a manifest spends most of its editing life
+  in. Formatting, rename and non-manifest files are out of scope. Any LSP
+  client works; the VS Code extension is the first.
+
 - `frost build --report` and `frost test --report` write a self-contained HTML
   file explaining one build: the critical path with each action's measured
   duration, the cache breakdown per kind of work, the slowest actions that ran,
@@ -50,15 +67,6 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   `task bootstrap` for a machine with neither frost nor network.
   `scripts/check.sh` stays as the path that needs no frost.
 
-### Fixed
-
-- Package discovery stops at a nested workspace root. A subdirectory whose own
-  `frost.toml` declares `[workspace]` is a separate workspace — a sample, a
-  vendored dependency, an unrelated project in the same tree — and absorbing
-  its targets as packages silently dropped the toolchain, profiles and default
-  targets it declared for itself. Nested manifests without `[workspace]`, which
-  is what a package is, are unaffected.
-
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
   provides a task provider, target and test pickers, "build the targets owning
   this file", an optional build-on-save, and compiler diagnostics routed into
@@ -72,6 +80,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   one exception noted in its source: no CLI primitive lists every target, so
   the universe is derived from `graph --dot` topology and the kinds come from
   `query`.
+
+### Fixed
+
+- Package discovery stops at a nested workspace root. A subdirectory whose own
+  `frost.toml` declares `[workspace]` is a separate workspace — a sample, a
+  vendored dependency, an unrelated project in the same tree — and absorbing
+  its targets as packages silently dropped the toolchain, profiles and default
+  targets it declared for itself. Nested manifests without `[workspace]`, which
+  is what a package is, are unaffected.
+
+- Ordering a graph whose manifest declared an unknown dependency panicked
+  instead of reporting it. `Manifest::load` rejects that before anything is
+  configured, so it was unreachable until `frost lsp` needed the manifests a
+  failed validation had already assembled; the invariant is now checked rather
+  than assumed.
 
 ## [0.9.0] - 2026-08-01
 

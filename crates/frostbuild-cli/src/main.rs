@@ -20,6 +20,7 @@ use notify::{RecursiveMode, Watcher};
 
 mod bazel;
 mod jar;
+mod lsp;
 mod npm;
 mod progress;
 mod report;
@@ -585,6 +586,8 @@ enum Cmd {
         #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
     },
+    /// Speak the Language Server Protocol for frost.toml on stdin/stdout
+    Lsp,
     /// Report workspace, output and cache locations for scripts and editors
     Info {
         /// Print only this key's value; omit for the whole table
@@ -1652,6 +1655,7 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Cmd::Lsp => lsp::serve(&root),
         Cmd::Init {
             dry_run,
             language,
