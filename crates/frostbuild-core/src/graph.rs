@@ -88,6 +88,14 @@ pub struct ActionNode {
     /// Format of that report; see `depfile::Format`.
     #[serde(default)]
     pub depfile_format: crate::depfile::Format,
+    /// Extra attempts a failing test gets before the failure is the verdict.
+    ///
+    /// Not action-key material on purpose: it says how hard to look for a
+    /// verdict, not what the test does, so raising it must not invalidate a
+    /// result that already passed. Non-test actions leave it at 0 — a compile
+    /// that failed does not deserve another try.
+    #[serde(default)]
+    pub flaky_retries: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -295,6 +303,7 @@ impl BuildGraph {
                         output_dirs: Vec::new(),
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = outputs;
@@ -405,6 +414,7 @@ impl BuildGraph {
                             output_dirs: Vec::new(),
                             depfile: None,
                             depfile_format: crate::depfile::Format::Make,
+                            flaky_retries: target.flaky_retries,
                         })?;
                         target_node.actions.push(action);
                         stamp_ids.push(stamp_id);
@@ -565,6 +575,7 @@ impl BuildGraph {
                         output_dirs,
                         depfile,
                         depfile_format: target.depfile_format,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = output_ids;
@@ -626,6 +637,7 @@ impl BuildGraph {
                         output_dirs: Vec::new(),
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
+                        flaky_retries: 0,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![bin_id];
@@ -695,6 +707,7 @@ impl BuildGraph {
                             output_dirs: Vec::new(),
                             depfile: Some(depfile),
                             depfile_format: crate::depfile::Format::Make,
+                            flaky_retries: 0,
                         })?;
                         target_node.actions.push(action);
                         objs.push(obj);
@@ -727,6 +740,7 @@ impl BuildGraph {
                                 output_dirs: Vec::new(),
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
+                                flaky_retries: 0,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![lib_id];
@@ -772,6 +786,7 @@ impl BuildGraph {
                                 output_dirs: Vec::new(),
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
+                                flaky_retries: 0,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![bin_id];
@@ -801,6 +816,7 @@ impl BuildGraph {
                                         output_dirs: Vec::new(),
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
+                                        flaky_retries: target.flaky_retries,
                                     })?;
                                     target_node.actions.push(test);
                                     stamp_ids.push(stamp_id);
@@ -2147,6 +2163,8 @@ mod tests {
         id: String,
         stamp: String,
         env: BTreeMap<String, String>,
+        argv: Vec<String>,
+        flaky_retries: u32,
     }
 
     fn test_actions(manifest: &str) -> Result<Vec<TestAction>> {
@@ -2159,6 +2177,8 @@ mod tests {
                 id: action.id.clone(),
                 stamp: graph.files[action.outputs[0]].path.clone(),
                 env: action.env.clone(),
+                argv: action.argv.clone(),
+                flaky_retries: action.flaky_retries,
             })
             .collect())
     }
@@ -2276,6 +2296,109 @@ mod tests {
         .unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("TEST_TOTAL_SHARDS"), "{error}");
+    }
+
+    #[test]
+    fn flaky_retries_is_declared_where_it_can_mean_something() {
+        let actions = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.sometimes]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 2
+            "#,
+        )
+        .unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].flaky_retries, 2);
+
+        // Absent means one attempt, and every non-test action stays at zero:
+        // retrying a compile that failed is a different and much worse idea.
+        let actions = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.plain]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(actions[0].flaky_retries, 0);
+
+        let error = Manifest::parse_str(
+            r#"
+            [target.lib]
+            kind = "cc_library"
+            srcs = ["a.c"]
+            flaky_retries = 2
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("test and cc_test targets only"), "{error}");
+
+        // A ceiling, so a broken test cannot be made to look green by asking
+        // for enough attempts.
+        let error = Manifest::parse_str(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.desperate]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 50
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("at most 9"), "{error}");
+    }
+
+    #[test]
+    fn retry_policy_is_not_action_key_material() {
+        // Turning retries on must not invalidate a result that already passed
+        // cleanly: the policy says how hard to look for a verdict, not what
+        // the test does. The action id, argv, env and stamp are what the key
+        // is built from, so this pins that none of them moved.
+        let plain = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            "#,
+        )
+        .unwrap();
+        let retried = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.t]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            flaky_retries = 3
+            "#,
+        )
+        .unwrap();
+        assert_eq!(plain.len(), retried.len());
+        assert_eq!(plain[0].id, retried[0].id);
+        assert_eq!(plain[0].argv, retried[0].argv);
+        assert_eq!(plain[0].env, retried[0].env);
+        assert_eq!(plain[0].stamp, retried[0].stamp);
     }
 
     #[test]

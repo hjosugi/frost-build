@@ -7,6 +7,11 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Changed
 
+- The test summary counts a skipped test as skipped rather than failed. A test
+  that never ran because something upstream failed was reported as a failure,
+  which blames the wrong file; the exit code is unchanged, since a build with
+  skipped work still does not succeed.
+
 - The site's stylesheet keeps its scales in one place. It held 51 font-size
   declarations with 26 distinct rem values, 12 letter-spacing declarations with
   12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
@@ -23,6 +28,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   separately.
 
 ### Added
+
+- `flaky_retries = N` on a test or `cc_test` target (default 0, maximum 9): a
+  failing test gets N more attempts before the failure is its verdict. Each
+  retry starts from the state a first attempt would see — the partial success
+  stamp is removed and clean directories are reset — so attempt two does not run
+  in the world attempt one left behind. A test that only passes on a retry is
+  reported as flaky and its success is **not recorded**, locally or remotely:
+  the build is green and dependents proceed, but the next run executes it again,
+  because caching a verdict the test reached only on the second try would hide
+  the flake from every later build. The summary line gains `N flaky` so the cost
+  is visible instead, and a test that fails every attempt says `failed all N
+  attempts` rather than looking like a single run. The field is deliberately not
+  action-key material — it says how hard to look for a verdict, not what the
+  test does, so turning it on does not invalidate a clean pass.
 
 - `${dep:LABEL}` and `${deps:LABEL}` now resolve in a command target's `env` and
   in a genrule's `cmd`, not only in argv. A consumer names the dependency it

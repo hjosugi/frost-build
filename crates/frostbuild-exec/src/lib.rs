@@ -371,6 +371,19 @@ pub enum Outcome {
     MayRun { reason: String },
     /// The command ran and failed.
     Failed { reason: String, detail: String },
+    /// A test failed and then passed on a retry it declared with
+    /// `flaky_retries`.
+    ///
+    /// Separate from `Executed` because the build is green but the result is
+    /// not trustworthy, and folding the two would lose exactly the signal the
+    /// feature exists to surface. The success is deliberately not journalled:
+    /// caching a verdict the test only reached on the second try would hide
+    /// the flake from every later build.
+    Flaky {
+        reason: String,
+        duration_ms: u64,
+        attempts: u32,
+    },
     /// Not run because an upstream action failed or the build aborted.
     Skipped { reason: String },
 }
@@ -436,7 +449,12 @@ impl BuildReport {
     }
 
     pub fn executed(&self) -> usize {
-        self.count(|o| matches!(o, Outcome::Executed { .. }))
+        self.count(|o| matches!(o, Outcome::Executed { .. } | Outcome::Flaky { .. }))
+    }
+
+    /// Tests that only passed on a retry. Green, and worth knowing about.
+    pub fn flaky(&self) -> usize {
+        self.count(|o| matches!(o, Outcome::Flaky { .. }))
     }
 
     pub fn cached(&self) -> usize {
@@ -452,6 +470,10 @@ impl BuildReport {
             matches!(
                 r.outcome,
                 Outcome::Executed { .. }
+                    // A flake reached a passing verdict, so the build is
+                    // green and the exit code says so. It is reported, not
+                    // cached, which is where the cost lands instead.
+                    | Outcome::Flaky { .. }
                     | Outcome::Cached
                     | Outcome::WouldRun { .. }
                     | Outcome::MayRun { .. }
@@ -849,7 +871,9 @@ impl<'a> Engine<'a> {
             results
                 .iter()
                 .fold((0u64, 0usize), |(b, n), r| match r.outcome {
-                    Outcome::Executed { duration_ms, .. } => (b + duration_ms, n + 1),
+                    Outcome::Executed { duration_ms, .. } | Outcome::Flaky { duration_ms, .. } => {
+                        (b + duration_ms, n + 1)
+                    }
                     _ => (b, n),
                 });
         let stats = BuildStats {
@@ -1120,6 +1144,19 @@ impl<'a> Engine<'a> {
                 Outcome::Executed { duration_ms, .. } => {
                     (ProgressState::Executed, *duration_ms, String::new())
                 }
+                // Green in the progress display, because it is: the stamp
+                // exists and dependents may run. The summary is where the
+                // flake is named, so a passing build does not read as a
+                // failing one.
+                Outcome::Flaky {
+                    duration_ms,
+                    attempts,
+                    ..
+                } => (
+                    ProgressState::Executed,
+                    *duration_ms,
+                    format!("flaky: passed on attempt {attempts}"),
+                ),
                 Outcome::Cached => (ProgressState::CacheHit, elapsed_ms, String::new()),
                 Outcome::Failed { detail, .. } => {
                     (ProgressState::Failed, elapsed_ms, detail.clone())
@@ -1343,7 +1380,7 @@ impl<'a> Engine<'a> {
         }
 
         let started = Instant::now();
-        let batch = match self.run_action_commands(action, &inputs) {
+        let mut batch = match self.run_action_commands(action, &inputs) {
             Ok(batch) => batch,
             Err(err) => {
                 return Outcome::Failed {
@@ -1353,12 +1390,52 @@ impl<'a> Engine<'a> {
             }
         };
 
+        // A test that declared `flaky_retries` gets that many more attempts
+        // before the failure is the verdict. Each retry starts from the same
+        // state a first attempt would: a partial stamp from the failed run
+        // must not be mistaken for success, and a clean directory the test
+        // dirtied must be reset, or attempt two runs in a world attempt one
+        // left behind.
+        let mut attempts = 1;
+        while batch.failure.is_some()
+            && action.kind == ActionKind::Test
+            && attempts <= action.flaky_retries
+            && !was_cancelled()
+        {
+            attempts += 1;
+            self.remove_partial_outputs(action);
+            if let Err(err) = self.reset_clean_dirs(action) {
+                return Outcome::Failed {
+                    reason,
+                    detail: format!("failed to reset intermediates before retry: {err:#}"),
+                };
+            }
+            batch = match self.run_action_commands(action, &inputs) {
+                Ok(next) => next,
+                Err(err) => {
+                    return Outcome::Failed {
+                        reason,
+                        detail: err,
+                    }
+                }
+            };
+        }
+        let flaky = attempts > 1 && batch.failure.is_none();
+
         if let Some((argv, exit)) = batch.failure {
             self.remove_partial_outputs(action);
             let detail = format!(
-                "command: {}\nexit: {}\n{}",
+                "command: {}\nexit: {}\n{}{}",
                 shell_join(&argv),
                 exit,
+                if attempts > 1 {
+                    // Without this the log shows one failure for what was
+                    // several runs, and the retries look like they never
+                    // happened.
+                    format!("failed all {attempts} attempts\n")
+                } else {
+                    String::new()
+                },
                 batch.captured.trim_end()
             );
             return Outcome::Failed { reason, detail };
@@ -1580,6 +1657,25 @@ impl<'a> Engine<'a> {
                     detail,
                 };
             }
+        }
+
+        if flaky {
+            // The stamp is written, so the build is green and dependents may
+            // proceed — but nothing is recorded, locally or remotely. A result
+            // the test only reached on a later attempt is not evidence that it
+            // passes, and caching it would hide the flake from every build
+            // after this one, including the run that would have caught it.
+            if let Some(progress) = &self.opts.progress {
+                progress.emit(ProgressEvent::ActionOutput {
+                    id: action.id.clone(),
+                    output: captured,
+                });
+            }
+            return Outcome::Flaky {
+                reason,
+                duration_ms,
+                attempts,
+            };
         }
 
         let key = self.action_key(action, &inputs);
@@ -2842,6 +2938,7 @@ mod tests {
                 output_dirs: Vec::new(),
                 depfile: None,
                 depfile_format: frostbuild_core::depfile::Format::Make,
+                flaky_retries: 0,
             }
         }
         let digest = |action: &frostbuild_core::graph::ActionNode| {
