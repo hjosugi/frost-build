@@ -7,6 +7,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- A test or `cc_test` target may declare `shard_count = N`, becoming N
+  independently keyed, cached and scheduled actions. Frost does not divide the
+  cases — it cannot know them — it tells the runner which slice is its own
+  through `TEST_SHARD_INDEX`, `TEST_TOTAL_SHARDS`, `TEST_SHARD_STATUS_FILE` and
+  googletest's spelling of the first two, so a gtest binary shards without a
+  wrapper. Each shard writes its own success stamp, so one shard failing leaves
+  the others cached and a rerun repeats only the failure. A runner that ignores
+  the protocol runs every case in every shard, which is why the field is
+  declared per target rather than applied by Frost, and why declaring one of
+  those variables alongside `shard_count` is an error rather than a silent
+  override. Omitting the field, or writing `shard_count = 1`, reproduces the
+  exact action identity and stamp path Frost has always used, so adding
+  sharding to a workspace cannot invalidate an existing journal.
+
 - `${dep:LABEL}` and `${deps:LABEL}` in `command` and `test` arguments resolve
   to the declared outputs of one named dependency, so a consumer stops
   repeating the producer's output-path convention and a layout change stops

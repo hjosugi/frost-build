@@ -196,6 +196,32 @@ caching, failure cleanup, `test --affected` and `test --no-cache` behave
 identically. Test targets do not declare `outputs`, steps, clean directories or
 depfiles.
 
+A test or `cc_test` target may declare `shard_count = N`, which makes it N
+independently keyed, cached and scheduled actions instead of one. Frost does not
+divide the cases — it cannot know them — it tells the runner which slice is its
+own, through the environment test runners already implement:
+
+| Variable | Value |
+|---|---|
+| `TEST_SHARD_INDEX` | this shard, `0`-based |
+| `TEST_TOTAL_SHARDS` | `N` |
+| `TEST_SHARD_STATUS_FILE` | path a runner touches to announce it understood |
+| `GTEST_SHARD_INDEX` / `GTEST_TOTAL_SHARDS` | the same values under googletest's names |
+
+**A runner that ignores these runs every case in every shard.** That is why
+`shard_count` is declared per target rather than applied by Frost on its own,
+and why the value belongs next to a test whose runner is known to honour it.
+Frost passes `TEST_SHARD_STATUS_FILE` but does not yet check whether the runner
+created it.
+
+Each shard gets its own success stamp under
+`.frost/test/<config>/<target>/shard-<i>-of-<N>/`, so one shard failing or being
+invalidated leaves the others cached. Omitting the field, or writing
+`shard_count = 1`, reproduces exactly the single action, identity and stamp that
+Frost has always used, so adding the field to a workspace does not invalidate an
+existing journal. Declaring any of the variables above in `env` or `pass_env`
+alongside `shard_count` is an error rather than a silent override.
+
 ## Language-neutral command targets
 
 Use `command` when the underlying tool has a real argv interface. Unlike a
