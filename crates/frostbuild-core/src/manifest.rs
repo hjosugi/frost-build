@@ -1008,6 +1008,30 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     })
 }
 
+/// Every nested package manifest, absolute, or none when the root does not
+/// declare a `[workspace]`.
+///
+/// Gated on the declaration for the same reason loading is: without it, the
+/// subdirectories of a repository are not its packages, and a tool that walked
+/// into them anyway would rewrite the sample workspaces from the root.
+pub fn package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(root.join(MANIFEST_FILE))
+        .with_context(|| format!("failed to read {}", root.join(MANIFEST_FILE).display()))?;
+    let declares_workspace = toml::from_str::<toml::Value>(&text)
+        .map(|value| value.get("workspace").is_some())
+        .unwrap_or(false);
+    if !declares_workspace {
+        return Ok(Vec::new());
+    }
+    let mut found = discover_package_manifests(root)?;
+    found.sort();
+    Ok(found
+        .into_iter()
+        .filter(|rel| rel != Path::new(MANIFEST_FILE))
+        .map(|rel| root.join(rel))
+        .collect())
+}
+
 fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {

@@ -508,6 +508,13 @@ enum Cmd {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Rewrite frost.toml in its canonical form
+    Fmt {
+        /// Report whether anything would change and exit non-zero if so,
+        /// without writing. For CI
+        #[arg(long)]
+        check: bool,
+    },
     /// Report manifest patterns that build but cost something later
     Lint {
         /// Emit findings as one machine-readable JSON object
@@ -1743,6 +1750,7 @@ fn run(cli: Cli) -> Result<i32> {
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => run_query(&root, &function),
+        Cmd::Fmt { check } => run_fmt(&root, check),
         Cmd::Lint { json } => run_lint(&root, json),
         Cmd::Journal { command } => match command {
             JournalCmd::Export {
@@ -4202,6 +4210,52 @@ fn parse_test_options(
 /// environment, the toolchain fingerprint is computed per run, and the profile
 /// and platform come from this invocation. Only together do they explain a
 /// cache miss.
+/// Rewrite every manifest in the workspace in canonical form.
+///
+/// Nested package manifests are included: a workspace where only the root is
+/// formatted is one where `--check` passes and the packages still drift.
+fn run_fmt(root: &std::path::Path, check: bool) -> Result<i32> {
+    let mut manifests = vec![root.join(frostbuild_core::manifest::MANIFEST_FILE)];
+    manifests.extend(frostbuild_core::manifest::package_manifests(root)?);
+
+    let mut changed = Vec::new();
+    for path in &manifests {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let formatted = frostbuild_core::fmt::format_manifest(&text)
+            .with_context(|| format!("failed to format {}", path.display()))?;
+        if formatted == text {
+            continue;
+        }
+        changed.push(path.clone());
+        if !check {
+            std::fs::write(path, &formatted)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+    }
+
+    let relative = |path: &std::path::Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    if changed.is_empty() {
+        println!("fmt: {} manifest(s) already canonical", manifests.len());
+        return Ok(0);
+    }
+    for path in &changed {
+        println!("{}", relative(path));
+    }
+    if check {
+        println!("fmt: {} would change; run `frost fmt`", changed.len());
+        // The "your code" side of the exit-code split, like a failing lint.
+        return Ok(1);
+    }
+    println!("fmt: {} rewritten", changed.len());
+    Ok(0)
+}
+
 /// Report manifest patterns that parse, build, and cost something later.
 fn run_lint(root: &std::path::Path, json: bool) -> Result<i32> {
     let manifest = Manifest::load(root)?;

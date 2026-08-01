@@ -4,5 +4,5 @@
 [target.render]
 kind = "cc_library"
 srcs = ["src/render.c"]
-includes = ["include"]
 deps = ["//core:core"]
+includes = ["include"]

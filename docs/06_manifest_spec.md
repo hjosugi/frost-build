@@ -548,3 +548,33 @@ not be.
 `by_rule` is there so a CI job can threshold one rule without parsing
 `findings`. Findings are ordered by target then rule, so two runs can be
 diffed.
+
+## frost fmt
+
+`frost fmt` rewrites every manifest in the workspace in one canonical form, and
+`frost fmt --check` reports whether anything would change without writing,
+exiting 1 if so.
+
+The point is not that any particular order is better. It is that two people
+writing the same target produce the same bytes, so a review shows what changed
+rather than who wrote it.
+
+- Keys inside a `[target.*]` table follow a fixed order, grouped by what a
+  reader is asking: what kind of thing this is, what it reads, what it
+  produces, how it runs. An unrecognized key — a manifest from a newer frost,
+  or a typo the parser rejects a moment later — is kept, after the known ones,
+  in the order it was written.
+- `[target.*]` tables are emitted in name order.
+- An array whose entries exceed 76 characters goes one per line with a trailing
+  comma; a shorter one stays inline. Both spellings are canonical for their
+  width, so neither is rewritten on a second run.
+
+Comments and string contents are preserved: `# needs HOME for the dependency
+cache` explains a decision the keys around it cannot, and a formatter that
+dropped them is one nobody would run twice.
+
+Two properties are tested rather than asserted in prose. Formatting is
+**idempotent**, without which `--check` could fail on its own output. And
+formatting **never changes what the manifest means** — the same manifest parses
+to the same targets, sources, dependencies and flags before and after, which is
+the property reordering keys and tables could plausibly break.

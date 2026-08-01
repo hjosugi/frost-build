@@ -5,6 +5,7 @@
 [target.greeting]
 kind = "command"
 tool = "javac"
+args = ["-d", "${clean_dir}", "${in}"]
 inputs = ["src/main/java/com/example/greeting/Greeting.java"]
 # Every command output must contain ${config}, which keeps debug, release and
 # cross-platform trees from colliding. Paths are package-relative, so this
@@ -13,7 +14,6 @@ outputs = [".frost/out/${config}/greeting.jar"]
 # Removed and recreated before every run, so a class deleted from the sources
 # cannot survive in the jar.
 clean_dirs = [".frost/tmp/${config}/greeting-classes"]
-args = ["-d", "${clean_dir}", "${in}"]
 steps = [
   { tool = "pack_jar", args = ["pack-jar", "--input", "${clean_dir}",
                                "--output", "${out}"] },

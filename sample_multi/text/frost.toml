@@ -3,5 +3,5 @@
 [target.text]
 kind = "cc_library"
 srcs = ["src/text.c"]
-includes = ["include"]
 deps = ["//core:core"]
+includes = ["include"]
