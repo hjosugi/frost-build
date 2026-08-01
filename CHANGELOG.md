@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-01
+
 ### Added
 
 - A test or `cc_test` target may declare `shard_count = N`, becoming N
