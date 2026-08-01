@@ -272,6 +272,7 @@ pub const TARGET_KEYS: &[&str] = &[
     "flaky_retries",
     "lint_allow",
     "visibility",
+    "platform",
     "depfile",
     "depfile_format",
     "inputs",
@@ -327,6 +328,10 @@ struct RawTarget {
     /// Who may depend on this target. Absent means every package may, which is
     /// what keeps an existing workspace building; see `crate::visibility`.
     visibility: Option<Vec<String>>,
+    /// `[target.NAME.platform.PLAT]` overlays, applied when building for that
+    /// platform.
+    #[serde(default)]
+    platform: BTreeMap<String, RawTargetPlatform>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -341,6 +346,40 @@ struct RawTarget {
     output_dirs: Vec<String>,
     /// Tests may opt out of sandboxing when they intentionally inspect the host.
     sandbox: Option<bool>,
+}
+
+/// What one `[target.NAME.platform.PLAT]` section may say.
+///
+/// A closed list rather than "any target key": the point is to express that a
+/// source or a flag differs per platform, not to let a target become a
+/// different target. Anything that would change the *shape* of the graph —
+/// kind, outputs, tool — is absent on purpose, so `frost query` answers the
+/// same question whatever platform you happen to be building.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTargetPlatform {
+    srcs: Option<Vec<String>>,
+    deps: Option<Vec<String>>,
+    includes: Option<Vec<String>>,
+    #[serde(default)]
+    cflags: Vec<String>,
+    #[serde(default)]
+    ldflags: Vec<String>,
+}
+
+/// The resolved form of one platform overlay; see [`Target::for_platform`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TargetPlatform {
+    /// Replace the base list. A source set is an identity: appending would
+    /// make `main_posix.c` and `main_windows.c` both compile.
+    pub srcs: Option<Vec<String>>,
+    pub deps: Option<Vec<String>>,
+    pub includes: Option<Vec<String>>,
+    /// Appended to the base. Flags already accumulate everywhere else in a
+    /// frost manifest — toolchain, then profile, then target — so this is that
+    /// same rule one level down rather than a new one to remember.
+    pub cflags: Vec<String>,
+    pub ldflags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -481,6 +520,8 @@ pub struct Target {
     /// Deliberately not action-key material: visibility says who may ask for a
     /// target, not what building it produces (docs/16).
     pub visibility: Option<Vec<String>>,
+    /// Per-platform overlays, keyed by a name the root manifest declares.
+    pub platform_overlays: BTreeMap<String, TargetPlatform>,
     /// How many extra attempts a failing test gets before it is reported as
     /// failed. 0 means the first failure is the verdict.
     ///
@@ -713,6 +754,7 @@ impl Manifest {
                 let error = validate_dependencies(&manifest.targets)
                     .and_then(|()| validate_default_targets(&manifest))
                     .and_then(|()| validate_visibility(&manifest))
+                    .and_then(|()| validate_platform_overlays(&manifest))
                     .err();
                 Load {
                     manifest: Some(manifest),
@@ -815,6 +857,12 @@ impl Manifest {
                 );
             }
         }
+        // No `validate_*` call belongs here, and one arriving in a merge is the
+        // second time it has: `load_reporting` needs the manifests that parsed
+        // even when the verdict is an error, because that is the state a
+        // manifest is in for most of the time `frost lsp` is looking at one.
+        // Validation runs in `load_reporting` and `from_raw`, which is where a
+        // new check goes.
         Ok(manifest)
     }
 
@@ -893,6 +941,7 @@ impl Manifest {
         validate_dependencies(&manifest.targets)?;
         validate_default_targets(&manifest)?;
         validate_visibility(&manifest)?;
+        validate_platform_overlays(&manifest)?;
         Ok(manifest)
     }
 
@@ -1001,6 +1050,43 @@ fn build_stamp(raw: RawStamp) -> Result<Stamp> {
         command: raw.command,
         stable_prefix,
     })
+}
+
+impl Target {
+    /// This target as it is built for `platform`.
+    ///
+    /// Borrowed unchanged when nothing is declared for that platform, which is
+    /// almost every target. The resolved value is what reaches the action key,
+    /// so a platform section changes the key exactly as writing the same value
+    /// at the top level would — being conditional is not a property of the
+    /// value, only of how it was written.
+    pub fn for_platform(&self, platform: &str) -> std::borrow::Cow<'_, Self> {
+        let Some(overlay) = self.platform_overlays.get(platform) else {
+            return std::borrow::Cow::Borrowed(self);
+        };
+        let mut resolved = self.clone();
+        if let Some(srcs) = &overlay.srcs {
+            resolved.srcs = srcs.clone();
+        }
+        if let Some(deps) = &overlay.deps {
+            resolved.deps = deps.clone();
+        }
+        if let Some(includes) = &overlay.includes {
+            resolved.includes = includes.clone();
+        }
+        resolved.cflags.extend(overlay.cflags.iter().cloned());
+        resolved.ldflags.extend(overlay.ldflags.iter().cloned());
+        resolved
+            .platform_overlays
+            .retain(|name, _| name == platform);
+        std::borrow::Cow::Owned(resolved)
+    }
+
+    /// Which platform sections this target declares, for a reader asking why a
+    /// build looks the way it does.
+    pub fn platform_names(&self) -> Vec<&str> {
+        self.platform_overlays.keys().map(String::as_str).collect()
+    }
 }
 
 fn valid_target_name(name: &str) -> bool {
@@ -1302,6 +1388,22 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         flaky_retries: spec.flaky_retries.unwrap_or(0),
         lint_allow: spec.lint_allow.clone(),
         visibility: spec.visibility.clone(),
+        platform_overlays: spec
+            .platform
+            .iter()
+            .map(|(name, overlay)| {
+                (
+                    name.clone(),
+                    TargetPlatform {
+                        srcs: overlay.srcs.clone(),
+                        deps: overlay.deps.clone(),
+                        includes: overlay.includes.clone(),
+                        cflags: overlay.cflags.clone(),
+                        ldflags: overlay.ldflags.clone(),
+                    },
+                )
+            })
+            .collect(),
         depfile,
         depfile_format,
         inputs,
@@ -1509,7 +1611,12 @@ fn validate_kofun_binary_sources(srcs: &[String]) -> Result<()> {
 
 fn validate_dependencies(targets: &BTreeMap<String, Target>) -> Result<()> {
     for target in targets.values() {
-        for dep in &target.deps {
+        let overlay_deps = target
+            .platform_overlays
+            .values()
+            .filter_map(|overlay| overlay.deps.as_ref())
+            .flatten();
+        for dep in target.deps.iter().chain(overlay_deps) {
             if dep == &target.name {
                 bail!("target {:?} depends on itself", target.name);
             }
@@ -1565,7 +1672,12 @@ fn validate_visibility(manifest: &Manifest) -> Result<()> {
     }
 
     for (name, target) in &manifest.targets {
-        for dep in &target.deps {
+        let overlay_deps = target
+            .platform_overlays
+            .values()
+            .filter_map(|overlay| overlay.deps.as_ref())
+            .flatten();
+        for dep in target.deps.iter().chain(overlay_deps) {
             let Some(rules) = parsed.get(dep.as_str()) else {
                 // No declaration is the default, and the default is public.
                 continue;
@@ -1588,6 +1700,29 @@ fn validate_visibility(manifest: &Manifest) -> Result<()> {
                     false => format!("//{}/...", target.package),
                 }
             );
+        }
+    }
+    Ok(())
+}
+
+/// Every `[target.*.platform.NAME]` names a platform the workspace declares.
+///
+/// An undeclared name is a typo that would otherwise do nothing at all: the
+/// overlay would sit in the manifest looking applied and never fire, and the
+/// symptom is a cross build that silently compiles the wrong sources.
+fn validate_platform_overlays(manifest: &Manifest) -> Result<()> {
+    for (name, target) in &manifest.targets {
+        for platform in target.platform_overlays.keys() {
+            if platform == HOST_PLATFORM || manifest.platforms.contains_key(platform) {
+                continue;
+            }
+            let known: Vec<&str> = std::iter::once(HOST_PLATFORM)
+                .chain(manifest.platforms.keys().map(String::as_str))
+                .collect();
+            let hint = closest(platform, known.iter().copied())
+                .map(|other| format!(", did you mean {other:?}?"))
+                .unwrap_or_else(|| format!(". declared platforms: {}", known.join(", ")));
+            bail!("target {name:?} has a section for undeclared platform {platform:?}{hint}");
         }
     }
     Ok(())
@@ -3366,6 +3501,37 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn target_keys_is_what_the_parser_accepts() {
+        // `TARGET_KEYS` is written down, and a written-down list of someone
+        // else's fields goes stale silently. It did: `platform` arrived on
+        // `RawTarget` and the list did not notice, because the only thing
+        // comparing it to anything compared it to another written-down list.
+        //
+        // serde names every accepted field when it rejects one, so the parser
+        // can be asked directly.
+        let error = Manifest::parse_str(
+            "[target.app]\nkind = \"cc_binary\"\nsrcs = [\"a.c\"]\nzzz_not_a_key = 1\n",
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        let (_, listed) = text
+            .split_once("expected one of ")
+            .expect("serde lists the fields it accepts");
+        let mut accepted: Vec<&str> = listed
+            .split(',')
+            .map(|item| {
+                item.trim()
+                    .trim_matches(|c: char| c == '`' || c.is_whitespace())
+            })
+            .filter(|item| !item.is_empty())
+            .collect();
+        accepted.sort_unstable();
+        let mut declared: Vec<&str> = TARGET_KEYS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(declared, accepted);
     }
 
     #[test]

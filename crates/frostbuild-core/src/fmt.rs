@@ -195,10 +195,16 @@ mod tests {
         // position is then an accident rather than a decision, and it lands
         // among keys it has nothing to do with. Failing here is a new manifest
         // key asking where it belongs.
+        // `platform` is a sub-table, `[target.NAME.platform.PLAT]`, not a
+        // value. `sort_by_canonical_order` sorts values, so listing it here
+        // would be inert — and asserting it were listed would be asserting
+        // something the formatter does not do.
+        const NOT_VALUES: &[&str] = &["platform"];
         let accepted = crate::manifest::TARGET_KEYS;
         let missing: Vec<&str> = accepted
             .iter()
             .copied()
+            .filter(|key| !NOT_VALUES.contains(key))
             .filter(|key| !TARGET_KEY_ORDER.contains(key))
             .collect();
         assert!(missing.is_empty(), "give these a position: {missing:?}");
@@ -207,6 +213,11 @@ mod tests {
             .copied()
             .filter(|key| !accepted.contains(key))
             .collect();
+        // And the exemptions have to stay real keys, or one outlives the key
+        // it was written for and silently excuses nothing.
+        for key in NOT_VALUES {
+            assert!(accepted.contains(key), "{key} is no longer a target key");
+        }
         assert!(unknown.is_empty(), "no longer accepted: {unknown:?}");
     }
 

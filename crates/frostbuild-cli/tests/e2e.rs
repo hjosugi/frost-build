@@ -7237,3 +7237,145 @@ timeout = 60"#,
         "changing a limit rebuilt the action:\n{out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Per-platform target sections (#140). The minimal form of a configurable
+// attribute: no predicate language, only platforms the workspace declared.
+// ---------------------------------------------------------------------------
+
+fn platform_workspace(name: &str) -> Workspace {
+    let ws = Workspace::empty(name);
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/common.c", "int frost_common(void) { return 1; }\n");
+    ws.write("src/host.c", "int frost_only_host(void) { return 2; }\n");
+    ws.write(
+        "src/device.c",
+        "int frost_only_device(void) { return 3; }\n",
+    );
+    ws.write(
+        "frost.toml",
+        r#"[toolchain]
+cflags = ["-DBASE=1"]
+
+[platform.device]
+cflags = ["-DDEVICE=1"]
+
+[target.lib]
+kind = "cc_library"
+srcs = ["src/common.c", "src/host.c"]
+cflags = ["-DTARGET=1"]
+
+[target.lib.platform.device]
+srcs = ["src/common.c", "src/device.c"]
+cflags = ["-DEXTRA=1"]
+"#,
+    );
+    ws
+}
+
+#[test]
+fn a_platform_section_replaces_a_source_set_and_adds_to_the_flags() {
+    let ws = platform_workspace("platform-section");
+
+    let (ok, out) = ws.frost(&["build", "lib", "--no-tui", "--verbose"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("src/host.c"), "{out}");
+    assert!(!out.contains("src/device.c"), "{out}");
+
+    let (ok, out) = ws.frost(&[
+        "build",
+        "lib",
+        "--platform",
+        "device",
+        "--no-tui",
+        "--verbose",
+    ]);
+    assert!(ok, "{out}");
+    // Sources *replace*: a source set is an identity, and appending would
+    // compile both the host and the device file into the same library.
+    assert!(out.contains("src/device.c"), "{out}");
+    assert!(!out.contains("src/host.c"), "{out}");
+    // Flags *accumulate*, in the order a frost manifest already accumulates
+    // them: toolchain, platform toolchain, target, then the platform section.
+    let compile = out
+        .lines()
+        .find(|line| line.contains("src/device.c") && line.contains("-c "))
+        .unwrap_or_default();
+    let order: Vec<&str> = ["-DBASE=1", "-DDEVICE=1", "-DTARGET=1", "-DEXTRA=1"]
+        .into_iter()
+        .filter(|flag| compile.contains(flag))
+        .collect();
+    assert_eq!(
+        order,
+        ["-DBASE=1", "-DDEVICE=1", "-DTARGET=1", "-DEXTRA=1"],
+        "{compile}"
+    );
+}
+
+#[test]
+fn a_section_for_a_platform_nobody_declared_is_refused_at_load() {
+    // The failure this prevents is silence: an overlay under a misspelled name
+    // sits in the manifest looking applied and never fires, and the symptom is
+    // a cross build that quietly compiles the wrong sources.
+    let ws = platform_workspace("platform-typo");
+    ws.write_in("frost.toml", |text| {
+        text.replace(
+            "[target.lib.platform.device]",
+            "[target.lib.platform.devise]",
+        )
+    });
+    let (code, out) = ws.frost_code(&["build", "lib", "--no-tui"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("undeclared platform \"devise\""), "{out}");
+    assert!(out.contains("did you mean \"device\""), "{out}");
+}
+
+#[test]
+fn each_platform_keeps_its_own_result_and_switching_back_is_cached() {
+    // The resolved value is what reaches the action key, so being conditional
+    // is a property of how the value was written and not of the value. Two
+    // platforms are two builds; returning to one must find it done.
+    let ws = platform_workspace("platform-cached");
+    assert!(ws.frost(&["build", "lib", "--no-tui"]).0);
+    assert!(
+        ws.frost(&["build", "lib", "--platform", "device", "--no-tui"])
+            .0
+    );
+
+    let (ok, out) = ws.frost(&["build", "lib", "--no-tui", "--explain"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("ran compile"),
+        "the host build was lost:\n{out}"
+    );
+
+    let (ok, out) = ws.frost(&[
+        "build",
+        "lib",
+        "--platform",
+        "device",
+        "--no-tui",
+        "--explain",
+    ]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("ran compile"),
+        "the device build was lost:\n{out}"
+    );
+}
+
+#[test]
+fn plan_names_the_platform_section_that_shaped_the_build() {
+    let ws = platform_workspace("platform-plan");
+    let (ok, out) = ws.frost(&["plan", "lib", "--platform", "device"]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("platform device: section applied to lib"),
+        "{out}"
+    );
+
+    // Silent when nothing applied, so the line means something when it appears.
+    let (ok, out) = ws.frost(&["plan", "lib"]);
+    assert!(ok, "{out}");
+    assert!(!out.contains("section applied"), "{out}");
+}

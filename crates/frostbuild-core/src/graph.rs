@@ -128,6 +128,13 @@ pub struct TargetNode {
     /// the same inputs still produce the same result under a different limit.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// The `[target.*.platform.NAME]` section that shaped this target, when one
+    /// did. Recorded here rather than recomputed, so a reader asking why a
+    /// cross build looks the way it does gets an answer from the graph it
+    /// actually built — including from a cached graph, where the manifest is
+    /// never re-read.
+    #[serde(default)]
+    pub applied_platform: Option<String>,
 }
 
 /// A workspace-relative path glob, with the semantics every query surface
@@ -326,7 +333,15 @@ impl BuildGraph {
         let mut genrule_outputs: HashMap<String, Rc<SharedSet>> = HashMap::new();
 
         for name in &order {
-            let target = &manifest.targets[name];
+            // The overlay is applied once, here, so everything downstream sees
+            // one target with one set of values. A conditional that survived
+            // into action construction would have to be re-evaluated at every
+            // use, and the first place someone forgot would be a build that
+            // differs from what the manifest says.
+            let resolved = manifest.targets[name].for_platform(platform);
+            let applied_platform =
+                matches!(resolved, std::borrow::Cow::Owned(_)).then(|| platform.to_string());
+            let target = resolved.as_ref();
 
             let dep_sets = |map: &HashMap<String, Rc<SharedSet>>| -> Vec<Rc<SharedSet>> {
                 target.deps.iter().map(|dep| map[dep].clone()).collect()
@@ -343,6 +358,7 @@ impl BuildGraph {
                 actions: Vec::new(),
                 outputs: Vec::new(),
                 timeout_secs: target.timeout_secs,
+                applied_platform,
             };
 
             match target.kind {

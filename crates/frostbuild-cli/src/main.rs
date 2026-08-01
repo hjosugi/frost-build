@@ -1662,6 +1662,21 @@ fn run(cli: Cli) -> Result<i32> {
             };
 
             let total = closure.len();
+            // Named before the actions, because "why is this compiling a
+            // different file than I expected" is a question about the manifest
+            // rather than about the plan.
+            let shaped: Vec<&str> = graph
+                .targets
+                .values()
+                .filter(|target| target.applied_platform.is_some())
+                .map(|target| target.name.as_str())
+                .collect();
+            if !shaped.is_empty() {
+                println!(
+                    "platform {platform}: section applied to {}",
+                    shaped.join(", ")
+                );
+            }
             let report = Engine::new(&root, &graph, closure, toolchain, opts).run()?;
 
             for r in &report.results {
