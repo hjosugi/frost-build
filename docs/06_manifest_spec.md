@@ -11,8 +11,8 @@ A legacy single-file workspace contains one root `frost.toml` and uses bare
 target names. When the root contains `[workspace]`, Frost discovers nested
 `frost.toml` files (not through directory symlinks). Nested paths are package
 relative. Labels are `//path/to/package:name`; `:name` and `name` resolve in the
-current package, while `//:name` addresses a root target. Visibility is a v1
-non-goal.
+current package, while `//:name` addresses a root target. Which packages may
+depend on a target is declared with `visibility`, below.
 
 ```toml
 [workspace]
@@ -546,6 +546,56 @@ visibility is about what a build may ask for.
 
 Not action-key material (docs/16): visibility says who may ask for a target,
 not what building it produces, so declaring a boundary costs no rebuild.
+
+## Per-platform target sections
+
+`[platform.*]` swaps a toolchain. It cannot swap a *source*, which is the
+difference C/C++ workspaces hit first: one file for POSIX, another for the
+device.
+
+```toml
+[platform.device]
+cflags = ["-DDEVICE=1"]
+
+[target.lib]
+kind = "cc_library"
+srcs = ["src/common.c", "src/host.c"]
+cflags = ["-DTARGET=1"]
+
+[target.lib.platform.device]
+srcs = ["src/common.c", "src/device.c"]   # replaces
+cflags = ["-DEXTRA=1"]                    # appends
+```
+
+A section may set `srcs`, `deps`, `includes`, `cflags` and `ldflags`, and
+nothing else. `kind`, `outputs` and `tool` are absent on purpose: a platform may
+change what a target is built from, never what it *is*, so `frost query`
+answers the same question whatever you are building for.
+
+| key | rule | why |
+|---|---|---|
+| `srcs`, `deps`, `includes` | replace | a set is an identity; appending would compile `host.c` and `device.c` into the same library |
+| `cflags`, `ldflags` | append | flags already accumulate — toolchain, then profile, then target — so this is that rule one level down, not a new one |
+
+The accumulation order is `[toolchain]`, `[platform.NAME]`, the target, then the
+target's platform section.
+
+There is no predicate language, and there will not be one: a section names a
+platform the workspace already declared, and an undeclared name is refused at
+load with a suggestion. That check matters more than it looks — an overlay under
+a misspelled name would otherwise sit in the manifest looking applied and never
+fire, and the symptom is a cross build quietly compiling the wrong sources.
+
+Deps declared in a section are checked for existence and visibility like any
+other, so a boundary cannot hold on one platform and not another. The target set
+does not change per platform: a section chooses among targets that exist either
+way.
+
+The resolved value is what reaches the action key, so a platform section changes
+the key exactly as writing the same value at the top level would — being
+conditional is a property of how a value was written, not of the value. Each
+platform keeps its own outputs and cache entries, and `frost plan` names the
+sections that applied.
 
 ## Build stamping
 

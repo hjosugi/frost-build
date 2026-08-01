@@ -65,6 +65,24 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   CI job runs it on `sample_multi`, so the rendering is something you can look at
   rather than something the documentation asserts.
 
+- `[target.NAME.platform.PLAT]` sections: the minimal form of a configurable
+  attribute. `[platform.*]` could already swap a toolchain but not a *source*,
+  which is the difference C/C++ workspaces hit first — one file for POSIX,
+  another for the device. A section may set `srcs`, `deps` and `includes`, which
+  replace, and `cflags`/`ldflags`, which append; flags already accumulate through
+  toolchain, profile and target, so appending is that rule one level down rather
+  than a new one. `kind`, `outputs` and `tool` are deliberately absent: a
+  platform may change what a target is built from, never what it is, so
+  `frost query` answers the same question whatever you are building for.
+
+  No predicate language, and a section naming a platform the workspace never
+  declared is refused at load with a suggestion — an overlay under a misspelled
+  name would otherwise sit in the manifest looking applied and never fire, and
+  the symptom is a cross build quietly compiling the wrong sources. Deps declared
+  in a section are checked for existence and visibility like any other, so a
+  boundary cannot hold on one platform and not another. `frost plan` names the
+  sections that applied.
+
 - `visibility` on targets, and named `[visibility.*]` groups in the root
   manifest. Multi-package labels let a workspace split into modules; this is what
   makes those modules mean something, enforced when the manifest loads rather
