@@ -13,23 +13,35 @@ repository; the Markdown remains the source of truth.
 and padding, with separately named tokens for the large page rhythm. Run
 `python3 -m unittest tests.test_site_css` after changing these foundations.
 
-Brand assets:
+## The mark
 
-- `assets/frostbuild-mark.png` — 1254 px transparent master;
+`assets/frostbuild-mark.svg` is the mark. Every PNG beside it is a rendering
+of that file, produced by `scripts/render_mark.py`:
+
+- `assets/frostbuild-mark.png` — 1024 px master;
 - `assets/frostbuild-mark-512.png` — navigation, README and social preview;
 - `assets/apple-touch-icon.png` — 180 px touch icon;
 - `favicon.png` — 32 px browser icon.
 
-The master was generated with OpenAI's built-in image generation on 28 July
-2026, then its solid chroma-key background was converted to alpha and the
-smaller assets were derived from that project-bound copy. Prompt:
+Edit the SVG, run `python3 scripts/render_mark.py`, commit the lot.
+`--check` renders to memory and compares instead of writing, so a change to
+the SVG that was never rendered cannot land looking applied.
 
-> Create a crisp modern brand mark for FrostBuild: a symmetrical six-point
-> frost crystal whose branches also read as a dependency graph, with small
-> hexagonal nodes connected by clean white lines. Use deep navy, electric cyan
-> and pale ice-blue geometric facets, no text, no letters, no mockup, centered
-> with generous padding, on a perfectly flat solid chroma-key magenta
-> background (#FF00FF).
+It is a six-point ice crystal that also reads as a dependency graph: one root,
+six edges, a node at every leaf. Three things about it are not taste, and
+`tests/test_site_mark.py` asserts each rather than trusting the eye — nothing
+may be thinner than the favicon can draw, nothing may fall below 3:1 against
+either the site's dark navigation or a light theme, and every colour must
+already be a token in `styles.css`.
+
+The mark this replaced was a 1254 px PNG from an image model, with no vector
+source: it could be re-prompted but not edited, and the smaller sizes were
+downscales of a picture rather than renderings of a drawing. It had two faults
+that the file itself could not show. Its dominant colour was a dark navy
+measuring 1.36:1 against the `#040a13` navigation the site puts the mark on,
+so the largest part of the logo was invisible exactly where it was used; and
+at 32 px its roughly forty facets dissolved into a smudge. Both are now
+things a test fails on.
 
 `.github/workflows/pages.yml` publishes this exact directory through
 GitHub's official SHA-pinned Pages actions.

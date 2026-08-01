@@ -137,6 +137,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m py_compile frost.py tests/test_frost.py
+      # The brand PNGs are renderings of site/assets/frostbuild-mark.svg, and
+      # `tests.test_site_mark` re-renders them to prove they still match. That
+      # test skips without a renderer, and a skip here is the one place the
+      # check is worth having: an edited SVG that was never rendered would
+      # otherwise reach main with CI green and the site showing the old mark.
+      - run: pip install cairosvg
       - run: python -m unittest discover -s tests
       - run: python frost.py build --workspace sample --jobs 4 --force
 
