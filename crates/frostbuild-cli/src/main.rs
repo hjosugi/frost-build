@@ -23,6 +23,7 @@ mod jar;
 mod npm;
 mod progress;
 mod wheel;
+mod wrapper;
 
 #[derive(Parser)]
 #[command(
@@ -448,6 +449,10 @@ enum Cmd {
         /// Source family; omit to auto-detect (mixed families require a choice)
         #[arg(long, value_enum)]
         language: Option<InitLanguage>,
+        /// Write only frostw, frostw.cmd and .frost-version, pinned to this
+        /// frost, into a workspace that already has a manifest
+        #[arg(long, conflicts_with = "language")]
+        wrapper: bool,
     },
     /// Compare scheduling strategies without building anything
     Simulate {
@@ -1158,6 +1163,9 @@ fn run(cli: Cli) -> Result<i32> {
         .workspace
         .canonicalize()
         .with_context(|| format!("workspace {} not found", cli.workspace.display()))?;
+    // Said before the work, not after: the point is to name the version
+    // difference before the reader starts debugging whatever it caused.
+    wrapper::warn_on_version_mismatch(&root);
 
     match cli.command {
         Cmd::Build {
@@ -1631,7 +1639,11 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Cmd::Init { dry_run, language } => run_init(&root, dry_run, language),
+        Cmd::Init {
+            dry_run,
+            language,
+            wrapper,
+        } => run_init(&root, dry_run, language, wrapper),
         Cmd::Simulate {
             targets,
             jobs,
@@ -4450,12 +4462,37 @@ fn summarize(
 
 /// Write a starter manifest for a directory that has sources but no
 /// `frost.toml`, so the first thing a newcomer runs is not a dead end.
-fn run_init(root: &std::path::Path, dry_run: bool, language: Option<InitLanguage>) -> Result<i32> {
+fn run_init(
+    root: &std::path::Path,
+    dry_run: bool,
+    language: Option<InitLanguage>,
+    wrapper_only: bool,
+) -> Result<i32> {
+    let version = env!("CARGO_PKG_VERSION");
+    // `--wrapper` is the path into a workspace that already has a manifest,
+    // which is where a version pin is most wanted and where plain `init`
+    // refuses to touch anything.
+    if wrapper_only {
+        if dry_run {
+            println!("frost init --wrapper would write, pinned to frost {version}:");
+            for name in [
+                wrapper::VERSION_FILE,
+                wrapper::WRAPPER_SH,
+                wrapper::WRAPPER_CMD,
+            ] {
+                println!("  {}", root.join(name).display());
+            }
+            return Ok(0);
+        }
+        report_wrapper(&wrapper::write_wrapper(root, version)?, version);
+        return Ok(0);
+    }
+
     let manifest_path = root.join(frostbuild_core::manifest::MANIFEST_FILE);
     if manifest_path.exists() && !dry_run {
         bail!(
-            "{} already exists. delete it first, or use --dry-run to see what \
-             init would write",
+            "{} already exists. delete it first, use --wrapper to add only the \
+             version wrapper, or use --dry-run to see what init would write",
             manifest_path.display()
         );
     }
@@ -4472,9 +4509,20 @@ fn run_init(root: &std::path::Path, dry_run: bool, language: Option<InitLanguage
     for line in &scaffold.summary {
         println!("  {line}");
     }
+    // A workspace is scaffolded once and built by everyone, so the version it
+    // was written against is worth recording while it is still known.
+    report_wrapper(&wrapper::write_wrapper(root, version)?, version);
     println!();
     println!("  read it before trusting it, then: frost build");
     Ok(0)
+}
+
+fn report_wrapper(written: &[std::path::PathBuf], version: &str) {
+    println!("frost: pinned this workspace to frost {version}");
+    for path in written {
+        println!("  {}", path.display());
+    }
+    println!("  commit these, then build with ./frostw build on any machine");
 }
 
 #[cfg(test)]

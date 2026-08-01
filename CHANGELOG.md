@@ -7,6 +7,40 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frostw` and `frostw.cmd`, checked in beside a one-line `.frost-version`, run
+  the frost release a repository requires rather than the one a machine
+  happens to have — the gradlew/bazelisk shape, which before 1.0 matters
+  because a minor release may change the manifest grammar and the resulting
+  error is correct while saying nothing about the version difference that
+  caused it. The wrapper prefers a matching `frost` already on `PATH`, then a
+  copy under `$FROST_HOME/versions/<version>`, then the GitHub release, whose
+  archive is verified against `SHA256SUMS` before it is unpacked into a
+  staging directory that is renamed into place — so a rejected or truncated
+  download leaves nothing for the next run to trust. Every failure names what
+  to put where to continue by hand. `frost init` writes all three for a new
+  workspace and `frost init --wrapper` adds them to one that already has a
+  manifest; frost itself warns once, on stderr, when it is not the declared
+  version. `.frost-version` names one exact version — no ranges, no `latest` —
+  because the reason to check it in is that two machines run the same build.
+- FrostBuild builds itself: a root `frost.toml` produces `frost` and `frostd`
+  and runs the four gates `scripts/check.sh` runs, with declared inputs, so an
+  unchanged tree answers in about a millisecond instead of paying for four
+  sequential tool startups. Cargo still owns crate resolution and rustc
+  ordering — each target wraps a whole `cargo` or `python3` invocation, the
+  boundary `sample_spring` draws around Gradle. A `Taskfile.yml`
+  ([Task](https://taskfile.dev)) supplies the names: `task`, `task check`,
+  `task bootstrap` for a machine with neither frost nor network.
+  `scripts/check.sh` stays as the path that needs no frost.
+
+### Fixed
+
+- Package discovery stops at a nested workspace root. A subdirectory whose own
+  `frost.toml` declares `[workspace]` is a separate workspace — a sample, a
+  vendored dependency, an unrelated project in the same tree — and absorbing
+  its targets as packages silently dropped the toolchain, profiles and default
+  targets it declared for itself. Nested manifests without `[workspace]`, which
+  is what a package is, are unaffected.
+
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
   provides a task provider, target and test pickers, "build the targets owning
   this file", an optional build-on-save, and compiler diagnostics routed into

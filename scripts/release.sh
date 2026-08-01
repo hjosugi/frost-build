@@ -111,12 +111,18 @@ fi
 # in CI fail if it is stale.
 cargo update --workspace --offline >/dev/null
 
+# This repository builds itself through ./frostw, so the version it requires is
+# the version it is about to publish. Between this commit and the Release
+# workflow finishing, ./frostw has nothing to download and says so; `task
+# bootstrap` is the path that needs no release at all.
+printf '%s\n' "$version" >.frost-version
+
 awk -v header="## [${version}] - $(date -u +%Y-%m-%d)" '
   !stamped && /^## \[Unreleased\]$/ { print; print ""; print header; stamped = 1; next }
   { print }
 ' CHANGELOG.md >CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 
-git add Cargo.toml Cargo.lock CHANGELOG.md
+git add Cargo.toml Cargo.lock CHANGELOG.md .frost-version
 git commit -q -m "Release ${version}"
 echo "Committed: $(git log --oneline -1)"
 

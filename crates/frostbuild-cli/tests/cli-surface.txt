@@ -22,7 +22,7 @@ frost import-bazel --bazel=VALUE --dry-run --query=VALUE
 frost import-ninja <ninja> --output=VALUE
 frost import-npm --dry-run --node=VALUE --npm=VALUE --script=VALUE --vite-builds
 frost info <key> --json --platform=VALUE --profile=VALUE
-frost init --dry-run --language=VALUE
+frost init --dry-run --language=VALUE --wrapper
 frost pack-jar --input=VALUE --main-class=VALUE --output=VALUE
 frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VALUE
 frost pick --platform=VALUE --print --profile=VALUE --tests

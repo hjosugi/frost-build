@@ -159,3 +159,64 @@ IDE E2E parses both generated files, checks the
 pre-launch task reference and proves a second invocation refuses overwrite.
 Doctor E2E covers both a fully buildable scaffold and a missing required named
 tool while retaining optional-integration results.
+
+## The version this repository requires
+
+```bash
+./frostw build             # runs the frost named in .frost-version
+frost init --wrapper       # add the wrapper to a workspace that has a manifest
+```
+
+`frost init` writes `.frost-version`, `frostw` and `frostw.cmd` alongside the
+manifest; `frost init --wrapper` adds only those three to a workspace that
+already has one. Committing them makes the build instruction `./frostw build`
+on every machine, instead of a README paragraph asking for a particular frost
+first.
+
+The wrapper prefers, in order: a `frost` already on `PATH` that reports the
+declared version, a copy under `$FROST_HOME/versions/<version>` from an earlier
+run, and finally that version's GitHub release — whose archive is verified
+against the release's `SHA256SUMS` before it is unpacked, into a staging
+directory that is renamed into place, so a rejected or truncated download
+leaves nothing behind for the next run to trust. Every failure names what to
+put where to continue by hand: no network, an unpublished version and a
+checksum mismatch are all dead ends otherwise.
+
+`.frost-version` is a file rather than a `frost.toml` key on purpose: reading
+the manifest requires a frost, and which frost to run is the question being
+asked. It names one exact version — no ranges, no `latest` — because the reason
+to check it in is that two machines run the same build.
+
+Running `frost` directly is not prevented. It warns, once, on stderr, naming
+the declared version and this one, because before 1.0 a minor release may
+change the manifest grammar and the resulting error is correct while saying
+nothing about the version difference that caused it.
+
+## Frost builds Frost
+
+The repository's own `frost.toml` builds `frost` and `frostd` and runs the four
+gates `scripts/check.sh` runs. [Task](https://taskfile.dev) supplies the names:
+
+```bash
+task              # build the binaries
+task check        # every gate, skipping the ones whose inputs did not move
+task --list       # the rest
+task bootstrap    # cargo build --release, for a machine with no frost at all
+```
+
+The split between the two is deliberate. Task has no dependency graph and no
+cache and does not pretend to: each task is a name for a command. `frost.toml`
+is where the decision lives — declared inputs, a content-addressed journal, and
+concurrency across independent gates — so `task check` is one command that asks
+one question, rather than four commands in sequence.
+
+Cargo still owns crate resolution, feature unification and rustc invocation
+order; every target wraps a whole `cargo` or `python3` invocation with a
+declared input set, the same boundary `sample_spring` and `sample_maven` draw
+around Gradle and Maven. Frost decides *whether* the invocation has to happen,
+not *what* it does. An unchanged tree answers in about a millisecond where the
+four gates otherwise cost seconds each; a touched `.rs` file reruns a whole
+gate, and Cargo's own incrementality is what makes that affordable.
+
+`scripts/check.sh` stays, and CI takes it: it is the path that requires no
+frost, which the bootstrap case still needs.

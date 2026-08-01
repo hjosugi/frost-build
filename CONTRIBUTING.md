@@ -12,13 +12,20 @@ correctness boundary.
 Before a PR:
 
 ```bash
-scripts/check.sh
+scripts/check.sh     # or: task check
 ```
 
 That runs the whole gate — `cargo test --workspace --all-targets --locked`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `cargo fmt --all -- --check` and `python3 -m unittest discover -s tests` — and
 reports every stage that failed rather than stopping at the first.
+
+`task check` runs the same four through this repository's own `frost.toml`,
+which declares each one's inputs, so the gates you did not touch are skipped
+instead of re-answered. It needs a frost: `./frostw` fetches the release
+`.frost-version` names, and `task bootstrap` builds one with Cargo alone. The
+script stays because CI takes it and because bootstrapping cannot depend on the
+thing being bootstrapped. See [docs/22_developer_loop.md](docs/22_developer_loop.md).
 
 ## Releasing
 

@@ -4211,3 +4211,478 @@ fn a_corrupt_cas_object_is_rebuilt_rather_than_handed_back() {
     // an undeclared determinism test.
     assert_eq!(ws.run_app(), "frost: 42\n");
 }
+
+// ---------------------------------------------------------------------------
+// frostw: the version this repository requires, not the one this machine has.
+//
+// The download path is the interesting one and it must not need the network,
+// so these serve the GitHub release layout — `v<version>/SHA256SUMS` and
+// `v<version>/frostbuild-v<version>-<triple>.<ext>` — from a loopback socket
+// and point the wrapper at it.
+// ---------------------------------------------------------------------------
+
+/// The release triple the wrappers derive for this host, or `None` where no
+/// release is published — in which case the wrapper's job is to say so, and
+/// there is no download to test.
+fn release_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+/// The wrapper bootstraps with what the host already ships. Where one of those
+/// is missing the wrapper reports it and stops, which is correct behavior and
+/// not what these cases are about.
+fn wrapper_prerequisites_present() -> bool {
+    let has = |tool: &str| {
+        Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    if cfg!(windows) {
+        has("curl.exe") && has("tar.exe")
+    } else {
+        (has("curl") || has("wget")) && (has("sha256sum") || has("shasum")) && has("tar")
+    }
+}
+
+/// Serves a fixed set of paths over HTTP on loopback, counting requests so a
+/// test can assert that no download happened at all.
+struct ReleaseServer {
+    base_url: String,
+    requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReleaseServer {
+    fn start(files: Vec<(String, Vec<u8>)>) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let Ok(peer) = stream.try_clone() else {
+                    continue;
+                };
+                let mut reader = BufReader::new(peer);
+                let mut request = String::new();
+                if reader.read_line(&mut request).is_err() {
+                    continue;
+                }
+                // Headers, to the blank line. Nothing here reads a body.
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header) {
+                        Ok(n) if n > 2 => continue,
+                        _ => break,
+                    }
+                }
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let body = files
+                    .iter()
+                    .find(|(served, _)| served == path)
+                    .map(|(_, bytes)| bytes.clone());
+                let response = match body {
+                    Some(bytes) => {
+                        let mut out = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\
+                             Content-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
+                            bytes.len()
+                        )
+                        .into_bytes();
+                        out.extend_from_slice(&bytes);
+                        out
+                    }
+                    None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                              Connection: close\r\n\r\n"
+                        .to_vec(),
+                };
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        });
+        Self {
+            base_url: format!("http://127.0.0.1:{port}"),
+            requests,
+        }
+    }
+
+    fn requests(&self) -> usize {
+        self.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Pack the real `frost` binary into the archive layout release.yml publishes,
+/// and return `(asset name, bytes)`.
+fn release_archive(scratch: &Path, version: &str, triple: &str) -> (String, Vec<u8>) {
+    let name = format!("frostbuild-v{version}-{triple}");
+    let stage = scratch.join("stage");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(stage.join(&name)).expect("stage the archive");
+    std::fs::copy(
+        frost_bin(),
+        executable_path(stage.join(&name).join("frost")),
+    )
+    .expect("copy frost into the archive");
+
+    let asset = if cfg!(windows) {
+        format!("{name}.zip")
+    } else {
+        format!("{name}.tar.gz")
+    };
+    let archive = scratch.join(&asset);
+    let mut tar = Command::new("tar");
+    if cfg!(windows) {
+        tar.args(["-c", "--format=zip", "-f"]);
+    } else {
+        tar.args(["-c", "-z", "-f"]);
+    }
+    let packed = tar
+        .arg(&archive)
+        .arg("-C")
+        .arg(&stage)
+        .arg(&name)
+        .output()
+        .expect("spawn tar");
+    assert!(
+        packed.status.success(),
+        "packing the release archive failed: {}",
+        normalized_output(&packed.stderr)
+    );
+    let bytes = std::fs::read(&archive).expect("read the packed archive");
+    (asset, bytes)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A workspace with the wrapper `frost init --wrapper` writes, pinned to
+/// `version`.
+fn wrapper_workspace(name: &str, version: &str) -> Workspace {
+    let workspace = Workspace::empty(name);
+    let (ok, out) = workspace.frost(&["init", "--wrapper"]);
+    assert!(ok, "init --wrapper failed:\n{out}");
+    std::fs::write(workspace.dir.join(".frost-version"), format!("{version}\n"))
+        .expect("pin the declared version");
+    workspace
+}
+
+fn run_wrapper(workspace: &Workspace, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(workspace.dir.join("frostw.cmd"));
+        command
+    } else {
+        Command::new(workspace.dir.join("frostw"))
+    };
+    command.args(args).current_dir(&workspace.dir);
+    // Loopback must not be handed to whatever proxy the host has configured.
+    for name in ["NO_PROXY", "no_proxy"] {
+        command.env(name, "*");
+    }
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let out = command.output().expect("spawn frostw");
+    (
+        out.status.success(),
+        normalized_output(&out.stdout) + &normalized_output(&out.stderr),
+    )
+}
+
+#[test]
+fn frostw_fetches_verifies_and_runs_the_version_the_workspace_declares() {
+    let Some(triple) = release_triple() else {
+        eprintln!("skipping frostw download E2E: no release is published for this host");
+        return;
+    };
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw download E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    // Deliberately not this binary's own version: a frost already on PATH must
+    // not be able to satisfy the pin and hide the download path.
+    let version = "9.9.9";
+    let workspace = wrapper_workspace("frostw-download", version);
+    let (asset, archive) = release_archive(&workspace.dir, version, triple);
+    let sums = format!("{}  {asset}\n", sha256_hex(&archive));
+    let server = ReleaseServer::start(vec![
+        (format!("/v{version}/SHA256SUMS"), sums.into_bytes()),
+        (format!("/v{version}/{asset}"), archive),
+    ]);
+
+    let home = workspace.dir.join("frost-home");
+    let home = home.to_str().unwrap();
+    let env = [
+        ("FROST_HOME", home),
+        ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+    ];
+
+    let (ok, out) = run_wrapper(&workspace, &["--version"], &env);
+    assert!(ok, "frostw could not install the declared version:\n{out}");
+    assert!(
+        out.contains("downloading frost 9.9.9"),
+        "the wait has to be explained while it happens:\n{out}"
+    );
+    assert!(
+        out.contains("frost 0.9.0")
+            || out.contains(&format!("frost {}", env!("CARGO_PKG_VERSION"))),
+        "the downloaded binary is what ran:\n{out}"
+    );
+    let installed = executable_path(Path::new(home).join("versions").join(version).join("frost"));
+    assert!(
+        installed.exists(),
+        "the verified release was not cached at {}",
+        installed.display()
+    );
+    let after_install = server.requests();
+    assert!(
+        after_install >= 2,
+        "the checksums and the archive are both fetched, saw {after_install}"
+    );
+
+    // Second run: the cache answers, and nothing is fetched again.
+    let (ok, out) = run_wrapper(&workspace, &["--version"], &env);
+    assert!(ok, "{out}");
+    assert!(!out.contains("downloading"), "{out}");
+    assert_eq!(
+        server.requests(),
+        after_install,
+        "a cached version must not be re-fetched"
+    );
+}
+
+#[test]
+fn a_tampered_release_archive_is_rejected_and_installs_nothing() {
+    let Some(triple) = release_triple() else {
+        eprintln!("skipping frostw checksum E2E: no release is published for this host");
+        return;
+    };
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw checksum E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    let version = "9.9.9";
+    let workspace = wrapper_workspace("frostw-tampered", version);
+    let (asset, archive) = release_archive(&workspace.dir, version, triple);
+    // The checksums describe the real archive; the served bytes are not it.
+    let sums = format!("{}  {asset}\n", sha256_hex(&archive));
+    let mut tampered = archive.clone();
+    let middle = tampered.len() / 2;
+    tampered[middle] ^= 0xFF;
+    let server = ReleaseServer::start(vec![
+        (format!("/v{version}/SHA256SUMS"), sums.into_bytes()),
+        (format!("/v{version}/{asset}"), tampered),
+    ]);
+
+    let home = workspace.dir.join("frost-home");
+    let home_str = home.to_str().unwrap();
+    let (ok, out) = run_wrapper(
+        &workspace,
+        &["--version"],
+        &[
+            ("FROST_HOME", home_str),
+            ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+        ],
+    );
+
+    assert!(!ok, "a modified archive must not be executed:\n{out}");
+    assert!(out.contains("checksum mismatch"), "{out}");
+    // Naming the recovery is the point of the message: a rejected download is
+    // otherwise a dead end.
+    assert!(out.contains("put it on PATH"), "{out}");
+    assert!(
+        !home.join("versions").join(version).exists(),
+        "a rejected archive must leave no partially installed version behind"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(home.join("versions"))
+        .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        leftovers.is_empty(),
+        "staging must be cleaned up, found {leftovers:?}"
+    );
+}
+
+#[test]
+fn a_matching_frost_on_path_is_used_without_downloading() {
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw PATH E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    let version = env!("CARGO_PKG_VERSION");
+    let workspace = wrapper_workspace("frostw-on-path", version);
+    // Serves nothing: reaching it at all is the failure this asserts against.
+    let server = ReleaseServer::start(Vec::new());
+
+    let bin_dir = Path::new(frost_bin()).parent().unwrap().to_path_buf();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .expect("join PATH");
+    let home = workspace.dir.join("frost-home");
+
+    let (ok, out) = run_wrapper(
+        &workspace,
+        &["--version"],
+        &[
+            ("FROST_HOME", home.to_str().unwrap()),
+            ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+            ("PATH", path.to_str().unwrap()),
+        ],
+    );
+
+    assert!(ok, "{out}");
+    assert!(out.contains(&format!("frost {version}")), "{out}");
+    assert_eq!(
+        server.requests(),
+        0,
+        "an installed frost that already matches the pin must not be replaced"
+    );
+    assert!(
+        !home.exists(),
+        "nothing is cached when nothing was downloaded"
+    );
+}
+
+#[test]
+fn frost_warns_when_it_is_not_the_version_the_workspace_declares() {
+    let ws = Workspace::new("version-mismatch");
+
+    // The pin the wrapper reads is also readable by frost itself, which is how
+    // a direct invocation that bypassed the wrapper still names the difference
+    // rather than leaving it to be discovered through its consequences.
+    std::fs::write(ws.dir.join(".frost-version"), "0.0.1\n").unwrap();
+    let (ok, out) = ws.frost(&["info", "version"]);
+    assert!(
+        ok,
+        "a version difference is a warning, not a failure:\n{out}"
+    );
+    assert!(out.contains("requires frost 0.0.1"), "{out}");
+    assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out}");
+    assert!(
+        out.contains("frostw"),
+        "the warning has to name the way out:\n{out}"
+    );
+
+    std::fs::write(
+        ws.dir.join(".frost-version"),
+        format!("{}\n", env!("CARGO_PKG_VERSION")),
+    )
+    .unwrap();
+    let (ok, out) = ws.frost(&["info", "version"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("warning"),
+        "a matching pin says nothing:\n{out}"
+    );
+}
+
+#[test]
+fn this_repository_checks_in_the_wrapper_frost_writes() {
+    // The wrapper only pins anything if it is committed, and this repository
+    // builds itself with it (see frost.toml). Drift between the shipped asset
+    // and the checked-in copy would mean `frost init --wrapper` hands new
+    // workspaces something this one does not actually run.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+
+    let shipped = std::fs::read_to_string(assets.join("frostw")).unwrap();
+    let checked_in = std::fs::read_to_string(repo.join("frostw")).unwrap();
+    assert_eq!(
+        checked_in, shipped,
+        "frostw at the repository root is not the frostw frost writes"
+    );
+
+    let shipped_cmd = std::fs::read_to_string(assets.join("frostw.cmd")).unwrap();
+    let checked_in_cmd = std::fs::read_to_string(repo.join("frostw.cmd")).unwrap();
+    assert_eq!(
+        checked_in_cmd.replace("\r\n", "\n"),
+        shipped_cmd.replace("\r\n", "\n"),
+        "frostw.cmd at the repository root is not the one frost writes"
+    );
+
+    let pinned = std::fs::read_to_string(repo.join(".frost-version")).unwrap();
+    assert_eq!(
+        pinned.trim(),
+        env!("CARGO_PKG_VERSION"),
+        ".frost-version and the workspace version have to move together; \
+         scripts/release.sh bumps both"
+    );
+}
+
+#[test]
+fn this_repository_describes_its_own_build() {
+    // frost.toml at the repository root is not a sample: `task check` runs
+    // these targets, and this repository's release binaries come out of them.
+    //
+    // Configuring it in-process costs no build and writes nothing, and it is
+    // the check that actually rots — an input glob that stopped matching after
+    // a rename does not fail a build, it silently narrows what a gate watches.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let manifest = frostbuild_core::manifest::Manifest::load(&repo)
+        .expect("the repository's own manifest must configure");
+
+    let mut targets: Vec<&str> = manifest.targets.keys().map(String::as_str).collect();
+    targets.sort_unstable();
+    assert_eq!(
+        targets,
+        ["binaries", "cargo_test", "clippy", "fmt", "python_test"],
+        "the gates are the four in CONTRIBUTING.md, plus the binaries"
+    );
+    // The sample workspaces declare `[workspace]` of their own, so they are
+    // separate workspaces rather than packages of this one. Absorbing them
+    // would build them with this toolchain and these default targets.
+    assert!(
+        !targets.iter().any(|name| name.starts_with("//sample")),
+        "a sample workspace was absorbed as a package: {targets:?}"
+    );
+
+    let gate = &manifest.targets["cargo_test"];
+    for expected in [
+        "crates/frostbuild-cli/src/main.rs",
+        "crates/frostbuild-cli/tests/e2e.rs",
+        "crates/frostbuild-cli/tests/cli-surface.txt",
+        "crates/frostbuild-cli/assets/frostw",
+        "sample_multi/core/src/core.c",
+        "Cargo.lock",
+    ] {
+        assert!(
+            gate.inputs.iter().any(|input| input == expected),
+            "the test gate stopped watching {expected}; it would be cached \
+             across a change to it"
+        );
+    }
+    assert!(
+        gate.inputs
+            .iter()
+            .all(|input| !input.starts_with("target/")),
+        "build output is not input"
+    );
+}

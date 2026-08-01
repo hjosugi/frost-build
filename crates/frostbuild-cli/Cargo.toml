@@ -30,6 +30,14 @@ serde_json.workspace = true
 sha2.workspace = true
 zip.workspace = true
 
+[dev-dependencies]
+# The frostw E2E builds a release archive and its SHA256SUMS, so it has to
+# compute the checksum the wrapper is going to verify.
+sha2.workspace = true
+# This repository's own frost.toml is configured in-process, so checking that
+# it still describes the tree costs no build and leaves no state behind.
+frostbuild-core.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

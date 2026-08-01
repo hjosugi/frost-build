@@ -1,0 +1,97 @@
+# Task (https://taskfile.dev) — the names, not the build.
+#
+#   task              # build the frost and frostd binaries
+#   task check        # every gate in CONTRIBUTING.md
+#   task --list       # everything below, with descriptions
+#
+# Two layers, and the split is deliberate:
+#
+#   * Task answers "what do I type". It has no dependency graph and no cache,
+#     and does not pretend to: every task here is a name for a command.
+#   * frost.toml answers "does this have to run at all". Declared inputs, a
+#     content-addressed journal, and concurrency across independent gates.
+#
+# So `task check` is one line that hands the whole question to frost, rather
+# than four commands in sequence the way scripts/check.sh has to be. That
+# script stays: it is the path that needs no frost, and CI takes it.
+#
+# FROST defaults to ./frostw, which runs the release named in .frost-version,
+# downloading it once if this machine does not have it. Point it elsewhere to
+# use a frost you just built:
+#
+#   task check FROST=./target/release/frost
+
+version: '3'
+
+vars:
+  FROST: '{{.FROST | default "./frostw"}}'
+
+tasks:
+  default:
+    desc: Build the frost and frostd binaries (release)
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the frost and frostd binaries into .frost/self/debug/bin
+    cmds:
+      - '{{.FROST}} build'
+
+  check:
+    desc: Run every gate — fmt, clippy, cargo test, python tests — skipping what did not change
+    cmds:
+      - '{{.FROST}} test --all'
+
+  check:direct:
+    desc: The same gates without frost, for a machine that has none yet
+    cmds:
+      - scripts/check.sh
+
+  fmt:
+    desc: Check formatting
+    cmds:
+      - '{{.FROST}} test fmt'
+
+  clippy:
+    desc: Lint with clippy, warnings denied
+    cmds:
+      - '{{.FROST}} test clippy'
+
+  test:
+    desc: Run the Rust workspace test suite
+    cmds:
+      - '{{.FROST}} test cargo_test'
+
+  test:python:
+    desc: Run the Python simulator and harness tests
+    cmds:
+      - '{{.FROST}} test python_test'
+
+  # Not a frost target: it rewrites the tree rather than deciding something
+  # about it, and a cached "already formatted" would be a lie the moment
+  # anything else edited a file.
+  fix:
+    desc: Rewrite sources into rustfmt's canonical form
+    cmds:
+      - cargo fmt --all
+
+  why:
+    desc: Explain what the last build ran, and why
+    cmds:
+      - '{{.FROST}} build --explain'
+
+  graph:
+    desc: Print the self-build dependency graph as DOT
+    cmds:
+      - '{{.FROST}} graph --dot'
+
+  clean:
+    desc: Remove frost's outputs and cached decisions for this workspace
+    cmds:
+      - '{{.FROST}} clean --cache'
+
+  bootstrap:
+    desc: Build frost with cargo alone, for a machine with neither frost nor network
+    cmds:
+      - cargo build --release --locked
+      - echo 'built ./target/release/frost — use it with: task check FROST=./target/release/frost'

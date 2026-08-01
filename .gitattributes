@@ -1,3 +1,12 @@
 # The CLI surface snapshot is compared byte for byte against a rendering that
 # always uses LF, so it must not be checked out with CRLF on Windows.
 crates/frostbuild-cli/tests/cli-surface.txt text eol=lf
+
+# The wrappers are executed, not read, so their line endings are part of what
+# they are. cmd.exe mis-parses a batch file with bare LF endings — `goto`
+# labels and parenthesised blocks stop working — and `/bin/sh` will not run a
+# script whose shebang line ends in CR. Pin both, whatever core.autocrlf says.
+frostw text eol=lf
+frostw.cmd text eol=crlf
+crates/frostbuild-cli/assets/frostw text eol=lf
+crates/frostbuild-cli/assets/frostw.cmd text eol=lf
