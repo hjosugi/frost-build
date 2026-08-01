@@ -362,9 +362,10 @@ path — it is the only host in this project that can.
 `frost lint` reports what the parser cannot: a manifest that is valid and
 unwise. Every rule has a stable identifier, one sentence saying what it costs,
 and a legitimate exception — which is why each is a lint rather than an error,
-and why `--allow RULE` exists for the workspace that disagrees. The rules and
-the `--json` schema are in
-[28_compatibility_contract.md](28_compatibility_contract.md#frost-lint---json).
+and why `lint_allow` exists on a target, recording an accepted cost next to the
+target that pays it rather than in a flag someone has to remember. The rules
+and the `--json` shape are in
+[06_manifest_spec.md](06_manifest_spec.md#frost-lint).
 
 Both are CI-shaped: `frost fmt --check` and `frost lint` exit `1` on a finding
 and `2` only when the workspace could not be read, so a job is the command and

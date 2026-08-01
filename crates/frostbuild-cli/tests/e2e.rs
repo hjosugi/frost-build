@@ -442,6 +442,46 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+fn this_repository_and_its_samples_pass_their_own_lint() {
+    // A rule that is not run against a real manifest is a rule nobody has
+    // checked. Both false positives this rule set shipped with -- a generated
+    // include directory reported as missing, and a `cc_test` reported as
+    // unreachable -- were found by pointing it at these exact files.
+    //
+    // A test rather than a stage in `frost.toml`: the gate must not depend on
+    // the binary it is gating, which is the same reason `scripts/check.sh`
+    // exists.
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut offenders = Vec::new();
+    for workspace in [
+        ".",
+        "sample_c",
+        "sample_multi",
+        "sample_java",
+        "sample_spring",
+        "sample_maven",
+    ] {
+        let root = repo.join(workspace);
+        if !root.join("frost.toml").is_file() {
+            continue;
+        }
+        let manifest = frostbuild_core::manifest::Manifest::load(&root)
+            .unwrap_or_else(|error| panic!("{workspace} failed to load: {error:#}"));
+        for finding in frostbuild_core::lint::lint(&manifest, &root) {
+            offenders.push(format!(
+                "{workspace}: {} {} ({})",
+                finding.target, finding.message, finding.rule
+            ));
+        }
+    }
+    assert_eq!(
+        offenders,
+        Vec::<String>::new(),
+        "fix the manifest, or record the accepted cost with lint_allow"
+    );
+}
+
+#[test]
 fn query_targets_answers_what_is_in_this_workspace() {
     let ws = Workspace::multi("query-targets");
 
@@ -5416,10 +5456,8 @@ fn this_repository_describes_its_own_build() {
     );
 
     // The other half of the dogfood: this manifest is held to what `frost fmt`
-    // and `frost lint` say about a manifest, in the tree, not in a copy. A
-    // linter its own author's workspace fails is one nobody else will keep on.
-    let findings = frostbuild_core::lint::lint(&repo, &manifest);
-    assert!(findings.is_empty(), "{findings:#?}");
+    // says about a manifest, in the tree, not in a copy. Lint is the same idea
+    // and lives in `this_repository_and_its_samples_pass_their_own_lint`.
     for relative in frostbuild_core::manifest::discover_manifests(&repo).expect("the manifest set")
     {
         let text = std::fs::read_to_string(repo.join(&relative)).expect("read manifest");
@@ -6387,102 +6425,23 @@ fn fmt_works_on_a_manifest_that_does_not_load() {
 }
 
 #[test]
-fn lint_reports_what_it_says_it_reports_and_says_why() {
-    let ws = Workspace::new("lint-findings");
-    ws.append(
-        "frost.toml",
-        "\n[target.orphan]\nkind = \"cc_library\"\nsrcs = [\"src/util.c\"]\n\
-         includes = [\"no-such-dir\"]\n",
-    );
-
-    let (ok, out) = ws.frost(&["lint"]);
-    assert!(!ok, "findings are a non-zero exit: {out}");
-    assert_eq!(exit_code(&ws.dir, &["lint"]), 1);
-
-    assert!(out.contains("unreachable-target"), "{out}");
-    assert!(out.contains("missing-include-dir"), "{out}");
-    assert!(out.contains("orphan"), "{out}");
-    // Every finding carries the sentence saying what it costs, which is what
-    // makes it something a reader can act on rather than a scolding.
-    assert!(out.contains("= it is never built"), "{out}");
-
-    // Silencing one rule leaves the other, and silencing both is exit 0.
-    let (_, one) = ws.frost(&["lint", "--allow", "unreachable-target"]);
-    assert!(!one.contains("unreachable-target"), "{one}");
-    assert!(one.contains("missing-include-dir"), "{one}");
-    assert_eq!(
-        exit_code(
-            &ws.dir,
-            &[
-                "lint",
-                "--allow",
-                "unreachable-target",
-                "--allow",
-                "missing-include-dir",
-            ],
-        ),
-        0,
-    );
-}
-
-#[test]
-fn lint_is_quiet_on_a_workspace_with_nothing_to_say() {
-    // The negative case for the command as a whole. A linter that fires on the
-    // shipped samples is one every user turns off on their first day.
-    for sample in ["lint-clean-c", "lint-clean-multi"] {
+fn the_shipped_samples_are_already_formatted() {
+    // `frost fmt --check` has to be true of what the repository ships, or the
+    // first thing a reader copies is a workspace their own CI would reject.
+    //
+    // Lint is not asserted here: `this_repository_and_its_samples_pass_their_own_lint`
+    // covers it against the files in the tree rather than against copies, and
+    // over more samples than this loop has fixtures for.
+    for sample in ["fmt-clean-c", "fmt-clean-multi"] {
         let ws = if sample.ends_with("multi") {
             Workspace::multi(sample)
         } else {
             Workspace::new(sample)
         };
-        let (ok, out) = ws.frost(&["lint"]);
-        assert!(ok, "{sample}: {out}");
-        assert!(out.contains("nothing to report"), "{sample}: {out}");
         assert_eq!(
             exit_code(&ws.dir, &["fmt", "--check"]),
             0,
             "{sample} is formatted"
         );
     }
-}
-
-#[test]
-fn lint_json_is_one_object_per_line_with_a_stable_shape() {
-    let ws = Workspace::new("lint-json");
-    ws.append(
-        "frost.toml",
-        "\n[target.orphan]\nkind = \"cc_library\"\nsrcs = [\"src/util.c\"]\n",
-    );
-
-    let (ok, out) = ws.frost(&["lint", "--json"]);
-    assert!(!ok, "{out}");
-    let lines: Vec<&str> = out.lines().filter(|line| !line.is_empty()).collect();
-    assert_eq!(lines.len(), 1, "{out}");
-
-    let finding: serde_json::Value = serde_json::from_str(lines[0]).expect("each line is JSON");
-    assert_eq!(finding["rule"], "unreachable-target");
-    assert_eq!(finding["target"], "orphan");
-    assert!(finding["detail"].is_string(), "{finding}");
-    assert!(finding["why"].is_string(), "{finding}");
-    // Documented in docs/28 as the schema; a fifth key would be additive, a
-    // renamed one would not.
-    assert_eq!(finding.as_object().unwrap().len(), 4, "{finding}");
-}
-
-#[test]
-fn a_misspelled_lint_rule_is_refused_rather_than_silently_allowing_nothing() {
-    // `--allow unreachable-targets` that quietly matched no rule would read as
-    // "allowed" and report the finding anyway, which looks like a broken flag.
-    let ws = Workspace::new("lint-unknown-rule");
-    let (ok, out) = ws.frost(&["lint", "--allow", "unreachable-targets"]);
-    assert!(!ok, "{out}");
-    assert_eq!(
-        exit_code(&ws.dir, &["lint", "--allow", "unreachable-targets"]),
-        2
-    );
-    assert!(out.contains("unknown lint rule"), "{out}");
-    assert!(
-        out.contains("did you mean \"unreachable-target\"?"),
-        "{out}"
-    );
 }

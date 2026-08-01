@@ -523,6 +523,12 @@ enum Cmd {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Report manifest patterns that build but cost something later
+    Lint {
+        /// Emit findings as one machine-readable JSON object
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain why a build reused a result or did not
     Journal {
         #[command(subcommand)]
@@ -627,15 +633,6 @@ enum Cmd {
         /// Format these manifests instead of the whole workspace
         #[arg(value_hint = ValueHint::FilePath)]
         paths: Vec<PathBuf>,
-    },
-    /// Report manifest patterns that load fine and go wrong later
-    Lint {
-        /// Emit findings as JSON for editors and CI
-        #[arg(long)]
-        json: bool,
-        /// Ignore findings from this rule; repeatable
-        #[arg(long, value_name = "RULE", add = ArgValueCompleter::new(complete_lint_rule))]
-        allow: Vec<String>,
     },
     /// Speak the Language Server Protocol for frost.toml on stdin/stdout
     Lsp,
@@ -1024,15 +1021,6 @@ fn complete_npm_script(current: &OsStr) -> Vec<CompletionCandidate> {
         .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
     candidates(current, names)
-}
-
-fn complete_lint_rule(current: &OsStr) -> Vec<CompletionCandidate> {
-    candidates(
-        current,
-        frostbuild_core::lint::RULES
-            .iter()
-            .map(|rule| rule.to_string()),
-    )
 }
 
 fn complete_info_key(current: &OsStr) -> Vec<CompletionCandidate> {
@@ -1781,7 +1769,6 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Cmd::Fmt { check, paths } => run_fmt(&root, check, &paths),
-        Cmd::Lint { json, allow } => run_lint(&root, json, &allow),
         Cmd::Lsp => lsp::serve(&root),
         Cmd::Init {
             dry_run,
@@ -1796,6 +1783,7 @@ fn run(cli: Cli) -> Result<i32> {
             json,
         } => run_simulate(&root, targets, jobs, &profile, &platform, json),
         Cmd::Query { function } => run_query(&root, &function),
+        Cmd::Lint { json } => run_lint(&root, json),
         Cmd::Journal { command } => match command {
             JournalCmd::Export {
                 out,
@@ -4321,6 +4309,32 @@ fn parse_test_options(
 /// environment, the toolchain fingerprint is computed per run, and the profile
 /// and platform come from this invocation. Only together do they explain a
 /// cache miss.
+/// Report manifest patterns that parse, build, and cost something later.
+fn run_lint(root: &std::path::Path, json: bool) -> Result<i32> {
+    let manifest = Manifest::load(root)?;
+    let findings = frostbuild_core::lint::lint(&manifest, root);
+    if json {
+        let report = frostbuild_core::lint::LintReport::new(&findings);
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if findings.is_empty() {
+        println!("lint: clean");
+    } else {
+        for finding in &findings {
+            println!("{}: {}", finding.target, finding.message);
+            println!("  {} ({})", finding.why, finding.rule);
+        }
+        println!(
+            "lint: {} finding{}",
+            findings.len(),
+            if findings.len() == 1 { "" } else { "s" }
+        );
+    }
+    // Findings are an answer about the manifest, which is the "your code" side
+    // of the exit-code split -- the same 1 a failing test returns, so `frost
+    // lint` can gate CI without a wrapper that interprets output.
+    Ok(i32::from(!findings.is_empty()))
+}
+
 fn run_journal_export(
     root: &std::path::Path,
     profile: &str,
@@ -5075,72 +5089,6 @@ fn run_fmt(root: &std::path::Path, check: bool, paths: &[PathBuf]) -> Result<i32
         );
     }
     Ok(0)
-}
-
-/// `frost lint`.
-///
-/// Findings exit 1: they are the answer, and a CI job that wants them to fail
-/// the build should not need a second command to decide that. `--allow` is how
-/// a workspace disagrees with one rule without turning the command off.
-fn run_lint(root: &std::path::Path, json: bool, allow: &[String]) -> Result<i32> {
-    for rule in allow {
-        if !frostbuild_core::lint::RULES.contains(&rule.as_str()) {
-            let hint = frostbuild_core::manifest::closest(
-                rule,
-                frostbuild_core::lint::RULES.iter().copied(),
-            )
-            .map(|near| format!(". did you mean {near:?}?"))
-            .unwrap_or_default();
-            bail!(
-                "unknown lint rule {rule:?}{hint}\nknown rules: {}",
-                frostbuild_core::lint::RULES.join(", ")
-            );
-        }
-    }
-
-    let manifest = Manifest::load(root)?;
-    let findings: Vec<_> = frostbuild_core::lint::lint(root, &manifest)
-        .into_iter()
-        .filter(|finding| !allow.iter().any(|rule| rule == finding.rule))
-        .collect();
-
-    if json {
-        // One object per finding on one line, so `frost lint --json | jq` and a
-        // line-oriented reader both work without a mode.
-        for finding in &findings {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "rule": finding.rule,
-                    "target": finding.target,
-                    "detail": finding.detail,
-                    "why": finding.why,
-                })
-            );
-        }
-    } else {
-        for finding in &findings {
-            match &finding.target {
-                Some(target) => println!("{}: {} [{}]", target, finding.detail, finding.rule),
-                None => println!("{} [{}]", finding.detail, finding.rule),
-            }
-            println!("  = {}", finding.why);
-        }
-        if findings.is_empty() {
-            println!(
-                "frost: nothing to report in {} targets",
-                manifest.targets.len()
-            );
-        } else {
-            println!();
-            println!(
-                "  {} finding{}. `--allow RULE` silences one this workspace disagrees with",
-                findings.len(),
-                if findings.len() == 1 { "" } else { "s" }
-            );
-        }
-    }
-    Ok(i32::from(!findings.is_empty()))
 }
 
 /// A workspace-relative path with forward slashes, so output is the same

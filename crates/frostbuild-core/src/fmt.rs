@@ -50,7 +50,11 @@ const TARGET_KEY_ORDER: &[&str] = &[
     "pass_env",
     "sandbox",
     "shard_count",
+    "flaky_retries",
     "timeout",
+    // Last because it is about checking the target rather than building it: a
+    // reader looking for what this target does should not meet it on the way.
+    "lint_allow",
 ];
 
 /// Keys of `[workspace]` and `[toolchain]`, likewise.
@@ -315,6 +319,27 @@ mod tests {
                 prop_assert!(once.contains(quoted), "{quoted} vanished from {once}");
             }
         }
+    }
+
+    #[test]
+    fn every_key_a_target_accepts_has_a_place_in_the_order() {
+        // A key missing here still formats — it falls to the alphabetical tail
+        // — but its position is then an accident rather than a decision, and it
+        // lands in the middle of keys it has nothing to do with. Failing here
+        // is a new manifest key asking where it belongs.
+        let accepted = crate::manifest::TARGET_KEYS;
+        let missing: Vec<&str> = accepted
+            .iter()
+            .copied()
+            .filter(|key| !TARGET_KEY_ORDER.contains(key))
+            .collect();
+        assert!(missing.is_empty(), "give these a position: {missing:?}");
+        let unknown: Vec<&str> = TARGET_KEY_ORDER
+            .iter()
+            .copied()
+            .filter(|key| !accepted.contains(key))
+            .collect();
+        assert!(unknown.is_empty(), "no longer accepted: {unknown:?}");
     }
 
     #[test]

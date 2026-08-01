@@ -21,7 +21,7 @@ end of this document.
 | CLI subcommand names, long options, positionals | A command line that works keeps working. Options are added, not renamed | `cli_surface_tests::the_command_surface_matches_the_checked_in_contract`, against `crates/frostbuild-cli/tests/cli-surface.txt` |
 | Exit codes | The three outcomes below stay distinguishable | `cli_surface_tests::exit_codes_keep_their_documented_meanings` |
 | `--json` output of `doctor`, `info`, `query`, `cache stats`, `lint` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
-| `frost lint` rule identifiers | A rule keeps its name and keeps meaning the same thing, so `--allow` in a checked-in CI job keeps silencing what it was written to silence. A retired rule stops being reported and stays accepted by `--allow` | `a_misspelled_lint_rule_is_refused_rather_than_silently_allowing_nothing`, and `lint::RULES` |
+| `frost lint` rule identifiers | A rule keeps its name and keeps meaning the same thing, so a `lint_allow` written into a manifest keeps silencing what it was written to silence. A retired rule stops being reported and stays accepted where it is named. The rules themselves are in [06_manifest_spec.md](06_manifest_spec.md#frost-lint) | `this_repository_and_its_samples_pass_their_own_lint` |
 | `frost info` keys | A key keeps naming the same thing. New keys are added | `info_answers_path_questions_without_a_graph` |
 | `.frost-version` format | One `X.Y.Z` line, optional `#` comments, whitespace insignificant. A file `frostw` reads today keeps being read the same way, by the wrapper and by frost itself | `wrapper::tests::a_version_is_read_the_way_the_wrapper_scripts_read_it`, `this_repository_checks_in_the_wrapper_frost_writes` |
 | Release asset names and `SHA256SUMS` | `frostbuild-v<version>-<triple>.{tar.gz,zip}` beside a `SHA256SUMS` listing them, under `releases/download/v<version>/`. A checked-in `frostw` from an older release keeps resolving newer ones | `frostw_fetches_verifies_and_runs_the_version_the_workspace_declares` |
@@ -44,35 +44,6 @@ through the real binary, because a document that says so and a binary that does
 so are different claims; `exit_codes_separate_a_bad_invocation_from_a_bad_build`
 covers the rest of the refusal rows — an unknown profile, an unknown platform, a
 query for a target that does not exist — on every host rather than only on unix.
-
-### `frost lint --json`
-
-One JSON object per line, nothing else on stdout, so `jq` and a line-oriented
-reader both work without a mode. Exit `1` when there is at least one finding,
-`0` when there are none, `2` when the workspace could not be read.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `rule` | string | The rule's stable identifier, from the table below. What `--allow` takes |
-| `target` | string or `null` | The target the finding is about, spelled as the manifest spells it. `null` for a finding about the workspace rather than one target |
-| `detail` | string | What was found, naming the specific thing that triggered it. Wording is not contract |
-| `why` | string | What it costs. The same sentence for every finding of a rule, because the reason belongs to the rule. Wording is not contract |
-
-The rules, each of which has a legitimate exception — that is why they are
-lints and not parse errors, and why `--allow` exists:
-
-| Rule | Reports |
-|---|---|
-| `unreachable-target` | A target that is not a default target and that nothing depends on. Tests are excluded: `frost test` selects them directly, so nothing depending on one means nothing |
-| `redundant-pass-env` | A `pass_env` naming a variable frost passes to every action anyway. It does not make the variable available — it already is — it makes its *value* action-key material, so two machines whose values differ stop sharing cache entries |
-| `absolute-path` | An absolute path inside `args`, `steps` or `cmd`. Declared paths are already a parse error; arguments are opaque to frost, which is what lets one hide there |
-| `host-shell-syntax` | `&&`, `\|\|`, a pipe, a redirect, `;` or command substitution in a `cmd` run through the host shell, which `/bin/sh` and `cmd.exe` read differently. A `command` target with direct argv has no shell to disagree with |
-| `missing-include-dir` | An `includes` entry that is not a directory and that no target generates. It still goes on the compiler's search path, where it finds nothing |
-
-Three checks the manifest spec asks for are absent here because they are
-already refusals rather than findings, which is strictly stronger: a glob
-matching no files and a manifest naming an undeclared profile or platform are
-parse-time errors, and two targets declaring one output is a graph error.
 
 ### What a refusal says
 

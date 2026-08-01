@@ -495,3 +495,56 @@ off downstream work.
 `frost plan`, `build --explain`, `explain TARGET`, `graph --dot`, `compdb`, and
 `build --trace FILE` expose planning and execution. `--sandbox` hides undeclared
 workspace paths on Linux; `--check-determinism` reruns selected actions.
+
+## frost lint
+
+`frost lint` reports manifest patterns that parse, build, and cost something
+later. It exits 1 when it finds anything and 0 when it does not, so it gates CI
+without a wrapper that interprets its output.
+
+Every rule catches something nothing else does — that is the entry requirement,
+and it excluded several obvious candidates. Duplicate outputs, an undeclared
+profile, an absolute path in a declared path field and a glob matching no files
+are all already hard errors; a lint that restates an error teaches people that
+lints are noise.
+
+| Rule | What it finds | Why it costs |
+|---|---|---|
+| `unreachable-target` | not a default, not a test, and nothing depends on it | never built unless named, so it rots unnoticed |
+| `missing-include-dir` | an `includes` entry that is not a directory and nothing generates | the compiler gets a `-I` that resolves nothing, so a missing header fails further away |
+| `volatile-pass-env` | `pass_env` naming `PATH`, `HOME`, `TMPDIR`, `TMP` or `TEMP` | those are deliberately outside the action key (docs/16); naming one puts it back, so nothing the target builds is shared between machines |
+| `absolute-path` | an absolute path in `args`, `cmd` or an `env` value | those fields are free text and nothing else validates them, so the build works on one machine |
+| `shell-dependent-cmd` | `&&`, `\|\|`, `\|`, `>`, `<` or `;` in a genrule `cmd` | a genrule runs through `/bin/sh` on Unix and `cmd.exe` on Windows |
+
+A finding can be true and unavoidable. A Maven build genuinely needs
+`$HOME/.m2`, so `volatile-pass-env` is correct and the workspace still has to
+pass `HOME`. `lint_allow` records that per target:
+
+```toml
+pass_env = ["HOME", "JAVA_HOME"]
+lint_allow = ["volatile-pass-env"]
+```
+
+Written next to the thing that pays the cost, which a global ignore file would
+not be.
+
+### `--json`
+
+```json
+{
+  "findings": [
+    {
+      "rule": "volatile-pass-env",
+      "target": "boot_jar",
+      "message": "pass_env names \"HOME\"",
+      "why": "its value differs per machine and per CI step, ..."
+    }
+  ],
+  "count": 1,
+  "by_rule": { "volatile-pass-env": 1 }
+}
+```
+
+`by_rule` is there so a CI job can threshold one rule without parsing
+`findings`. Findings are ordered by target then rule, so two runs can be
+diffed.

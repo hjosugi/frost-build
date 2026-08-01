@@ -43,30 +43,29 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
-- `frost fmt` and `frost lint`, so the manifest spec has something that checks
-  conformance to it. `fmt` canonicalizes table order, key order and array
-  wrapping while passing comments and string literals through byte for byte — a
-  comment travels with the key it was written above, which is what makes
-  reordering safe on a hand-organized file. It works on a manifest that does not
-  load, since that is the state a manifest is in for most of the time it is
-  being edited. `--check` exits 1 without writing, so a CI job is the command
-  and nothing else. A property test over generated manifests holds it to a fixed
-  point in two runs.
-  `lint` reports what the parser cannot: a manifest that is valid and unwise —
-  an unreachable target, a `pass_env` naming a variable frost already passes, an
-  absolute path hidden in an argument, host-shell syntax in a `cmd` that
-  `/bin/sh` and `cmd.exe` read differently, an `includes` entry that is not a
-  directory and that nothing generates. Every rule carries a stable identifier
-  for `--allow`, one sentence saying what it costs, and a positive and negative
-  test; the schema is in docs/28. Three checks the issue asked for turned out to
-  be refusals already, which is stronger than a finding: an empty glob and an
-  undeclared profile or platform are parse errors, and two targets claiming one
-  output is a graph error.
-  Running it on this repository's own manifest found five gate stages naming
-  `HOME` and `PATH` in `pass_env` — which does not make them available, they
-  already are, it puts their values in the action key and stops two machines
-  sharing a cache entry. The `binaries` target had a comment explaining exactly
-  that; the stages above it did the opposite. They no longer do.
+- `frost fmt`, so a manifest has one canonical rendering. It orders tables and
+  keys and wraps an array that does not fit, while passing comments and string
+  literals through byte for byte — a comment travels with the key it was written
+  above, which is what makes reordering safe on a hand-organized file. It keeps
+  the line ending a file arrived with, so a Windows checkout is not rewritten
+  whole on every run. It works on a manifest that does not load, since that is
+  the state a manifest is in for most of the time it is being edited and the
+  moment formatting is most wanted. `--check` exits 1 without writing, so a CI
+  job is the command and nothing else, and a property test over generated
+  manifests holds it to a fixed point in two runs.
+
+- `frost lint`, and a `lint_allow` manifest key. It reports patterns that parse,
+  build and cost something later: a target nothing reaches, an `-I` pointing at
+  a directory nothing creates, a `pass_env` naming a variable that is
+  deliberately outside the action key (so nothing that target builds is ever
+  shared between machines), an absolute path in `args`/`cmd`/`env` where nothing
+  else validates it, and shell metacharacters in a genrule `cmd` that mean
+  different things under `/bin/sh` and `cmd.exe`. Exits 1 on findings so it
+  gates CI directly, with `--json` carrying a `by_rule` count. Every rule had to
+  catch something nothing else does, which excluded duplicate outputs,
+  undeclared profiles, absolute paths in declared path fields and empty globs —
+  all already hard errors. `lint_allow` records a finding that is true and
+  unavoidable next to the target that pays for it.
 
 - `frost query targets`: the one query with no starting point. `deps` and
   `rdeps` both need a target to walk from, which made "what is in this

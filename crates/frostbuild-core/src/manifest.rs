@@ -246,6 +246,39 @@ struct RawProfile {
     ldflags: Vec<String>,
 }
 
+/// Every key a `[target.*]` table accepts, in declaration order.
+///
+/// `RawTarget` is `deny_unknown_fields`, so this is the whole surface. It is
+/// spelled out rather than derived because `frost fmt` orders these keys and a
+/// new one has to be given a position deliberately; a test compares the two
+/// lists so adding a field here is what raises the question there.
+pub const TARGET_KEYS: &[&str] = &[
+    "kind",
+    "srcs",
+    "deps",
+    "includes",
+    "cflags",
+    "ldflags",
+    "cmd",
+    "tool",
+    "args",
+    "env",
+    "pass_env",
+    "steps",
+    "clean_dirs",
+    "preserve_outputs",
+    "timeout",
+    "shard_count",
+    "flaky_retries",
+    "lint_allow",
+    "depfile",
+    "depfile_format",
+    "inputs",
+    "outputs",
+    "output_dirs",
+    "sandbox",
+];
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawTarget {
@@ -287,6 +320,9 @@ struct RawTarget {
     /// Test targets only: rerun a failing test up to N more times before
     /// calling it failed. Absent or 0 means one attempt.
     flaky_retries: Option<u32>,
+    /// Lint rule ids this target has decided it can live with.
+    #[serde(default)]
+    lint_allow: Vec<String>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -390,6 +426,14 @@ pub struct Target {
     /// How many independently cached and scheduled actions this test becomes.
     /// Always at least 1; only test kinds may declare more.
     pub shard_count: u32,
+    /// Lint rule ids `frost lint` should not report for this target.
+    ///
+    /// Some findings are true and unavoidable: a Maven build genuinely needs
+    /// `$HOME/.m2`, so `volatile-pass-env` is correct and the workspace still
+    /// has to pass `HOME`. Suppressing it in the manifest keeps the cost
+    /// written down next to the thing that pays it, which a global ignore file
+    /// does not.
+    pub lint_allow: Vec<String>,
     /// How many extra attempts a failing test gets before it is reported as
     /// failed. 0 means the first failure is the verdict.
     ///
@@ -1165,6 +1209,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         timeout_secs: spec.timeout,
         shard_count: spec.shard_count.unwrap_or(1),
         flaky_retries: spec.flaky_retries.unwrap_or(0),
+        lint_allow: spec.lint_allow.clone(),
         depfile,
         depfile_format,
         inputs,

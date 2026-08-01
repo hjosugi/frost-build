@@ -1,237 +1,263 @@
-//! Manifest patterns that load fine and go wrong later.
+//! Manifest patterns that parse, build, and are still a mistake.
 //!
-//! The parser rejects what cannot mean anything: an absolute `srcs` path, a
-//! glob matching no files, two targets claiming one output. What it cannot
-//! reject is a manifest that is valid and unwise — one that will build here and
-//! not on a colleague's machine, or that quietly stops caching. Those are what
-//! this reports.
+//! Every rule here catches something nothing else does. That is the entry
+//! requirement, and it removed several obvious-looking candidates: duplicate
+//! outputs are already a hard error in `push_action`, an undeclared profile is
+//! already rejected in `from_manifest_configured`, and an absolute path in
+//! `srcs`, `inputs`, `outputs` or `includes` is already refused by
+//! `validate_rel_path`, and a glob matching nothing is already refused by
+//! `expand_paths`. A lint that restates an error teaches people that lints
+//! are noise.
 //!
-//! Every rule here is a lint rather than an error for the same reason: each has
-//! a legitimate exception, and the ones that do not are already errors. So each
-//! carries a stable identifier to name it by and one line saying what it costs,
-//! and none of them stops a build.
+//! What is left is the class of thing that is legal, does exactly what it
+//! says, and costs you later: a target nothing can reach, an `-I` pointing at
+//! a directory that is not there, an environment opt-in that quietly makes
+//! your cache per-machine.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+use serde::Serialize;
 
 use crate::manifest::{Manifest, TargetKind};
 
-/// Something worth changing about a manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One finding. `rule` is stable: it is what a `# frost-lint: allow` comment
+/// or a CI filter would name, so renaming one is a breaking change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {
-    /// Stable across releases, so CI can name one rule to require or ignore.
     pub rule: &'static str,
-    /// The target it is about, when it is about one.
-    pub target: Option<String>,
-    /// What was found, naming the specific thing that triggered it.
-    pub detail: String,
-    /// What it costs. The same sentence for every finding of a rule, because
-    /// the reason is a property of the rule and not of the occurrence.
+    /// The target it was found in, or the workspace when it belongs to no one.
+    pub target: String,
+    pub message: String,
+    /// One line on why this costs something. A finding the reader cannot act
+    /// on is a finding they learn to skip.
     pub why: &'static str,
 }
 
-/// Every rule this version can report, sorted.
-///
-/// `--allow` validates against it, so a misspelled rule name is refused rather
-/// than silently allowing nothing.
-pub const RULES: &[&str] = &[
-    "absolute-path",
-    "host-shell-syntax",
-    "missing-include-dir",
-    "redundant-pass-env",
-    "unreachable-target",
-];
+/// Host variables that are deliberately *outside* the action key, per
+/// docs/16. Naming one in `pass_env` puts it back in.
+const VOLATILE: [&str; 5] = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP"];
 
-/// Shell operators whose meaning differs between `/bin/sh` and `cmd.exe`.
-const HOST_SHELL_OPERATORS: &[&str] = &["&&", "||", "|", ">>", ">", "<", ";", "$(", "`"];
+/// Metacharacters whose meaning differs between `/bin/sh` and `cmd.exe`, which
+/// are the two shells frost runs a genrule through.
+const SHELL_METACHARACTERS: [&str; 6] = ["&&", "||", "|", ">", "<", ";"];
 
-/// Everything wrong with `manifest`, in a deterministic order.
-///
-/// `root` is read from: whether an `includes` directory exists is a fact about
-/// the workspace, not about the text.
-pub fn lint(root: &Path, manifest: &Manifest) -> Vec<Finding> {
+/// Lint a manifest. `root` answers the questions the text alone cannot: a
+/// directory either exists in this tree or it does not.
+pub fn lint(manifest: &Manifest, root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
-    unreachable_targets(manifest, &mut findings);
-    let produced = produced_directories(manifest);
+    let generated = generated_directories(manifest);
+    findings.extend(unreachable_targets(manifest));
     for (name, target) in &manifest.targets {
-        redundant_pass_env(name, target, &mut findings);
-        absolute_paths(name, target, &mut findings);
-        host_shell_syntax(name, target, &mut findings);
-        missing_include_dirs(root, &produced, name, target, &mut findings);
+        findings.extend(missing_include_dirs(name, target, root, &generated));
+        findings.extend(volatile_pass_env(name, target));
+        findings.extend(absolute_paths_in_text(name, target));
+        findings.extend(shell_dependent_cmd(name, target));
     }
-    findings.sort_by(|a, b| {
-        a.rule
-            .cmp(b.rule)
-            .then_with(|| a.target.cmp(&b.target))
-            .then_with(|| a.detail.cmp(&b.detail))
+    // A target may declare it can live with a rule. Applied here rather than
+    // inside each rule so every rule gets it for free and none can forget.
+    findings.retain(|finding| {
+        manifest
+            .targets
+            .get(&finding.target)
+            .is_none_or(|target| !target.lint_allow.iter().any(|rule| rule == finding.rule))
     });
-    // A rule missing from `RULES` cannot be named in `--allow` or in the
-    // documentation, which makes it unusable rather than merely undocumented.
-    debug_assert!(
-        findings.iter().all(|f| RULES.contains(&f.rule)),
-        "a rule is missing from lint::RULES"
-    );
+    // Stable order, so a CI diff of two runs shows what changed rather than
+    // how the map happened to iterate.
+    findings.sort_by(|a, b| (a.target.as_str(), a.rule).cmp(&(b.target.as_str(), b.rule)));
     findings
 }
 
-fn unreachable_targets(manifest: &Manifest, findings: &mut Vec<Finding>) {
-    let mut reached: BTreeSet<&str> = manifest
+/// Targets nothing reaches: not a default, not a test, and not a dependency
+/// of anything.
+///
+/// Test kinds are roots. `frost test` selects them by kind rather than by
+/// dependency, so a `cc_test` that nothing depends on is the normal shape of a
+/// test and not a finding — reporting it would fire on almost every workspace,
+/// which is how a rule teaches people to pass `--no-verify`.
+fn unreachable_targets(manifest: &Manifest) -> Vec<Finding> {
+    let mut reachable: BTreeSet<&str> = manifest
         .default_targets
         .iter()
         .map(String::as_str)
+        .chain(
+            manifest
+                .targets
+                .iter()
+                .filter(|(_, target)| matches!(target.kind, TargetKind::Test | TargetKind::CcTest))
+                .map(|(name, _)| name.as_str()),
+        )
         .collect();
-    for target in manifest.targets.values() {
-        reached.extend(target.deps.iter().map(String::as_str));
-    }
-    for (name, target) in &manifest.targets {
-        // A test is an entry point of its own: `frost test` selects them
-        // directly, so nothing depending on one means nothing.
-        if matches!(target.kind, TargetKind::CcTest | TargetKind::Test) {
+    // Transitive: a target reachable only through another unreachable one is
+    // still unreachable, so this walks rather than checking direct edges.
+    let mut frontier: Vec<&str> = reachable.iter().copied().collect();
+    while let Some(name) = frontier.pop() {
+        let Some(target) = manifest.targets.get(name) else {
             continue;
-        }
-        if !reached.contains(name.as_str()) {
-            findings.push(Finding {
-                rule: "unreachable-target",
-                target: Some(name.clone()),
-                detail: format!("nothing depends on {name:?} and it is not a default target"),
-                why: "it is never built unless someone names it, so it is not covered by \
-                      `frost build` and nothing notices when it breaks",
-            });
+        };
+        for dep in &target.deps {
+            if reachable.insert(dep.as_str()) {
+                frontier.push(dep.as_str());
+            }
         }
     }
-}
-
-fn redundant_pass_env(name: &str, target: &crate::manifest::Target, findings: &mut Vec<Finding>) {
-    for variable in &target.pass_env {
-        if crate::ENV_PASSTHROUGH.contains(&variable.as_str()) {
-            findings.push(Finding {
-                rule: "redundant-pass-env",
-                target: Some(name.to_string()),
-                detail: format!("{variable:?} is passed to every action already"),
-                why: "naming it does not make it available, it makes its value action-key \
-                      material, so two machines whose values differ stop sharing cache \
-                      entries; what PATH selects here is the target's tool, and the resolved \
-                      tool is in the toolchain fingerprint already",
-            });
-        }
-    }
-}
-
-fn absolute_paths(name: &str, target: &crate::manifest::Target, findings: &mut Vec<Finding>) {
-    // Declared paths are already rejected by the parser. Arguments are not:
-    // they are opaque to Frost, which is what makes an absolute one able to
-    // hide there.
-    let arguments = target
-        .args
+    manifest
+        .targets
         .iter()
-        .chain(target.steps.iter().flat_map(|step| step.args.iter()))
-        .chain(target.cmd.iter());
-    for argument in arguments {
-        if let Some(absolute) = absolute_component(argument) {
-            findings.push(Finding {
-                rule: "absolute-path",
-                target: Some(name.to_string()),
-                detail: format!("{absolute:?} is an absolute path"),
-                why: "it names a location on this machine, so the action does the wrong thing \
-                      or nothing at all on another one",
-            });
-        }
-    }
+        .filter(|(name, _)| !reachable.contains(name.as_str()))
+        .map(|(name, _)| Finding {
+            rule: "unreachable-target",
+            target: name.clone(),
+            message: format!("{name:?} is not a default target and nothing depends on it"),
+            why: "it is never built unless named explicitly, so it rots without anyone noticing",
+        })
+        .collect()
 }
 
-/// The first absolute-looking path in a command argument, if any.
-fn absolute_component(argument: &str) -> Option<&str> {
-    argument.split_whitespace().find(|word| {
-        // A flag's value can carry one too: `-I/opt/include`.
-        let path = word.split_once('=').map_or(*word, |(_, value)| value);
-        let path = path.trim_start_matches(['-', 'I', 'L']).trim_matches('"');
-        path.starts_with('/') && path.len() > 1
-            || path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-                && path
-                    .get(1..3)
-                    .is_some_and(|rest| rest == ":\\" || rest == ":/")
-    })
-}
-
-fn host_shell_syntax(name: &str, target: &crate::manifest::Target, findings: &mut Vec<Finding>) {
-    // A genrule runs through the host shell on purpose. The risk is not that
-    // it uses one, it is that the two hosts disagree about what it means.
-    let Some(command) = &target.cmd else {
-        return;
-    };
-    if !matches!(target.kind, TargetKind::Genrule | TargetKind::Test) {
-        return;
-    }
-    for operator in HOST_SHELL_OPERATORS {
-        if command.contains(operator) {
-            findings.push(Finding {
-                rule: "host-shell-syntax",
-                target: Some(name.to_string()),
-                detail: format!("{operator:?} in a command run through the host shell"),
-                why: "`/bin/sh` and `cmd.exe` disagree about it, so the workspace builds on one \
-                      host and not the other; a `command` target with direct argv has no shell \
-                      to disagree with",
-            });
-            break;
-        }
-    }
-}
-
-/// Every directory some target builds into, and their parents.
+/// Every directory some target writes an output into, and their parents.
 ///
-/// A genrule that writes `gen/config.h` and declares `includes = ["gen"]` so
-/// its dependents can find the header is the ordinary way to generate one. The
-/// directory does not exist before the build, which is not the same thing as
-/// not existing.
-fn produced_directories(manifest: &Manifest) -> BTreeSet<String> {
+/// A genrule declaring `gen/config.h` makes `gen` exist, so an `includes` entry
+/// naming it is correct even on a tree that has never been built.
+fn generated_directories(manifest: &Manifest) -> BTreeSet<String> {
     let mut directories = BTreeSet::new();
     for target in manifest.targets.values() {
-        // A declared output names a file, so its parents are the directories.
-        // An `output_dirs` entry names a directory, so it counts itself.
-        let outputs = target.outputs.iter().map(|out| ancestors_of(out));
-        let owned = target
-            .output_dirs
-            .iter()
-            .map(|dir| ancestors_of(dir).chain(std::iter::once(dir.as_str())));
-        for path in outputs.flatten() {
-            directories.insert(path.to_string());
+        for output in target.outputs.iter().chain(target.output_dirs.iter()) {
+            let mut path = output.as_str();
+            while let Some((parent, _)) = path.rsplit_once('/') {
+                directories.insert(parent.to_string());
+                path = parent;
+            }
         }
-        for path in owned.flatten() {
-            directories.insert(path.to_string());
+        for directory in &target.output_dirs {
+            directories.insert(directory.clone());
         }
     }
     directories
 }
 
-/// The proper directory prefixes of a manifest path, longest first. Manifest
-/// paths are always `/`-separated, so this does not depend on the host.
-fn ancestors_of(path: &str) -> impl Iterator<Item = &str> {
-    path.char_indices()
-        .filter(|(_, c)| *c == '/')
-        .map(move |(at, _)| &path[..at])
-        .filter(|prefix| !prefix.is_empty())
-}
-
 fn missing_include_dirs(
-    root: &Path,
-    produced: &BTreeSet<String>,
     name: &str,
     target: &crate::manifest::Target,
-    findings: &mut Vec<Finding>,
-) {
-    for include in &target.includes {
-        if produced.contains(include.as_str()) {
-            continue;
+    root: &Path,
+    generated: &BTreeSet<String>,
+) -> Vec<Finding> {
+    target
+        .includes
+        .iter()
+        .filter(|directory| !root.join(directory).is_dir())
+        // A directory some target generates into does not exist before the
+        // first build, which is not the same thing as not existing. Reporting
+        // it would make the rule fire on any workspace with a generated
+        // header -- and be silent after one build, which is worse than either.
+        .filter(|directory| !generated.contains(directory.as_str()))
+        .map(|directory| Finding {
+            rule: "missing-include-dir",
+            target: name.to_string(),
+            message: format!("include directory {directory:?} does not exist"),
+            why: "the compiler is handed a -I that cannot resolve anything, so a missing header \
+                  fails later and further away",
+        })
+        .collect()
+}
+
+fn volatile_pass_env(name: &str, target: &crate::manifest::Target) -> Vec<Finding> {
+    target
+        .pass_env
+        .iter()
+        .filter(|variable| VOLATILE.contains(&variable.as_str()))
+        .map(|variable| Finding {
+            rule: "volatile-pass-env",
+            target: name.to_string(),
+            message: format!("pass_env names {variable:?}"),
+            why: "its value differs per machine and per CI step, and pass_env puts it in the \
+                  action key, so nothing this target builds is ever shared between them",
+        })
+        .collect()
+}
+
+/// Absolute paths where nothing validates them.
+///
+/// `srcs`, `inputs`, `outputs` and `includes` are already refused by
+/// `validate_rel_path`. `args`, `cmd` and `env` values are free text, which is
+/// exactly where an absolute path survives to break on someone else's machine.
+fn absolute_paths_in_text(name: &str, target: &crate::manifest::Target) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let mut check = |field: &str, text: &str| {
+        for token in text.split_whitespace() {
+            let candidate = token.trim_start_matches(['"', '\'', '=']);
+            let absolute = candidate.starts_with('/')
+                || (candidate.len() > 2
+                    && candidate.as_bytes()[1] == b':'
+                    && candidate.as_bytes()[0].is_ascii_alphabetic()
+                    && matches!(candidate.as_bytes()[2], b'/' | b'\\'));
+            // A leading `//` is a frost label, not a filesystem path.
+            if absolute && !candidate.starts_with("//") {
+                findings.push(Finding {
+                    rule: "absolute-path",
+                    target: name.to_string(),
+                    message: format!("{field} contains the absolute path {candidate:?}"),
+                    why: "it names a location on the machine that wrote it, so the build works \
+                          there and nowhere else",
+                });
+            }
         }
-        if !root.join(include).is_dir() {
-            findings.push(Finding {
-                rule: "missing-include-dir",
-                target: Some(name.to_string()),
-                detail: format!("{include:?} is not a directory"),
-                why: "it is still put on the compiler's search path, where it finds nothing, so \
-                      a header this target was meant to see is resolved from somewhere else \
-                      or not at all",
-            });
+    };
+    for arg in &target.args {
+        check("args", arg);
+    }
+    if let Some(cmd) = &target.cmd {
+        check("cmd", cmd);
+    }
+    for (key, value) in &target.env {
+        check(&format!("env {key}"), value);
+    }
+    findings
+}
+
+fn shell_dependent_cmd(name: &str, target: &crate::manifest::Target) -> Vec<Finding> {
+    if target.kind != TargetKind::Genrule {
+        return Vec::new();
+    }
+    let Some(cmd) = &target.cmd else {
+        return Vec::new();
+    };
+    let found: Vec<&str> = SHELL_METACHARACTERS
+        .iter()
+        .copied()
+        .filter(|token| cmd.contains(token))
+        .collect();
+    if found.is_empty() {
+        return Vec::new();
+    }
+    vec![Finding {
+        rule: "shell-dependent-cmd",
+        target: name.to_string(),
+        message: format!("cmd uses {}", found.join(", ")),
+        why: "a genrule runs through /bin/sh on Unix and cmd.exe on Windows, where these do not \
+              mean the same thing",
+    }]
+}
+
+/// Findings grouped for `--json`, so a consumer reads a shape rather than
+/// parsing lines.
+#[derive(Debug, Serialize)]
+pub struct LintReport<'a> {
+    pub findings: &'a [Finding],
+    pub count: usize,
+    /// Rule -> how many, so a CI job can threshold one rule without parsing.
+    pub by_rule: BTreeMap<&'static str, usize>,
+}
+
+impl<'a> LintReport<'a> {
+    pub fn new(findings: &'a [Finding]) -> Self {
+        let mut by_rule = BTreeMap::new();
+        for finding in findings {
+            *by_rule.entry(finding.rule).or_insert(0) += 1;
+        }
+        Self {
+            findings,
+            count: findings.len(),
+            by_rule,
         }
     }
 }
@@ -240,252 +266,238 @@ fn missing_include_dirs(
 mod tests {
     use super::*;
 
-    /// A workspace on disk that removes itself, so a failing assertion leaves
-    /// nothing behind for the next run to inherit.
-    struct Fixture {
-        root: std::path::PathBuf,
-        manifest: Manifest,
+    fn lint_str(text: &str, root: &Path) -> Vec<Finding> {
+        lint(&Manifest::parse_str(text).unwrap(), root)
     }
 
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    impl Fixture {
-        fn findings(&self) -> Vec<Finding> {
-            lint(&self.root, &self.manifest)
-        }
-
-        fn rules(&self) -> Vec<&'static str> {
-            self.findings().into_iter().map(|f| f.rule).collect()
-        }
-
-        fn of(&self, rule: &str) -> Vec<Finding> {
-            self.findings()
-                .into_iter()
-                .filter(|f| f.rule == rule)
-                .collect()
-        }
-    }
-
-    fn workspace(manifest: &str) -> Fixture {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "frost-lint-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::create_dir_all(root.join("include")).unwrap();
-        std::fs::write(root.join("src/a.c"), "int a(void) { return 1; }\n").unwrap();
-        std::fs::write(root.join("src/b.c"), "int b(void) { return 2; }\n").unwrap();
-        std::fs::write(root.join("include/a.h"), "int a(void);\n").unwrap();
-        std::fs::write(root.join(crate::manifest::MANIFEST_FILE), manifest).unwrap();
-        let loaded = Manifest::load(&root).expect("the fixture must load");
-        Fixture {
-            root,
-            manifest: loaded,
-        }
+    fn rules(findings: &[Finding]) -> Vec<&str> {
+        findings.iter().map(|f| f.rule).collect()
     }
 
     #[test]
-    fn a_target_nothing_reaches_is_reported_and_a_reached_one_is_not() {
-        let fixture = workspace(
-            "[workspace]\ndefault_targets = [\"app\"]\n\n\
-             [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/a.c\"]\ndeps = [\"used\"]\n\n\
-             [target.used]\nkind = \"cc_library\"\nsrcs = [\"src/b.c\"]\n\n\
-             [target.orphan]\nkind = \"cc_library\"\nsrcs = [\"src/b.c\"]\n",
-        );
-        let unreachable = fixture.of("unreachable-target");
-        assert_eq!(unreachable.len(), 1, "{:#?}", fixture.findings());
-        assert_eq!(unreachable[0].target.as_deref(), Some("orphan"));
+    fn an_unreachable_target_is_found_and_a_reachable_one_is_not() {
+        let text = r#"
+            [workspace]
+            default_targets = ["app"]
+
+            [target.app]
+            kind = "cc_binary"
+            srcs = ["main.c"]
+            deps = ["used"]
+
+            [target.used]
+            kind = "cc_library"
+            srcs = ["used.c"]
+
+            [target.orphan]
+            kind = "cc_library"
+            srcs = ["orphan.c"]
+            "#;
+        let findings = lint_str(text, Path::new("/nonexistent"));
+        let unreachable: Vec<&str> = findings
+            .iter()
+            .filter(|f| f.rule == "unreachable-target")
+            .map(|f| f.target.as_str())
+            .collect();
+        // `used` is reached through `app`, so only `orphan` is reported.
+        assert_eq!(unreachable, ["orphan"]);
     }
 
     #[test]
-    fn a_test_is_its_own_entry_point() {
-        // The negative case that matters: `frost test` selects tests directly,
-        // so a rule that called every test unreachable would fire on every
-        // workspace and be turned off immediately.
-        let fixture = workspace(
-            "[workspace]\ndefault_targets = [\"app\"]\n\n\
-             [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/a.c\"]\n\n\
-             [target.check]\nkind = \"test\"\ncmd = \"true\"\ninputs = [\"src/b.c\"]\n",
-        );
-        assert!(!fixture.rules().contains(&"unreachable-target"));
-    }
+    fn reachability_is_transitive() {
+        // `deep` is reachable only through `mid`, which is reachable only
+        // through the default. Checking direct edges alone would call it
+        // unreachable, which would be a false positive on a normal library.
+        let text = r#"
+            [workspace]
+            default_targets = ["app"]
 
-    #[test]
-    fn passing_a_variable_frost_already_passes_is_reported() {
-        let fixture = workspace(
-            "[toolchain.tools]\ncopy = \"cp\"\n\n\
-             [workspace]\ndefault_targets = [\"gen\"]\n\n\
-             [target.gen]\nkind = \"command\"\ntool = \"copy\"\n\
-             args = [\"src/a.c\", \"${out}\"]\n\
-             inputs = [\"src/a.c\"]\noutputs = [\".frost/out/${config}/a.c\"]\n\
-             pass_env = [\"HOME\", \"PATH\", \"JAVA_HOME\"]\n",
-        );
-        let redundant = fixture.of("redundant-pass-env");
-        let reported: Vec<&str> = redundant.iter().map(|f| f.detail.as_str()).collect();
-        assert_eq!(redundant.len(), 2, "{reported:#?}");
+            [target.app]
+            kind = "cc_binary"
+            srcs = ["main.c"]
+            deps = ["mid"]
+
+            [target.mid]
+            kind = "cc_library"
+            srcs = ["mid.c"]
+            deps = ["deep"]
+
+            [target.deep]
+            kind = "cc_library"
+            srcs = ["deep.c"]
+            "#;
+        let findings = lint_str(text, Path::new("/nonexistent"));
         assert!(
-            reported.iter().any(|d| d.contains("\"HOME\"")),
-            "{reported:#?}"
+            !rules(&findings).contains(&"unreachable-target"),
+            "{findings:?}"
         );
-        assert!(
-            reported.iter().any(|d| d.contains("\"PATH\"")),
-            "{reported:#?}"
-        );
-        // JAVA_HOME is exactly what `pass_env` is for: Frost clears the
-        // environment, so without naming it the action would not see it.
-        assert!(!reported.iter().any(|d| d.contains("JAVA_HOME")));
     }
 
     #[test]
-    fn pass_env_only_reaches_targets_whose_tool_is_declared() {
-        // `redundant-pass-env` rests on this. PATH's remaining blind spot is a
-        // command that finds a tool nothing declared, which is a genrule or a
-        // shell test — and neither accepts `pass_env` at all. If that ever
-        // changes, keying on PATH starts buying something and the rule needs
-        // to say so instead of calling it redundant.
-        for kind in ["genrule", "cc_binary"] {
-            let root = std::env::temp_dir().join(format!("frost-lint-premise-{kind}"));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(root.join("src")).unwrap();
-            std::fs::write(root.join("src/a.c"), "int a(void) { return 1; }\n").unwrap();
-            let body = if kind == "genrule" {
-                "cmd = \"cp src/a.c gen/a.c\"\ninputs = [\"src/a.c\"]\noutputs = [\"gen/a.c\"]\n"
-            } else {
-                "srcs = [\"src/a.c\"]\n"
-            };
-            std::fs::write(
-                root.join(crate::manifest::MANIFEST_FILE),
-                format!(
-                    "[workspace]\ndefault_targets = [\"t\"]\n\n\
-                     [target.t]\nkind = \"{kind}\"\n{body}pass_env = [\"PATH\"]\n"
-                ),
+    fn pass_env_of_a_volatile_variable_is_found() {
+        let positive = r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [workspace]
+            default_targets = ["t"]
+
+            [target.t]
+            kind = "command"
+            tool = "runner"
+            inputs = ["a.txt"]
+            outputs = [".frost/out/${config}/o"]
+            args = ["x"]
+            pass_env = ["PATH"]
+            "#;
+        let findings = lint_str(positive, Path::new("/nonexistent"));
+        assert!(
+            rules(&findings).contains(&"volatile-pass-env"),
+            "{findings:?}"
+        );
+
+        // A variable that genuinely selects what the compiler finds is keyed
+        // on purpose (docs/16) and is not a finding.
+        let negative = positive.replace(r#"pass_env = ["PATH"]"#, r#"pass_env = ["CPATH"]"#);
+        let findings = lint_str(&negative, Path::new("/nonexistent"));
+        assert!(
+            !rules(&findings).contains(&"volatile-pass-env"),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn an_absolute_path_in_free_text_is_found_but_a_label_is_not() {
+        let manifest = |args: &str| {
+            format!(
+                r#"
+                [toolchain.tools]
+                runner = "runner"
+
+                [workspace]
+                default_targets = ["t"]
+
+                [target.t]
+                kind = "command"
+                tool = "runner"
+                inputs = ["a.txt"]
+                outputs = [".frost/out/${{config}}/o"]
+                args = {args}
+                "#
             )
-            .unwrap();
-            let error = Manifest::load(&root)
-                .expect_err("{kind} must not accept pass_env")
-                .to_string();
-            assert!(error.contains("invalid target"), "{kind}: {error}");
-            let _ = std::fs::remove_dir_all(&root);
-        }
+        };
+        let findings = lint_str(&manifest(r#"["--sdk", "/opt/local/sdk"]"#), Path::new("/x"));
+        assert!(rules(&findings).contains(&"absolute-path"), "{findings:?}");
+
+        // `//pkg:target` is a label, not a path from the filesystem root.
+        let findings = lint_str(&manifest(r#"["--dep", "//core:core"]"#), Path::new("/x"));
+        assert!(!rules(&findings).contains(&"absolute-path"), "{findings:?}");
+
+        // A relative path is the correct spelling and is not a finding.
+        let findings = lint_str(&manifest(r#"["--sdk", "vendor/sdk"]"#), Path::new("/x"));
+        assert!(!rules(&findings).contains(&"absolute-path"), "{findings:?}");
     }
 
     #[test]
-    fn an_absolute_path_in_an_argument_is_reported_and_a_relative_one_is_not() {
-        let absolute = workspace(
-            "[toolchain.tools]\ncc = \"cc\"\n\n\
-             [workspace]\ndefault_targets = [\"obj\"]\n\n\
-             [target.obj]\nkind = \"command\"\ntool = \"cc\"\n\
-             args = [\"-I/opt/vendor/include\", \"-c\", \"${in}\"]\n\
-             inputs = [\"src/a.c\"]\noutputs = [\".frost/out/${config}/a.o\"]\n",
+    fn a_shell_dependent_genrule_is_found_and_a_plain_one_is_not() {
+        let manifest = |cmd: &str| {
+            format!(
+                r#"
+                [workspace]
+                default_targets = ["gen"]
+
+                [target.gen]
+                kind = "genrule"
+                cmd = "{cmd}"
+                inputs = ["in.txt"]
+                outputs = ["out.txt"]
+                "#
+            )
+        };
+        let findings = lint_str(
+            &manifest("cp ${in} ${out} && touch ${out}"),
+            Path::new("/x"),
         );
         assert!(
-            absolute.rules().contains(&"absolute-path"),
-            "{:#?}",
-            absolute.findings()
+            rules(&findings).contains(&"shell-dependent-cmd"),
+            "{findings:?}"
         );
 
-        let relative = workspace(
-            "[toolchain.tools]\ncc = \"cc\"\n\n\
-             [workspace]\ndefault_targets = [\"obj\"]\n\n\
-             [target.obj]\nkind = \"command\"\ntool = \"cc\"\n\
-             args = [\"-Iinclude\", \"-c\", \"${in}\"]\n\
-             inputs = [\"src/a.c\"]\noutputs = [\".frost/out/${config}/a.o\"]\n",
+        let findings = lint_str(&manifest("cp ${in} ${out}"), Path::new("/x"));
+        assert!(
+            !rules(&findings).contains(&"shell-dependent-cmd"),
+            "{findings:?}"
         );
-        assert!(!relative.rules().contains(&"absolute-path"));
     }
 
     #[test]
-    fn shell_syntax_that_two_hosts_read_differently_is_reported() {
-        let shell = workspace(
-            "[workspace]\ndefault_targets = [\"gen\"]\n\n\
-             [target.gen]\nkind = \"genrule\"\n\
-             cmd = \"cp src/a.c gen/a.c && echo done\"\n\
-             inputs = [\"src/a.c\"]\noutputs = [\"gen/a.c\"]\n",
-        );
-        assert!(shell.rules().contains(&"host-shell-syntax"));
+    fn a_target_can_declare_it_can_live_with_a_rule() {
+        // The finding is true -- a Maven build really does need $HOME/.m2 --
+        // and the workspace still has to pass HOME. Suppression keeps the cost
+        // written next to the thing that pays it.
+        let manifest = |allow: &str| {
+            format!(
+                r#"
+                [toolchain.tools]
+                runner = "runner"
 
-        let plain = workspace(
-            "[workspace]\ndefault_targets = [\"gen\"]\n\n\
-             [target.gen]\nkind = \"genrule\"\ncmd = \"cp src/a.c gen/a.c\"\n\
-             inputs = [\"src/a.c\"]\noutputs = [\"gen/a.c\"]\n",
-        );
-        assert!(!plain.rules().contains(&"host-shell-syntax"));
-    }
+                [workspace]
+                default_targets = ["t"]
 
-    #[test]
-    fn an_include_path_that_is_not_a_directory_is_reported() {
-        let fixture = workspace(
-            "[workspace]\ndefault_targets = [\"lib\"]\n\n\
-             [target.lib]\nkind = \"cc_library\"\nsrcs = [\"src/a.c\"]\n\
-             includes = [\"include\", \"headers\"]\n",
+                [target.t]
+                kind = "command"
+                tool = "runner"
+                inputs = ["a.txt"]
+                outputs = [".frost/out/${{config}}/o"]
+                args = ["x"]
+                pass_env = ["HOME"]
+                {allow}
+                "#
+            )
+        };
+        let findings = lint_str(&manifest(""), Path::new("/nonexistent"));
+        assert!(
+            rules(&findings).contains(&"volatile-pass-env"),
+            "{findings:?}"
         );
-        let missing = fixture.of("missing-include-dir");
-        assert_eq!(missing.len(), 1, "{:#?}", fixture.findings());
-        assert!(missing[0].detail.contains("headers"), "{missing:#?}");
-    }
 
-    #[test]
-    fn a_directory_the_build_generates_is_not_missing() {
-        // The sample workspaces do exactly this: a genrule writes a header and
-        // declares the directory as an include so its dependents find it. It
-        // does not exist before the build, which is not the same as not
-        // existing, and reporting it would fire on the ordinary way to
-        // generate a header.
-        let fixture = workspace(
-            "[workspace]\ndefault_targets = [\"app\"]\n\n\
-             [target.gen]\nkind = \"genrule\"\ncmd = \"touch ${out}\"\n\
-             inputs = [\"src/a.c\"]\noutputs = [\"gen/config.h\"]\n\
-             includes = [\"gen\"]\n\n\
-             [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/a.c\"]\n\
-             deps = [\"gen\"]\nincludes = [\"gen\"]\n",
+        let findings = lint_str(
+            &manifest(r#"lint_allow = ["volatile-pass-env"]"#),
+            Path::new("/nonexistent"),
         );
         assert!(
-            !fixture.rules().contains(&"missing-include-dir"),
-            "{:#?}",
-            fixture.findings()
+            !rules(&findings).contains(&"volatile-pass-env"),
+            "{findings:?}"
+        );
+
+        // Allowing one rule does not silence the others.
+        let findings = lint_str(
+            &manifest(r#"lint_allow = ["absolute-path"]"#),
+            Path::new("/nonexistent"),
+        );
+        assert!(
+            rules(&findings).contains(&"volatile-pass-env"),
+            "{findings:?}"
         );
     }
-
     #[test]
-    fn every_rule_says_what_it_costs() {
-        // A finding a reader cannot act on is noise, and the identifier is
-        // what makes one nameable in CI, so both are required of every rule
-        // rather than remembered per rule.
-        let fixture = workspace(
-            "[toolchain.tools]\ncc = \"cc\"\n\n\
-             [workspace]\ndefault_targets = [\"app\"]\n\n\
-             [target.app]\nkind = \"cc_binary\"\nsrcs = [\"src/a.c\"]\n\
-             includes = [\"nope\"]\n\n\
-             [target.orphan]\nkind = \"command\"\ntool = \"cc\"\n\
-             args = [\"-c\", \"${in}\"]\npass_env = [\"HOME\"]\n\
-             inputs = [\"src/b.c\"]\noutputs = [\".frost/out/${config}/b.o\"]\n",
-        );
-        let findings = fixture.findings();
-        let rules: BTreeSet<&str> = findings.iter().map(|f| f.rule).collect();
-        assert_eq!(
-            rules,
-            BTreeSet::from([
-                "missing-include-dir",
-                "redundant-pass-env",
-                "unreachable-target"
-            ]),
-            "{findings:#?}"
-        );
-        for finding in &findings {
-            assert!(!finding.rule.is_empty());
-            assert!(finding
-                .rule
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c == '-'));
-            assert!(finding.why.len() > 20, "{finding:#?}");
-            assert!(!finding.detail.is_empty());
-        }
+    fn findings_are_ordered_so_two_runs_can_be_diffed() {
+        let text = r#"
+            [workspace]
+            default_targets = []
+
+            [target.zebra]
+            kind = "cc_library"
+            srcs = ["z.c"]
+
+            [target.alpha]
+            kind = "cc_library"
+            srcs = ["a.c"]
+            "#;
+        let findings = lint_str(text, Path::new("/nonexistent"));
+        let targets: Vec<&str> = findings.iter().map(|f| f.target.as_str()).collect();
+        let mut sorted = targets.clone();
+        sorted.sort_unstable();
+        assert_eq!(targets, sorted);
     }
 }

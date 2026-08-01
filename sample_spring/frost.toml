@@ -33,16 +33,11 @@ gradle = "gradle"
 
 [target.boot_jar]
 kind = "command"
+inputs = ["build.gradle", "settings.gradle", "src/main/java/**/*.java"]
 tool = "gradle"
 # `build/${config}` is Frost's, so build.gradle reads the location from this
 # property. A plain `gradle bootJar` with no property still writes `build/`.
-args = [
-  "bootJar",
-  "--no-daemon",
-  "--console=plain",
-  "-PfrostBuildDir=build/${config}",
-]
-inputs = ["build.gradle", "settings.gradle", "src/main/java/**/*.java"]
+args = ["bootJar", "--no-daemon", "--console=plain", "-PfrostBuildDir=build/${config}"]
 # Frost owns this tree entirely: every file under it is recorded as an output,
 # which is how a tool whose output names cannot be written down in advance —
 # a jar named from the project version — is still cacheable.
@@ -62,3 +57,8 @@ pass_env = [
 ]
 # Gradle reads a JDK, its user home and the network, all outside the workspace.
 sandbox = false
+# `frost lint` is right that passing HOME makes this target's key per-machine,
+# so nothing it builds is shared between them. Gradle resolves its dependency
+# cache under HOME and there is no flag that moves it without also moving the
+# cache, so the cost is accepted here rather than argued with.
+lint_allow = ["volatile-pass-env"]

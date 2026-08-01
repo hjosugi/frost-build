@@ -27,7 +27,7 @@ frost init --dry-run --language=VALUE --wrapper
 frost journal
 frost journal diff <first> <second>
 frost journal export --out=VALUE --platform=VALUE --profile=VALUE
-frost lint --allow=VALUE --json
+frost lint --json
 frost lsp
 frost pack-jar --input=VALUE --main-class=VALUE --output=VALUE
 frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VALUE

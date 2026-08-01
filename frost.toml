@@ -136,17 +136,19 @@ args = [
   "-D",
   "warnings",
 ]
-pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 sandbox = false
 timeout = 1800
+lint_allow = ["volatile-pass-env"]
 
 [target.fmt]
 kind = "test"
 inputs = ["Cargo.toml", "rust-toolchain.toml", "crates/**/*.rs"]
 tool = "cargo"
 args = ["fmt", "--all", "--", "--check"]
-pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 sandbox = false
+lint_allow = ["volatile-pass-env"]
 
 [target.python_test]
 kind = "test"
@@ -155,7 +157,9 @@ kind = "test"
 inputs = ["frost.py", "tests/**/*.py"]
 tool = "python3"
 args = ["-m", "unittest", "discover", "-s", "tests"]
+pass_env = ["HOME", "PATH"]
 sandbox = false
+lint_allow = ["volatile-pass-env"]
 
 # Every stage reads the whole Rust source and the manifests that pin its
 # toolchain, so the input set is shared. The sample workspaces are listed
@@ -185,17 +189,18 @@ args = ["test", "--workspace", "--all-targets", "--locked"]
 # is action-key material, which is what makes a toolchain change invalidate the
 # stage rather than silently reuse a verdict from another compiler.
 #
-# HOME and PATH are not named, for the reason `binaries` gives: Frost passes
-# them through anyway, so naming them adds their values to the key and nothing
-# else. The verdict still moves when the toolchain does — the resolved cargo is
-# in the toolchain fingerprint, and rust-toolchain.toml is a declared input.
-pass_env = ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
+# `frost lint` is right that HOME and PATH make these keys per-machine. That is
+# the point here: this is a local gate, its verdicts are never shared through a
+# remote cache, and cargo cannot find a toolchain without them. The cost is
+# accepted rather than argued with, and every stage says so.
+pass_env = ["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]
 # cargo reads a toolchain, a registry cache and a shared target directory, all
 # outside anything Frost declares.
 sandbox = false
 # A workspace-wide test run is the long pole; the default 300s ceiling is for a
 # single hanging test, not for this.
 timeout = 3600
+lint_allow = ["volatile-pass-env"]
 
 [target.vscode_test]
 kind = "test"
@@ -212,5 +217,7 @@ args = ["--prefix", "tools/vscode", "test"]
 # cases and skips when it is absent, so this stage does not depend on the Rust
 # stages. It does need `node_modules`, which is gitignored: run `npm ci` in
 # tools/vscode once.
+pass_env = ["HOME", "PATH"]
 sandbox = false
 timeout = 900
+lint_allow = ["volatile-pass-env"]
