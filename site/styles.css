@@ -3,13 +3,74 @@
   --muted: #9fb4c8;
   --deep: #040a13;
   --navy: #07111f;
-  --panel: rgba(12, 27, 47, 0.74);
   --line: rgba(164, 221, 247, 0.14);
   --cyan: #31d9ff;
   --ice: #b8f4ff;
   --blue: #377dff;
   --green: #52e1b1;
   --shell: min(1160px, calc(100vw - 40px));
+
+  /* Type scale. Eight steps replacing twenty-six values that differed
+     by as little as 0.01rem — a sixth of a pixel, which is accretion
+     rather than intent. The largest move this cost is 0.64px. */
+  --text-3xs: 0.62rem;
+  --text-2xs: 0.68rem;
+  --text-xs: 0.74rem;
+  --text-sm: 0.79rem;
+  --text-md: 0.84rem;
+  --text-lg: 0.9rem;
+  --text-xl: 1.07rem;
+  --text-2xl: 1.18rem;
+
+  /* Display sizes stay exactly as authored: a clamp() is a decision
+     about how a headline behaves between breakpoints, not a size. */
+  --display-1: clamp(3.8rem, 7vw, 6.8rem);
+  --display-2: clamp(2.35rem, 4.6vw, 4.25rem);
+  --display-3: clamp(2.7rem, 5vw, 4.4rem);
+  --display-4: clamp(2rem, 3.8vw, 3.45rem);
+  --display-5: clamp(3.4rem, 7vw, 6.5rem);
+  --display-6: clamp(2rem, 4vw, 3.4rem);
+  --display-7: clamp(3.3rem, 15vw, 5rem);
+  --display-8: clamp(3rem, 15vw, 4.5rem);
+
+  /* Corner radii. 8/9/10px and 15/16px were the same two intents. */
+
+  /* Tracking. Twelve declarations previously held twelve values. */
+  /* Corner radii. Thirteen values became four steps plus the two
+     shapes; the largest corner this moved is 2px. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-round: 50%;
+  --radius-pill: 999px;
+
+  /* Tracking. Eight positive values became five steps, none moving
+     more than 0.01em. */
+  --track-tight: 0.02em;
+  --track-wide: 0.09em;
+  --track-wider: 0.12em;
+  --track-widest: 0.15em;
+  --track-ultra: 0.17em;
+  --track-tight-neg: -0.02em;
+  /* Large type is tracked optically, so these are tied to the display steps
+     rather than to the positive scale. -0.05 and -0.052 were 0.2px apart on a
+     100px headline and are now one value; the hero keeps its own. */
+
+  /* Leading. Display headings are set by eye per size, so these are named
+     rather than merged: snapping 0.93 to a shared step moved the hero by
+     7.3px a line, which a render comparison caught. */
+  --leading-hero: 0.93;
+  --leading-display: 1;
+  --leading-tight: 1.04;
+  --leading-heading: 1.2;
+  --leading-snug: 1.5;
+  --leading-normal: 1.55;
+  --leading-body: 1.6;
+  --leading-relaxed: 1.8;
+  --track-display: -0.051em;
+  --track-display-hero: -0.066em;
+
 }
 
 * {
@@ -28,7 +89,7 @@ body {
     radial-gradient(circle at 50% -20%, #123050 0, transparent 38%),
     linear-gradient(180deg, var(--navy) 0%, var(--deep) 58%, #06101d 100%);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  line-height: 1.6;
+  line-height: var(--leading-body);
   text-rendering: optimizeLegibility;
 }
 
@@ -54,7 +115,7 @@ button {
   padding: 10px 16px;
   color: #03101c;
   background: var(--ice);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 .skip-link:focus {
@@ -76,7 +137,7 @@ button {
 .aurora {
   position: absolute;
   z-index: -1;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   filter: blur(80px);
   opacity: 0.16;
   pointer-events: none;
@@ -119,9 +180,9 @@ button {
   gap: 11px;
   color: #fff;
   text-decoration: none;
-  font-size: 1.07rem;
+  font-size: var(--text-xl);
   font-weight: 760;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--track-tight-neg);
 }
 
 .brand img {
@@ -137,7 +198,7 @@ button {
 .nav-links a {
   color: #adc0d2;
   text-decoration: none;
-  font-size: 0.91rem;
+  font-size: var(--text-lg);
   font-weight: 560;
   transition: color 160ms ease;
 }
@@ -150,7 +211,7 @@ button {
 .nav-links .nav-github {
   padding: 8px 15px;
   border: 1px solid rgba(184, 244, 255, 0.3);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   color: var(--ice);
 }
 
@@ -182,9 +243,9 @@ button {
 .eyebrow,
 .kicker {
   color: var(--cyan);
-  font-size: 0.74rem;
+  font-size: var(--text-xs);
   font-weight: 750;
-  letter-spacing: 0.17em;
+  letter-spacing: var(--track-ultra);
   text-transform: uppercase;
 }
 
@@ -198,7 +259,7 @@ button {
 .eyebrow span {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--cyan);
   box-shadow: 0 0 15px var(--cyan);
 }
@@ -213,9 +274,9 @@ p {
 h1 {
   max-width: 720px;
   margin-bottom: 27px;
-  font-size: clamp(3.8rem, 7vw, 6.8rem);
-  line-height: 0.93;
-  letter-spacing: -0.066em;
+  font-size: var(--display-1);
+  line-height: var(--leading-hero);
+  letter-spacing: var(--track-display-hero);
   font-weight: 770;
 }
 
@@ -231,7 +292,7 @@ h1 em {
   max-width: 650px;
   margin-bottom: 34px;
   color: var(--muted);
-  font-size: 1.08rem;
+  font-size: var(--text-xl);
 }
 
 .hero-actions {
@@ -247,9 +308,9 @@ h1 em {
   justify-content: center;
   gap: 16px;
   padding: 0 22px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   text-decoration: none;
-  font-size: 0.92rem;
+  font-size: var(--text-lg);
   font-weight: 720;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
@@ -277,9 +338,9 @@ h1 em {
   gap: 22px;
   margin-top: 35px;
   color: #7890a6;
-  font-size: 0.73rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: var(--track-wide);
 }
 
 .hero-facts span {
@@ -293,13 +354,13 @@ h1 em {
   width: 3px;
   height: 3px;
   margin-right: 16px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: #456278;
 }
 
 .hero-facts b {
   color: #d8f5ff;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .hero-visual {
@@ -315,7 +376,7 @@ h1 em {
   content: "";
   position: absolute;
   z-index: -2;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .hero-visual::before {
@@ -339,7 +400,7 @@ h1 em {
   width: 350px;
   height: 350px;
   border: 1px solid rgba(112, 223, 255, 0.13);
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   box-shadow: 0 0 80px rgba(15, 147, 255, 0.12);
 }
 
@@ -364,7 +425,7 @@ h1 em {
   min-width: 120px;
   padding: 10px 13px;
   border: 1px solid rgba(159, 222, 248, 0.17);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: rgba(4, 15, 29, 0.78);
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(10px);
@@ -373,25 +434,25 @@ h1 em {
 .signal-card small,
 .signal-card b {
   display: block;
-  line-height: 1.2;
+  line-height: var(--leading-heading);
 }
 
 .signal-card small {
   color: #688198;
-  font-size: 0.58rem;
-  letter-spacing: 0.16em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--track-widest);
 }
 
 .signal-card b {
   margin-top: 4px;
   color: #dff8ff;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
 }
 
 .signal-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   box-shadow: 0 0 13px currentColor;
 }
 
@@ -419,15 +480,15 @@ h1 em {
   margin: 0;
   color: #aac1d3;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-  letter-spacing: 0.02em;
+  font-size: var(--text-sm);
+  letter-spacing: var(--track-tight);
 }
 
 .principle-inner span {
   width: 4px;
   height: 4px;
   flex: 0 0 auto;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--cyan);
   box-shadow: 0 0 12px var(--cyan);
 }
@@ -450,9 +511,9 @@ h1 em {
 
 h2 {
   margin-bottom: 0;
-  font-size: clamp(2.35rem, 4.6vw, 4.25rem);
-  line-height: 1.04;
-  letter-spacing: -0.052em;
+  font-size: var(--display-2);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--track-display);
 }
 
 .section-heading > p,
@@ -474,7 +535,7 @@ h2 {
   padding: 27px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 17px;
+  border-radius: var(--radius-lg);
   background:
     linear-gradient(145deg, rgba(17, 43, 70, 0.66), rgba(6, 16, 29, 0.78));
 }
@@ -486,7 +547,7 @@ h2 {
   height: 170px;
   top: 17%;
   right: -75px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: rgba(27, 162, 255, 0.09);
   filter: blur(30px);
 }
@@ -502,7 +563,7 @@ h2 {
   right: 27px;
   bottom: 76px;
   margin-bottom: 7px;
-  font-size: 1.18rem;
+  font-size: var(--text-2xl);
 }
 
 .feature-card p {
@@ -513,8 +574,8 @@ h2 {
   min-height: 48px;
   margin: 0;
   color: #8fa8bc;
-  font-size: 0.86rem;
-  line-height: 1.5;
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
 }
 
 .mini-graph {
@@ -531,7 +592,7 @@ h2 {
   width: 13px;
   height: 13px;
   border: 3px solid var(--ice);
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: #083051;
   box-shadow: 0 0 20px rgba(49, 217, 255, 0.34);
 }
@@ -561,13 +622,13 @@ h2 {
   gap: 8px;
   padding: 18px;
   border: 1px solid rgba(75, 203, 255, 0.17);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: #071526;
 }
 
 .digest-visual code {
   color: #72dfff;
-  font-size: 0.74rem;
+  font-size: var(--text-xs);
 }
 
 .digest-visual span {
@@ -575,7 +636,7 @@ h2 {
   width: 27px;
   height: 27px;
   place-items: center;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   color: #03151a;
   background: var(--green);
 }
@@ -592,7 +653,7 @@ h2 {
   display: grid;
   place-items: center;
   border: 1px solid rgba(114, 204, 242, 0.12);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: #7493aa;
   background: rgba(7, 21, 38, 0.75);
   font: 0.58rem ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -613,7 +674,7 @@ h2 {
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--line);
 }
 
@@ -627,8 +688,8 @@ h2 {
   display: block;
   margin-bottom: 22px;
   color: #7896ad;
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
   text-transform: uppercase;
 }
 
@@ -639,25 +700,26 @@ h2 {
   background: linear-gradient(110deg, #fff, #52ddff);
   background-clip: text;
   -webkit-background-clip: text;
-  font-size: clamp(2.7rem, 5vw, 4.4rem);
-  line-height: 1;
-  letter-spacing: -0.05em;
+  font-size: var(--display-3);
+  line-height: var(--leading-display);
+  letter-spacing: var(--track-display);
 }
 
 .metrics small {
+  /* em, not a token: this scales with the metric beside it. */
   font-size: 0.38em;
 }
 
 .metrics p {
   margin: 0;
   color: #718ba1;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .proof-note {
   margin-top: 18px;
   color: #7892a8;
-  font-size: 0.82rem;
+  font-size: var(--text-md);
 }
 
 .proof-note span {
@@ -691,14 +753,14 @@ h2 {
 }
 
 .text-link {
-  font-size: 0.88rem;
+  font-size: var(--text-lg);
   font-weight: 650;
 }
 
 .terminal {
   overflow: hidden;
   border: 1px solid rgba(152, 222, 252, 0.16);
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
   background: #030a12;
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.35);
 }
@@ -716,7 +778,7 @@ h2 {
 .terminal-top span {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: #314c60;
 }
 
@@ -727,7 +789,7 @@ h2 {
 .terminal-top b {
   margin-left: 7px;
   color: #6e879b;
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
 }
 
@@ -758,7 +820,7 @@ h2 {
   gap: 55px;
   padding: 55px;
   border: 1px solid rgba(130, 218, 255, 0.2);
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   background:
     radial-gradient(circle at 95% 0%, rgba(35, 176, 255, 0.16), transparent 36%),
     linear-gradient(140deg, rgba(15, 39, 63, 0.83), rgba(6, 17, 30, 0.92));
@@ -767,13 +829,13 @@ h2 {
 
 .start-card h2 {
   margin-bottom: 15px;
-  font-size: clamp(2rem, 3.8vw, 3.45rem);
+  font-size: var(--display-4);
 }
 
 .install {
   overflow: hidden;
   border: 1px solid rgba(152, 222, 252, 0.14);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: rgba(2, 9, 17, 0.72);
 }
 
@@ -790,7 +852,7 @@ h2 {
   border: 0;
   color: #718a9e;
   background: transparent;
-  font-size: 0.73rem;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -819,17 +881,17 @@ h2 {
 .command-row code {
   overflow-x: auto;
   color: #b7d3e3;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .copy-button {
   padding: 6px 10px;
   border: 1px solid rgba(158, 225, 255, 0.15);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: #91afc2;
   background: rgba(15, 42, 66, 0.72);
-  font-size: 0.67rem;
+  font-size: var(--text-2xs);
   cursor: pointer;
 }
 
@@ -837,7 +899,7 @@ h2 {
   margin: 0;
   padding: 0 19px 18px;
   color: #667f93;
-  font-size: 0.73rem;
+  font-size: var(--text-xs);
 }
 
 .install > p code {
@@ -860,7 +922,7 @@ footer {
 .footer-inner > p {
   margin: 0;
   color: #607a90;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .footer-links {
@@ -872,7 +934,7 @@ footer {
 .footer-links a {
   color: #829bae;
   text-decoration: none;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 /* Documentation hub */
@@ -886,7 +948,7 @@ footer {
   display: block;
   height: 2px;
   margin-top: 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--cyan);
   box-shadow: 0 0 12px rgba(49, 217, 255, 0.55);
 }
@@ -909,7 +971,7 @@ footer {
   gap: 9px;
   margin-bottom: 23px;
   color: #6f8ca3;
-  font-size: 0.74rem;
+  font-size: var(--text-xs);
 }
 
 .docs-breadcrumbs a {
@@ -924,7 +986,7 @@ footer {
 .docs-hero h1 {
   max-width: 800px;
   margin-bottom: 26px;
-  font-size: clamp(3.4rem, 7vw, 6.5rem);
+  font-size: var(--display-5);
 }
 
 .docs-hero h1 span {
@@ -938,7 +1000,7 @@ footer {
   max-width: 720px;
   margin-bottom: 31px;
   color: var(--muted);
-  font-size: 1.06rem;
+  font-size: var(--text-xl);
 }
 
 .docs-hero-actions {
@@ -951,7 +1013,7 @@ footer {
   position: relative;
   padding: 28px;
   border: 1px solid rgba(143, 222, 255, 0.18);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   background:
     radial-gradient(circle at 100% 0%, rgba(49, 217, 255, 0.12), transparent 36%),
     linear-gradient(145deg, rgba(14, 36, 60, 0.8), rgba(5, 15, 27, 0.9));
@@ -964,9 +1026,9 @@ footer {
   gap: 9px;
   margin-bottom: 20px;
   color: #91aec1;
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-wider);
   text-transform: uppercase;
 }
 
@@ -974,7 +1036,7 @@ footer {
   content: "";
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--green);
   box-shadow: 0 0 12px var(--green);
 }
@@ -984,18 +1046,18 @@ footer {
   padding: 19px;
   overflow-x: auto;
   border: 1px solid rgba(143, 222, 255, 0.1);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   color: #b8eaff;
   background: rgba(2, 9, 17, 0.82);
-  font-size: 0.78rem;
-  line-height: 1.8;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   white-space: pre;
 }
 
 .docs-snapshot p {
   margin: 18px 0 0;
   color: #738da1;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .docs-rule {
@@ -1009,7 +1071,7 @@ footer {
   align-items: center;
   gap: 18px;
   color: #8da7ba;
-  font-size: 0.83rem;
+  font-size: var(--text-md);
 }
 
 .docs-rule-inner strong {
@@ -1044,9 +1106,9 @@ footer {
   display: block;
   margin-bottom: 12px;
   color: #58748a;
-  font-size: 0.64rem;
+  font-size: var(--text-3xs);
   font-weight: 720;
-  letter-spacing: 0.15em;
+  letter-spacing: var(--track-widest);
   text-transform: uppercase;
 }
 
@@ -1055,7 +1117,7 @@ footer {
   padding: 7px 0;
   color: #829caf;
   text-decoration: none;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .docs-toc a:hover,
@@ -1081,13 +1143,13 @@ footer {
 }
 
 .docs-section-heading h2 {
-  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-size: var(--display-6);
 }
 
 .docs-section-heading > p {
   margin: 0 0 2px;
   color: #7f9aae;
-  font-size: 0.84rem;
+  font-size: var(--text-md);
 }
 
 .docs-card-grid {
@@ -1103,7 +1165,7 @@ footer {
   flex-direction: column;
   padding: 25px;
   border: 1px solid var(--line);
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
   color: inherit;
   background:
     linear-gradient(145deg, rgba(16, 40, 66, 0.64), rgba(6, 16, 29, 0.78));
@@ -1119,29 +1181,29 @@ footer {
 
 .docs-card-tag {
   color: var(--cyan);
-  font-size: 0.63rem;
+  font-size: var(--text-3xs);
   font-weight: 740;
-  letter-spacing: 0.13em;
+  letter-spacing: var(--track-wider);
   text-transform: uppercase;
 }
 
 .docs-card h3 {
   margin: 36px 0 9px;
-  font-size: 1.08rem;
+  font-size: var(--text-xl);
 }
 
 .docs-card p {
   margin: 0;
   color: #829caf;
-  font-size: 0.79rem;
-  line-height: 1.55;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 .docs-card-arrow {
   margin-top: auto;
   padding-top: 18px;
   color: var(--ice);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .docs-groups {
@@ -1153,20 +1215,20 @@ footer {
 .docs-group {
   padding: 26px;
   border: 1px solid var(--line);
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 22, 38, 0.68);
 }
 
 .docs-group h3 {
   margin-bottom: 8px;
   color: #dceff8;
-  font-size: 0.94rem;
+  font-size: var(--text-lg);
 }
 
 .docs-group > p {
   margin-bottom: 18px;
   color: #6f899e;
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
 }
 
 .doc-list {
@@ -1183,7 +1245,7 @@ footer {
   border-top: 1px solid rgba(164, 221, 247, 0.09);
   color: #a9c1d1;
   text-decoration: none;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .doc-list a::after {
@@ -1203,7 +1265,7 @@ footer {
   gap: 30px;
   padding: 32px;
   border: 1px solid rgba(82, 225, 177, 0.2);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background:
     radial-gradient(circle at 95% 0%, rgba(82, 225, 177, 0.1), transparent 36%),
     rgba(7, 24, 36, 0.82);
@@ -1211,13 +1273,13 @@ footer {
 
 .docs-callout h3 {
   margin-bottom: 7px;
-  font-size: 1.1rem;
+  font-size: var(--text-xl);
 }
 
 .docs-callout p {
   margin: 0;
   color: #7e99ac;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 a:focus-visible,
@@ -1339,7 +1401,7 @@ button:focus-visible {
   }
 
   h1 {
-    font-size: clamp(3.3rem, 15vw, 5rem);
+    font-size: var(--display-7);
   }
 
   .hero-facts {
@@ -1426,7 +1488,7 @@ button:focus-visible {
   }
 
   .docs-hero h1 {
-    font-size: clamp(3rem, 15vw, 4.5rem);
+    font-size: var(--display-8);
   }
 
   .docs-rule-inner {

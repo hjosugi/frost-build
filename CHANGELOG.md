@@ -5,6 +5,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- The site's stylesheet keeps its scales in one place. It held 51 font-size
+  declarations with 26 distinct rem values, 12 letter-spacing declarations with
+  12 distinct values, and 8/9/10px sitting beside 15/16/17/18px — values
+  differing by as little as 0.01rem, which is accretion rather than intent.
+  Those are now a type scale, a radius scale, a tracking scale and named
+  leadings, verified against the rendered page: the largest move is 0.64px of
+  type, 0.14px of tracking and 2px of corner, and no element's leading ratio
+  changed. Display leadings and the negative tracking on large headings are
+  named rather than merged, because those are set by eye per size. A test keeps
+  it consolidated, since the next hurried change adds `0.77rem` and nothing
+  notices; the one literal that remains is an `em` that must scale with the
+  metric beside it, and it says so.
+
 ### Added
 
 - A root `frost.toml`: the repository builds itself. `frost test --all` runs the
