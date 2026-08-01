@@ -79,3 +79,28 @@ jobs:
       - run: python -m py_compile frost.py tests/test_frost.py
       - run: python -m unittest discover -s tests
       - run: python frost.py build --workspace sample --jobs 4 --force
+
+  # The extension's logic lives in modules that never import `vscode`, so its
+  # tests are plain `node --test` and this job needs no VS Code download and no
+  # display server. What that costs is that the thin VS Code layer is not
+  # exercised here; what it buys is a test suite that runs in seconds on every
+  # push instead of one nobody waits for.
+  vscode:
+    name: VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner image ships Node, and using it keeps an action out of the
+      # supply chain for a job that only needs `node` and `npm`. The floor is
+      # asserted rather than assumed, so an image that drops below it fails
+      # here with a sentence instead of somewhere downstream with a type error.
+      - name: Require Node 20 or newer
+        run: |
+          node --version
+          node -e 'const major = Number(process.versions.node.split(".")[0]); if (major < 20) { console.error(`Node >= 20 required, got ${process.versions.node}`); process.exit(1); }'
+      - run: npm ci
+        working-directory: tools/vscode
+      - run: npm run lint
+        working-directory: tools/vscode
+      - run: npm test
+        working-directory: tools/vscode

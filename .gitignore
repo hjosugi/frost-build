@@ -13,6 +13,11 @@ sample_multi/gen/
 # Rust build artifacts
 target/
 
+# VS Code extension build state. `out/` is the compiled extension; the generic
+# build/ and dist/ rules below do not cover it.
+node_modules/
+tools/vscode/out/
+
 # Bazel output trees and workspace symlinks
 bazel-*/
 bazel-bin/
