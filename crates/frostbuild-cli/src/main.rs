@@ -326,6 +326,17 @@ enum Cmd {
         /// the usual thing to pass here
         #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
         test_arg: Vec<String>,
+        /// Run every test this many times, requiring all runs to pass. Does not
+        /// read the cache — a recorded single pass cannot answer whether a test
+        /// passes repeatedly — and suppresses `flaky_retries`, which would
+        /// otherwise hide the failures this is looking for
+        #[arg(long, value_name = "N", default_value = "1")]
+        runs_per_test: u32,
+        /// How much test output to show: `summary` for the counts alone,
+        /// `errors` for failing tests replayed after the run, `all` for
+        /// everything including passing tests
+        #[arg(long, value_enum, default_value = "errors")]
+        test_output: TestOutputArg,
         /// Shared cache consulted when the local journal misses: a directory
         /// path, file:///path, or http://host/prefix. Never required for
         /// correctness — every response is verified and any failure falls back
@@ -775,6 +786,18 @@ enum CacheCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// How much of what the tests wrote reaches the terminal.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TestOutputArg {
+    /// Counts only. For a run whose result is the exit code.
+    Summary,
+    /// Failing tests, replayed after the run so the log that matters is the
+    /// last thing on screen rather than scrolled away by later work.
+    Errors,
+    /// Everything, passing tests included.
+    All,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -1270,6 +1293,8 @@ fn run(cli: Cli) -> Result<i32> {
                 timeout,
                 test_mode: false,
                 test_options: Default::default(),
+                runs_per_test: 1,
+                test_output: TestOutputArg::Errors,
                 daemon,
                 affected: false,
                 predictive: false,
@@ -1377,6 +1402,8 @@ fn run(cli: Cli) -> Result<i32> {
             test_filter,
             test_env,
             test_arg,
+            runs_per_test,
+            test_output,
             remote_cache,
             remote_upload,
             remote_timeout,
@@ -1413,6 +1440,8 @@ fn run(cli: Cli) -> Result<i32> {
                 timeout,
                 test_mode: true,
                 test_options: parse_test_options(test_filter, test_env, test_arg)?,
+                runs_per_test,
+                test_output,
                 daemon,
                 affected,
                 predictive,
@@ -2140,6 +2169,10 @@ struct BuildRequest {
     /// Command-line test options, folded into test actions after the graph
     /// loads. Empty for every non-test build.
     test_options: frostbuild_core::graph::TestOptions,
+    /// Run each test this many times, all of which must pass. 1 is ordinary.
+    runs_per_test: u32,
+    /// How much of what the tests wrote to show.
+    test_output: TestOutputArg,
     daemon: bool,
     affected: bool,
     predictive: bool,
@@ -2192,6 +2225,8 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         timeout: None,
         test_mode: false,
         test_options: Default::default(),
+        runs_per_test: 1,
+        test_output: TestOutputArg::Errors,
         daemon: false,
         affected: false,
         predictive: false,
@@ -2836,6 +2871,8 @@ fn run_target(
             timeout: None,
             test_mode: false,
             test_options: Default::default(),
+            runs_per_test: 1,
+            test_output: TestOutputArg::Errors,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3023,6 +3060,8 @@ fn run_ide(
             timeout: None,
             test_mode: false,
             test_options: Default::default(),
+            runs_per_test: 1,
+            test_output: TestOutputArg::Errors,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3386,6 +3425,8 @@ fn run_debug(
             timeout: None,
             test_mode: false,
             test_options: Default::default(),
+            runs_per_test: 1,
+            test_output: TestOutputArg::Errors,
             daemon: false,
             affected: false,
             predictive: false,
@@ -3563,6 +3604,8 @@ fn run_pick(
         BuildRequest {
             targets: selected,
             test_options: Default::default(),
+            runs_per_test: 1,
+            test_output: TestOutputArg::Errors,
             jobs: None,
             keep_going: false,
             explain: false,
@@ -3875,7 +3918,10 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         )),
         None => None,
     };
-    let (progress, renderer) = progress::start(request.no_tui, request.verbose);
+    // Only `--test-output=all` echoes what a passing test wrote. A green
+    // suite's output is the noise that buries the one failure worth reading.
+    let echo_success = !request.test_mode || request.test_output == TestOutputArg::All;
+    let (progress, renderer) = progress::start(request.no_tui, request.verbose, echo_success);
     let opts = BuildOptions {
         jobs: request.jobs.unwrap_or_else(default_jobs),
         keep_going: request.keep_going,
@@ -3898,6 +3944,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         progress: Some(progress),
         remote: remote.clone(),
         timeout: request.timeout.map(std::time::Duration::from_secs),
+        runs_per_test: request.runs_per_test,
         ..BuildOptions::default()
     };
 
@@ -4046,6 +4093,26 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
                 Outcome::Skipped { .. } => skipped += 1,
                 Outcome::WouldRun { .. } | Outcome::MayRun { .. } => {}
             }
+        }
+        // Replayed at the end, in full. During the run a failure scrolls away
+        // behind the tests that were still going; the point of a summary is to
+        // put the thing you have to read last.
+        if request.test_output == TestOutputArg::Errors && test_failed > 0 {
+            println!();
+            for result in report
+                .results
+                .iter()
+                .filter(|result| result.id.starts_with("test:"))
+            {
+                if let Outcome::Failed { detail, .. } = &result.outcome {
+                    println!("--- {} ---", result.id);
+                    let detail = detail.trim_end();
+                    if !detail.is_empty() {
+                        println!("{detail}");
+                    }
+                }
+            }
+            println!();
         }
         let mut summary = format!("tests: {passed} passed, {test_failed} failed, {cached} cached");
         // Only when non-zero: a line that always ends "0 flaky, 0 skipped"
@@ -5121,7 +5188,7 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 31] = [
+    const FREE_TEXT: [&str; 32] = [
         // Seconds.
         "frost build::timeout",
         "frost test::timeout",
@@ -5164,6 +5231,7 @@ mod completion_contract_tests {
         "frost test::test_filter",
         "frost test::test_env",
         "frost test::test_arg",
+        "frost test::runs_per_test",
     ];
 
     fn walk(command: &clap::Command, path: &str, undeclared: &mut Vec<String>) {

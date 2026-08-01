@@ -25,7 +25,10 @@ impl RendererHandle {
     }
 }
 
-pub fn start(no_tui: bool, verbose: bool) -> (ProgressSender, RendererHandle) {
+/// `echo_success` prints what an action that succeeded wrote. `frost test`
+/// turns it off for every mode but `--test-output=all`: a passing suite's
+/// output is the noise that hides the one failure worth reading.
+pub fn start(no_tui: bool, verbose: bool, echo_success: bool) -> (ProgressSender, RendererHandle) {
     let (sender, receiver) = progress_channel();
     let live = !no_tui && std::env::var_os("CI").is_none() && io::stdout().is_terminal();
     let interactive_input = io::stdin().is_terminal();
@@ -33,7 +36,7 @@ pub fn start(no_tui: bool, verbose: bool) -> (ProgressSender, RendererHandle) {
         if live {
             run_live(receiver, interactive_input);
         } else {
-            run_plain(receiver, verbose);
+            run_plain(receiver, verbose, echo_success);
         }
     });
     (
@@ -44,7 +47,7 @@ pub fn start(no_tui: bool, verbose: bool) -> (ProgressSender, RendererHandle) {
     )
 }
 
-fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool) {
+fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool, echo_success: bool) {
     let mut commands = HashMap::new();
     let mut outputs = HashMap::new();
     while let Ok(event) = receiver.recv() {
@@ -72,7 +75,7 @@ fn run_plain(receiver: Receiver<ProgressEvent>, verbose: bool) {
                 }
                 let output = outputs.remove(&id).unwrap_or_default();
                 let output = output.trim_end();
-                if !output.is_empty() {
+                if echo_success && !output.is_empty() {
                     println!("{output}");
                 }
             }
@@ -107,7 +110,7 @@ fn run_live(receiver: Receiver<ProgressEvent>, interactive_input: bool) {
     let mut terminal = match TerminalGuard::enter(interactive_input) {
         Ok(terminal) => terminal,
         Err(_) => {
-            run_plain(receiver, false);
+            run_plain(receiver, false, true);
             return;
         }
     };

@@ -38,5 +38,5 @@ frost query rdeps <target> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost query somepath <from> <to> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost run <target> <program_args...> --platform=VALUE --print --profile=VALUE --runner=VALUE -j/--jobs=VALUE
 frost simulate <targets...> --jobs=VALUE --json --platform=VALUE --profile=VALUE
-frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --sandbox --scheduler=VALUE --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
+frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --runs-per-test=VALUE --sandbox --scheduler=VALUE --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --test-output=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
 frost watch <targets...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --run=VALUE -j/--jobs=VALUE

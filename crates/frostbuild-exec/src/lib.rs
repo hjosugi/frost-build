@@ -266,6 +266,13 @@ pub struct BuildOptions {
     /// own. `None` leaves build actions unbounded, which is the default: a
     /// watchdog costs a thread per action, and the common hang is a test.
     pub timeout: Option<Duration>,
+    /// Run every test this many times, requiring all of them to pass. 1 is the
+    /// default and means the ordinary single run.
+    ///
+    /// A value above 1 does not consult the cache: a recorded single-run pass
+    /// cannot answer "does this pass ten times in a row", which is the only
+    /// question worth asking N runs.
+    pub runs_per_test: u32,
 }
 
 /// A test that hangs blocks the whole CI job until its runner's own limit, if
@@ -338,6 +345,7 @@ impl Default for BuildOptions {
             progress: None,
             timeout: None,
             remote: None,
+            runs_per_test: 1,
         }
     }
 }
@@ -961,7 +969,13 @@ impl<'a> Engine<'a> {
         let mut discovered_expected = HashMap::new();
         for &action_id in &self.closure {
             let action = &self.graph.actions[action_id];
-            if self.opts.no_cache && action.kind == ActionKind::Test {
+            // Same reasoning as `no_cache`, and it has to be repeated here:
+            // this pass declares the whole closure cached before the scheduler
+            // ever sees an action, so a check that lives only in the per-action
+            // path never runs.
+            if action.kind == ActionKind::Test
+                && (self.opts.no_cache || self.opts.runs_per_test > 1)
+            {
                 return Ok(false);
             }
             let Some(previous) = self.previous.actions.get(&journal_id(self.graph, action)) else {
@@ -1310,6 +1324,17 @@ impl<'a> Engine<'a> {
             return self.execute(local, action, inputs, "test cache disabled".into());
         }
 
+        // A recorded pass says the test passed once. It cannot answer "does it
+        // pass N times", so asking that question has to run.
+        if self.opts.runs_per_test > 1 && action.kind == ActionKind::Test {
+            return self.execute(
+                local,
+                action,
+                inputs,
+                format!("running {} times", self.opts.runs_per_test),
+            );
+        }
+
         if let Some(prev) = &previous {
             if prev.key == key && self.recorded_outputs_match(action, prev) {
                 match self.outputs_intact(prev) {
@@ -1392,6 +1417,16 @@ impl<'a> Engine<'a> {
             };
         }
 
+        let runs = if action.kind == ActionKind::Test {
+            self.opts.runs_per_test.max(1)
+        } else {
+            1
+        };
+        // Hunting for a flake and hiding one are opposite tools. Asking for N
+        // runs turns retries off, or each run would paper over its own failure
+        // and the repetition would prove nothing.
+        let retries = if runs > 1 { 0 } else { action.flaky_retries };
+
         let started = Instant::now();
         let mut batch = match self.run_action_commands(action, &inputs) {
             Ok(batch) => batch,
@@ -1412,7 +1447,7 @@ impl<'a> Engine<'a> {
         let mut attempts = 1;
         while batch.failure.is_some()
             && action.kind == ActionKind::Test
-            && attempts <= action.flaky_retries
+            && attempts <= retries
             && !was_cancelled()
         {
             attempts += 1;
@@ -1435,13 +1470,41 @@ impl<'a> Engine<'a> {
         }
         let flaky = attempts > 1 && batch.failure.is_none();
 
+        // The remaining runs. Every one must pass, and each starts from the
+        // state the first did, or run two would inherit whatever run one left.
+        let mut completed = 1;
+        while batch.failure.is_none() && completed < runs && !was_cancelled() {
+            completed += 1;
+            self.remove_partial_outputs(action);
+            if let Err(err) = self.reset_clean_dirs(action) {
+                return Outcome::Failed {
+                    reason,
+                    detail: format!("failed to reset intermediates before rerun: {err:#}"),
+                };
+            }
+            batch = match self.run_action_commands(action, &inputs) {
+                Ok(next) => next,
+                Err(err) => {
+                    return Outcome::Failed {
+                        reason,
+                        detail: err,
+                    }
+                }
+            };
+        }
+
         if let Some((argv, exit)) = batch.failure {
             self.remove_partial_outputs(action);
             let detail = format!(
                 "command: {}\nexit: {}\n{}{}",
                 shell_join(&argv),
                 exit,
-                if attempts > 1 {
+                if runs > 1 {
+                    // Which run failed is the whole result of asking for N of
+                    // them: failing on run 7 of 10 is a flake, failing on run
+                    // 1 is a broken test.
+                    format!("failed on run {completed} of {runs}\n")
+                } else if attempts > 1 {
                     // Without this the log shows one failure for what was
                     // several runs, and the retries look like they never
                     // happened.
