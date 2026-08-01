@@ -5860,9 +5860,14 @@ fn fmt_rewrites_a_manifest_once_and_then_leaves_it_alone() {
         extra.trim_start().starts_with("kind = \"cc_library\""),
         "keys are canonically ordered: {extra}"
     );
+    // Which line ending the file has is the checkout's business — a Windows
+    // one is CRLF — and is covered by `fmt::tests::
+    // a_file_keeps_the_line_ending_it_arrived_with`. This test is about
+    // layout, so it reads the layout without asserting on the ending.
+    let layout = once.replace("\r\n", "\n");
     // The long array wrapped; the short one did not.
-    assert!(once.contains("cflags = [\n"), "{once}");
-    assert!(once.contains("includes = [\"include\"]"), "{once}");
+    assert!(layout.contains("cflags = [\n"), "{layout}");
+    assert!(layout.contains("includes = [\"include\"]"), "{layout}");
 
     // And it is still the same workspace afterwards.
     assert_eq!(exit_code(&ws.dir, &["build"]), 0);
