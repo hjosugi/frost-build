@@ -18,7 +18,6 @@ clap_complete.workspace = true
 clap_complete_nushell.workspace = true
 crossterm.workspace = true
 frostbuild-core.workspace = true
-toml.workspace = true
 frostbuild-exec.workspace = true
 frostbuild-bench.workspace = true
 frostbuild-daemon.workspace = true
@@ -29,6 +28,11 @@ quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# Two readers of TOML that are not the manifest loader: `frost lsp` needs the
+# span from a parse failure itself, rather than from a second scan of the
+# document, to put a squiggle where the syntax error is; and `.frostrc` is a
+# TOML file of its own.
+toml.workspace = true
 zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]

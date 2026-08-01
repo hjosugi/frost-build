@@ -1051,7 +1051,7 @@ sandbox = false
     ws.write("frost.toml", "[target.app\n");
     let (code, out) = ws.frost_code(&["build"]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("line 1"), "with the position:\n{out}");
+    assert!(out.contains("frost.toml:1:"), "with the position:\n{out}");
 }
 
 #[test]
@@ -5227,6 +5227,1488 @@ fn a_corrupt_cas_object_is_rebuilt_rather_than_handed_back() {
     // example PE link timestamps), so do not turn this corruption test into
     // an undeclared determinism test.
     assert_eq!(ws.run_app(), "frost: 42\n");
+}
+
+// ---------------------------------------------------------------------------
+// frostw: the version this repository requires, not the one this machine has.
+//
+// The download path is the interesting one and it must not need the network,
+// so these serve the GitHub release layout — `v<version>/SHA256SUMS` and
+// `v<version>/frostbuild-v<version>-<triple>.<ext>` — from a loopback socket
+// and point the wrapper at it.
+// ---------------------------------------------------------------------------
+
+/// The release triple the wrappers derive for this host, or `None` where no
+/// release is published — in which case the wrapper's job is to say so, and
+/// there is no download to test.
+fn release_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+/// The wrapper bootstraps with what the host already ships. Where one of those
+/// is missing the wrapper reports it and stops, which is correct behavior and
+/// not what these cases are about.
+fn wrapper_prerequisites_present() -> bool {
+    let has = |tool: &str| {
+        Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    if cfg!(windows) {
+        has("curl.exe") && has("tar.exe")
+    } else {
+        (has("curl") || has("wget")) && (has("sha256sum") || has("shasum")) && has("tar")
+    }
+}
+
+/// Serves a fixed set of paths over HTTP on loopback, counting requests so a
+/// test can assert that no download happened at all.
+struct ReleaseServer {
+    base_url: String,
+    requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReleaseServer {
+    fn start(files: Vec<(String, Vec<u8>)>) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let Ok(peer) = stream.try_clone() else {
+                    continue;
+                };
+                let mut reader = BufReader::new(peer);
+                let mut request = String::new();
+                if reader.read_line(&mut request).is_err() {
+                    continue;
+                }
+                // Headers, to the blank line. Nothing here reads a body.
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header) {
+                        Ok(n) if n > 2 => continue,
+                        _ => break,
+                    }
+                }
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                let body = files
+                    .iter()
+                    .find(|(served, _)| served == path)
+                    .map(|(_, bytes)| bytes.clone());
+                let response = match body {
+                    Some(bytes) => {
+                        let mut out = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\
+                             Content-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
+                            bytes.len()
+                        )
+                        .into_bytes();
+                        out.extend_from_slice(&bytes);
+                        out
+                    }
+                    None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                              Connection: close\r\n\r\n"
+                        .to_vec(),
+                };
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        });
+        Self {
+            base_url: format!("http://127.0.0.1:{port}"),
+            requests,
+        }
+    }
+
+    fn requests(&self) -> usize {
+        self.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Pack the real `frost` binary into the archive layout release.yml publishes,
+/// and return `(asset name, bytes)`.
+fn release_archive(scratch: &Path, version: &str, triple: &str) -> (String, Vec<u8>) {
+    let name = format!("frostbuild-v{version}-{triple}");
+    let stage = scratch.join("stage");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(stage.join(&name)).expect("stage the archive");
+    std::fs::copy(
+        frost_bin(),
+        executable_path(stage.join(&name).join("frost")),
+    )
+    .expect("copy frost into the archive");
+
+    let asset = if cfg!(windows) {
+        format!("{name}.zip")
+    } else {
+        format!("{name}.tar.gz")
+    };
+    let archive = scratch.join(&asset);
+    let mut tar = Command::new("tar");
+    if cfg!(windows) {
+        tar.args(["-c", "--format=zip", "-f"]);
+    } else {
+        tar.args(["-c", "-z", "-f"]);
+    }
+    let packed = tar
+        .arg(&archive)
+        .arg("-C")
+        .arg(&stage)
+        .arg(&name)
+        .output()
+        .expect("spawn tar");
+    assert!(
+        packed.status.success(),
+        "packing the release archive failed: {}",
+        normalized_output(&packed.stderr)
+    );
+    let bytes = std::fs::read(&archive).expect("read the packed archive");
+    (asset, bytes)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A workspace with the wrapper `frost init --wrapper` writes, pinned to
+/// `version`.
+fn wrapper_workspace(name: &str, version: &str) -> Workspace {
+    let workspace = Workspace::empty(name);
+    let (ok, out) = workspace.frost(&["init", "--wrapper"]);
+    assert!(ok, "init --wrapper failed:\n{out}");
+    std::fs::write(workspace.dir.join(".frost-version"), format!("{version}\n"))
+        .expect("pin the declared version");
+    workspace
+}
+
+fn run_wrapper(workspace: &Workspace, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(workspace.dir.join("frostw.cmd"));
+        command
+    } else {
+        Command::new(workspace.dir.join("frostw"))
+    };
+    command.args(args).current_dir(&workspace.dir);
+    // Loopback must not be handed to whatever proxy the host has configured.
+    for name in ["NO_PROXY", "no_proxy"] {
+        command.env(name, "*");
+    }
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let out = command.output().expect("spawn frostw");
+    (
+        out.status.success(),
+        normalized_output(&out.stdout) + &normalized_output(&out.stderr),
+    )
+}
+
+#[test]
+fn frostw_fetches_verifies_and_runs_the_version_the_workspace_declares() {
+    let Some(triple) = release_triple() else {
+        eprintln!("skipping frostw download E2E: no release is published for this host");
+        return;
+    };
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw download E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    // Deliberately not this binary's own version: a frost already on PATH must
+    // not be able to satisfy the pin and hide the download path.
+    let version = "9.9.9";
+    let workspace = wrapper_workspace("frostw-download", version);
+    let (asset, archive) = release_archive(&workspace.dir, version, triple);
+    let sums = format!("{}  {asset}\n", sha256_hex(&archive));
+    let server = ReleaseServer::start(vec![
+        (format!("/v{version}/SHA256SUMS"), sums.into_bytes()),
+        (format!("/v{version}/{asset}"), archive),
+    ]);
+
+    let home = workspace.dir.join("frost-home");
+    let home = home.to_str().unwrap();
+    let env = [
+        ("FROST_HOME", home),
+        ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+    ];
+
+    let (ok, out) = run_wrapper(&workspace, &["--version"], &env);
+    assert!(ok, "frostw could not install the declared version:\n{out}");
+    assert!(
+        out.contains("downloading frost 9.9.9"),
+        "the wait has to be explained while it happens:\n{out}"
+    );
+    assert!(
+        out.contains("frost 0.9.0")
+            || out.contains(&format!("frost {}", env!("CARGO_PKG_VERSION"))),
+        "the downloaded binary is what ran:\n{out}"
+    );
+    let installed = executable_path(Path::new(home).join("versions").join(version).join("frost"));
+    assert!(
+        installed.exists(),
+        "the verified release was not cached at {}",
+        installed.display()
+    );
+    let after_install = server.requests();
+    assert!(
+        after_install >= 2,
+        "the checksums and the archive are both fetched, saw {after_install}"
+    );
+
+    // Second run: the cache answers, and nothing is fetched again.
+    let (ok, out) = run_wrapper(&workspace, &["--version"], &env);
+    assert!(ok, "{out}");
+    assert!(!out.contains("downloading"), "{out}");
+    assert_eq!(
+        server.requests(),
+        after_install,
+        "a cached version must not be re-fetched"
+    );
+}
+
+#[test]
+fn a_tampered_release_archive_is_rejected_and_installs_nothing() {
+    let Some(triple) = release_triple() else {
+        eprintln!("skipping frostw checksum E2E: no release is published for this host");
+        return;
+    };
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw checksum E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    let version = "9.9.9";
+    let workspace = wrapper_workspace("frostw-tampered", version);
+    let (asset, archive) = release_archive(&workspace.dir, version, triple);
+    // The checksums describe the real archive; the served bytes are not it.
+    let sums = format!("{}  {asset}\n", sha256_hex(&archive));
+    let mut tampered = archive.clone();
+    let middle = tampered.len() / 2;
+    tampered[middle] ^= 0xFF;
+    let server = ReleaseServer::start(vec![
+        (format!("/v{version}/SHA256SUMS"), sums.into_bytes()),
+        (format!("/v{version}/{asset}"), tampered),
+    ]);
+
+    let home = workspace.dir.join("frost-home");
+    let home_str = home.to_str().unwrap();
+    let (ok, out) = run_wrapper(
+        &workspace,
+        &["--version"],
+        &[
+            ("FROST_HOME", home_str),
+            ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+        ],
+    );
+
+    assert!(!ok, "a modified archive must not be executed:\n{out}");
+    assert!(out.contains("checksum mismatch"), "{out}");
+    // Naming the recovery is the point of the message: a rejected download is
+    // otherwise a dead end.
+    assert!(out.contains("put it on PATH"), "{out}");
+    assert!(
+        !home.join("versions").join(version).exists(),
+        "a rejected archive must leave no partially installed version behind"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(home.join("versions"))
+        .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        leftovers.is_empty(),
+        "staging must be cleaned up, found {leftovers:?}"
+    );
+}
+
+#[test]
+fn a_matching_frost_on_path_is_used_without_downloading() {
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping frostw PATH E2E: curl/tar/sha256 are not all present");
+        return;
+    }
+
+    let version = env!("CARGO_PKG_VERSION");
+    let workspace = wrapper_workspace("frostw-on-path", version);
+    // Serves nothing: reaching it at all is the failure this asserts against.
+    let server = ReleaseServer::start(Vec::new());
+
+    let bin_dir = Path::new(frost_bin()).parent().unwrap().to_path_buf();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .expect("join PATH");
+    let home = workspace.dir.join("frost-home");
+
+    let (ok, out) = run_wrapper(
+        &workspace,
+        &["--version"],
+        &[
+            ("FROST_HOME", home.to_str().unwrap()),
+            ("FROSTW_RELEASE_BASE_URL", server.base_url.as_str()),
+            ("PATH", path.to_str().unwrap()),
+        ],
+    );
+
+    assert!(ok, "{out}");
+    assert!(out.contains(&format!("frost {version}")), "{out}");
+    assert_eq!(
+        server.requests(),
+        0,
+        "an installed frost that already matches the pin must not be replaced"
+    );
+    assert!(
+        !home.exists(),
+        "nothing is cached when nothing was downloaded"
+    );
+}
+
+#[test]
+fn frost_warns_when_it_is_not_the_version_the_workspace_declares() {
+    let ws = Workspace::new("version-mismatch");
+
+    // The pin the wrapper reads is also readable by frost itself, which is how
+    // a direct invocation that bypassed the wrapper still names the difference
+    // rather than leaving it to be discovered through its consequences.
+    std::fs::write(ws.dir.join(".frost-version"), "0.0.1\n").unwrap();
+    let (ok, out) = ws.frost(&["info", "version"]);
+    assert!(
+        ok,
+        "a version difference is a warning, not a failure:\n{out}"
+    );
+    assert!(out.contains("requires frost 0.0.1"), "{out}");
+    assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out}");
+    assert!(
+        out.contains("frostw"),
+        "the warning has to name the way out:\n{out}"
+    );
+
+    std::fs::write(
+        ws.dir.join(".frost-version"),
+        format!("{}\n", env!("CARGO_PKG_VERSION")),
+    )
+    .unwrap();
+    let (ok, out) = ws.frost(&["info", "version"]);
+    assert!(ok, "{out}");
+    assert!(
+        !out.contains("warning"),
+        "a matching pin says nothing:\n{out}"
+    );
+}
+
+#[test]
+fn this_repository_checks_in_the_wrapper_frost_writes() {
+    // The wrapper only pins anything if it is committed, and this repository
+    // builds itself with it (see frost.toml). Drift between the shipped asset
+    // and the checked-in copy would mean `frost init --wrapper` hands new
+    // workspaces something this one does not actually run.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+
+    let shipped = std::fs::read_to_string(assets.join("frostw")).unwrap();
+    let checked_in = std::fs::read_to_string(repo.join("frostw")).unwrap();
+    assert_eq!(
+        checked_in, shipped,
+        "frostw at the repository root is not the frostw frost writes"
+    );
+
+    let shipped_cmd = std::fs::read_to_string(assets.join("frostw.cmd")).unwrap();
+    let checked_in_cmd = std::fs::read_to_string(repo.join("frostw.cmd")).unwrap();
+    assert_eq!(
+        checked_in_cmd.replace("\r\n", "\n"),
+        shipped_cmd.replace("\r\n", "\n"),
+        "frostw.cmd at the repository root is not the one frost writes"
+    );
+
+    let pinned = std::fs::read_to_string(repo.join(".frost-version")).unwrap();
+    assert_eq!(
+        pinned.trim(),
+        env!("CARGO_PKG_VERSION"),
+        ".frost-version and the workspace version have to move together; \
+         scripts/release.sh bumps both"
+    );
+}
+
+#[test]
+fn this_repository_describes_its_own_build() {
+    // frost.toml at the repository root is not a sample: `task check` runs
+    // these targets, and this repository's release binaries come out of them.
+    //
+    // Configuring it in-process costs no build and writes nothing, and it is
+    // the check that actually rots — an input glob that stopped matching after
+    // a rename does not fail a build, it silently narrows what a gate watches.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let manifest = frostbuild_core::manifest::Manifest::load(&repo)
+        .expect("the repository's own manifest must configure");
+
+    let mut targets: Vec<&str> = manifest.targets.keys().map(String::as_str).collect();
+    targets.sort_unstable();
+    assert_eq!(
+        targets,
+        [
+            "binaries",
+            "clippy",
+            "fmt",
+            "python_test",
+            "rust_test",
+            "vscode_test"
+        ],
+        "the stages are the gate in CONTRIBUTING.md, plus the binaries"
+    );
+    // The manifest has no `[workspace]`, so the sample workspaces below this
+    // directory are not packages of it. Were one ever added they still would
+    // not be: a subdirectory declaring `[workspace]` is a workspace root, and
+    // discovery stops there. Either way, absorbing them would build them with
+    // this toolchain rather than the one they declared for themselves.
+    assert!(
+        !targets.iter().any(|name| name.starts_with("//sample")),
+        "a sample workspace was absorbed as a package: {targets:?}"
+    );
+
+    let gate = &manifest.targets["rust_test"];
+    for expected in [
+        "crates/frostbuild-cli/src/main.rs",
+        "crates/frostbuild-cli/tests/e2e.rs",
+        "crates/frostbuild-cli/tests/cli-surface.txt",
+        "sample_multi/core/src/core.c",
+        "Cargo.lock",
+    ] {
+        assert!(
+            gate.inputs.iter().any(|input| input == expected),
+            "the test gate stopped watching {expected}; it would be cached \
+             across a change to it"
+        );
+    }
+    assert!(
+        gate.inputs
+            .iter()
+            .all(|input| !input.starts_with("target/")),
+        "build output is not input"
+    );
+
+    // The wrapper scripts are shipped bytes embedded in the binary, so the
+    // stage that produces it has to rerun when they change.
+    let binaries = &manifest.targets["binaries"];
+    assert!(
+        binaries
+            .inputs
+            .iter()
+            .any(|input| input == "crates/frostbuild-cli/assets/frostw"),
+        "the binaries stage stopped watching the wrappers it embeds"
+    );
+
+    // What `frost fmt` and `frost lint` say about this manifest is asserted in
+    // `this_repository_and_its_samples_pass_their_own_lint_and_fmt`, against the
+    // files in the tree and across every workspace this repository ships.
+}
+
+// ---------------------------------------------------------------------------
+// --report: one build, explained in one file.
+// ---------------------------------------------------------------------------
+
+/// A report is only useful if it can be handed to someone and opened. Anything
+/// fetched from elsewhere makes it a page that needs the network to be read,
+/// so the property is asserted against the bytes frost actually wrote.
+fn assert_self_contained(html: &str) {
+    for reference in [
+        "http://",
+        "https://",
+        "src=\"//",
+        "href=\"//",
+        "@import",
+        "<script",
+        "<iframe",
+        "<img",
+    ] {
+        assert!(
+            !html.contains(reference),
+            "the report reaches outside itself with {reference:?}"
+        );
+    }
+    assert!(html.starts_with("<!doctype html>"), "not a whole document");
+    assert!(html.contains("<style>"), "styling has to be inline");
+}
+
+/// The `N` in `--stats`' "critical    N ms estimated" line.
+fn stats_critical_path_ms(stats_output: &str) -> &str {
+    stats_output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("critical"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("--stats prints an estimated critical path when something ran")
+}
+
+#[test]
+fn a_report_shows_the_same_build_stats_printed() {
+    let ws = Workspace::multi("report-stats");
+
+    let (ok, out) = ws.frost(&[
+        "build", "--no-tui", "--stats", "--report", "--trace", "t.json",
+    ]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("frost: report "),
+        "the report has to say where it landed:\n{out}"
+    );
+
+    let report = ws.dir.join(".frost/report/host-debug.html");
+    let html = std::fs::read_to_string(&report).expect("the default report path");
+    assert_self_contained(&html);
+
+    // Two renderings of one run. Where they overlap they have to agree, or one
+    // of them is describing a build that did not happen.
+    let critical = stats_critical_path_ms(&out);
+    assert!(
+        html.contains(&format!("{critical} ms estimated before the run")),
+        "the report's critical path disagrees with --stats ({critical} ms):\n{html}"
+    );
+    for fragment in [
+        "utilization",
+        "<h2>Critical path</h2>",
+        "<h2>Slowest actions that ran</h2>",
+        "<h2>Cache, by kind of work</h2>",
+        "<h2>Why work ran</h2>",
+        "not built before",
+        "compile",
+        "link",
+    ] {
+        assert!(
+            html.contains(fragment),
+            "the report omits {fragment}:\n{html}"
+        );
+    }
+    // The trace is the timeline and the report is the summary; the report
+    // points at it with a relative link, so copying the pair keeps it working.
+    assert!(html.contains("href=\"../../t.json\""), "{html}");
+    assert!(ws.dir.join("t.json").exists());
+
+    // A warm build reports being warm rather than reporting zeroes.
+    let (ok, out) = ws.frost(&["build", "--no-tui", "--report"]);
+    assert!(ok, "{out}");
+    let warm = std::fs::read_to_string(&report).expect("the report is rewritten");
+    assert_self_contained(&warm);
+    assert!(warm.contains("Nothing ran"), "{warm}");
+    assert!(
+        !warm.contains("<h2>Slowest actions that ran</h2>"),
+        "nothing ran, so nothing was slowest:\n{warm}"
+    );
+    assert!(
+        warm.contains("100% of the closure"),
+        "a fully cached closure is worth saying plainly:\n{warm}"
+    );
+}
+
+#[test]
+fn a_failing_build_still_writes_a_report_naming_the_failure() {
+    // This is the build whose report someone actually wants, so it is written
+    // before the nonzero exit rather than skipped along with the success path.
+    let ws = Workspace::new("report-failure");
+    ws.write(
+        "src/util.c",
+        "#include \"util.h\"\nint util(void) { return \"deliberate type error\"; }\n",
+    );
+
+    let (ok, out) = ws.frost(&["build", "--no-tui", "-k", "--report=fail.html"]);
+    assert!(!ok, "the build was supposed to fail:\n{out}");
+    assert!(out.contains("frost: report "), "{out}");
+
+    let html = std::fs::read_to_string(ws.dir.join("fail.html")).expect("the report");
+    assert_self_contained(&html);
+    assert!(html.contains("<h2>Failures</h2>"), "{html}");
+    assert!(html.contains("src/util.c"), "{html}");
+    // The compiler's own words, escaped rather than dropped: a report that
+    // says "it failed" without them sends the reader back to the terminal.
+    assert!(
+        html.contains("deliberate type error") || html.contains("error"),
+        "the failure output tail is missing:\n{html}"
+    );
+}
+
+#[test]
+fn a_test_report_counts_shards_as_slices_of_their_test() {
+    let ws = Workspace::multi("report-tests");
+    let manifest = ws.dir.join("core/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("core_test"), "{text}");
+    std::fs::write(&manifest, format!("{text}shard_count = 3\n")).unwrap();
+
+    let (ok, out) = ws.frost(&["test", "--all", "--no-tui", "--report=tests.html"]);
+    assert!(ok, "{out}");
+
+    let html = std::fs::read_to_string(ws.dir.join("tests.html")).expect("the report");
+    assert_self_contained(&html);
+    assert!(html.contains("<h2>Tests</h2>"), "{html}");
+    for shard in ["0/3", "1/3", "2/3"] {
+        assert!(
+            html.contains(&format!("<td class=\"dim\">{shard}</td>")),
+            "shard {shard} is missing from the report:\n{html}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// frost lsp: the workspace frost already has, spoken as Language Server
+// Protocol. Driven the way an editor drives it — framed messages on a pipe —
+// because the framing and the dispatch are as much of the feature as the
+// answers are.
+// ---------------------------------------------------------------------------
+
+fn lsp_wire(messages: &[serde_json::Value]) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for message in messages {
+        let body = serde_json::to_vec(message).expect("encode a request");
+        wire.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        wire.extend_from_slice(&body);
+    }
+    wire
+}
+
+fn lsp_replies(bytes: &[u8]) -> Vec<serde_json::Value> {
+    let mut replies = Vec::new();
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(4).position(|window| window == b"\r\n\r\n") {
+        let headers = String::from_utf8_lossy(&rest[..at]).into_owned();
+        let length: usize = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())?
+            })
+            .expect("every frame carries a Content-Length");
+        let body = &rest[at + 4..at + 4 + length];
+        replies.push(serde_json::from_slice(body).expect("a reply is JSON"));
+        rest = &rest[at + 4 + length..];
+    }
+    replies
+}
+
+/// Run one whole session and return everything the server sent.
+fn lsp_session(dir: &Path, messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    use std::io::Write as _;
+
+    let mut child = Command::new(frost_bin())
+        .arg("-C")
+        .arg(dir)
+        .arg("lsp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn frost lsp");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&lsp_wire(messages))
+        .expect("write the session");
+    let out = child.wait_with_output().expect("frost lsp exits");
+    assert!(
+        out.status.success(),
+        "frost lsp failed: {}",
+        normalized_output(&out.stderr)
+    );
+    lsp_replies(&out.stdout)
+}
+
+fn lsp_initialize() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "processId": serde_json::Value::Null, "capabilities": {} },
+    })
+}
+
+fn lsp_did_open(uri: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "toml", "version": 1, "text": text,
+        }},
+    })
+}
+
+fn lsp_at(id: u32, method: &str, uri: &str, line: u32, character: u32) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method,
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true },
+        },
+    })
+}
+
+/// `shutdown` then `exit`, which is how a client is supposed to leave. The
+/// protocol asks a server to exit nonzero when it is told to exit without
+/// having been told to shut down, so sending both is part of the test.
+fn lsp_exit() -> [serde_json::Value; 2] {
+    [
+        serde_json::json!({ "jsonrpc": "2.0", "id": 99, "method": "shutdown" }),
+        serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }),
+    ]
+}
+
+/// A `file:` URI for a path, spelled the way the server spells one.
+///
+/// Two host details make the naive `format!("file://{path}")` wrong, and both
+/// were found by CI rather than by reading. Windows: that produces
+/// `file://C:/…`, where `C:` sits in the authority position, so the server
+/// reads no path at all and answers null to everything; and `canonicalize`
+/// there returns a `\\?\` verbatim prefix that no editor would ever send.
+/// macOS: every temp directory is reached through `/var` while its real path
+/// is `/private/var`, so an expectation built from an unresolved path compares
+/// two spellings of one file.
+fn lsp_uri(path: &Path) -> String {
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let text = resolved.display().to_string().replace('\\', "/");
+    let text = match (text.strip_prefix("//?/UNC/"), text.strip_prefix("//?/")) {
+        (Some(share), _) => format!("//{share}"),
+        (None, Some(rest)) => rest.to_string(),
+        (None, None) => text,
+    };
+    let absolute = if text.starts_with('/') {
+        text
+    } else {
+        format!("/{text}")
+    };
+    let mut encoded = String::with_capacity(absolute.len());
+    for byte in absolute.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    format!("file://{encoded}")
+}
+
+fn reply_to(replies: &[serde_json::Value], id: u32) -> serde_json::Value {
+    replies
+        .iter()
+        .find(|reply| reply["id"] == id)
+        .unwrap_or_else(|| panic!("no reply to request {id}:\n{replies:#?}"))["result"]
+        .clone()
+}
+
+fn diagnostics_for(replies: &[serde_json::Value], uri: &str) -> Vec<serde_json::Value> {
+    replies
+        .iter()
+        .filter(|reply| {
+            reply["method"] == "textDocument/publishDiagnostics" && reply["params"]["uri"] == uri
+        })
+        .flat_map(|reply| {
+            reply["params"]["diagnostics"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The line of a manifest containing `needle`, 0-based.
+fn line_of(text: &str, needle: &str) -> u64 {
+    text.lines()
+        .position(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} is not in this manifest")) as u64
+}
+
+#[test]
+fn frost_lsp_reports_an_undefined_label_where_it_is_written() {
+    let ws = Workspace::multi("lsp-diagnostics");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let broken = std::fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("\"//text:text\"", "\"//text:absent\"");
+    std::fs::write(&manifest, &broken).unwrap();
+    let uri = lsp_uri(&manifest);
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[lsp_initialize(), lsp_did_open(&uri, &broken)]
+            .into_iter()
+            .chain(lsp_exit())
+            .collect::<Vec<_>>(),
+    );
+
+    let capabilities = &reply_to(&replies, 1)["capabilities"];
+    for provider in ["definitionProvider", "referencesProvider", "hoverProvider"] {
+        assert_eq!(capabilities[provider], true, "{capabilities:#?}");
+    }
+
+    let diagnostics = diagnostics_for(&replies, &uri);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(
+        diagnostic["range"]["start"]["line"],
+        line_of(&broken, "//text:absent"),
+        "the squiggle belongs on the line that wrote the label"
+    );
+
+    // Byte for byte the sentence a build prints. Two wordings for one mistake
+    // is a second source of truth, and the editor's is the untested one.
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(!ok, "the workspace was supposed to be broken:\n{out}");
+    let from_cli = out
+        .lines()
+        .find_map(|line| line.strip_prefix("frost: error: "))
+        .expect("the build says what is wrong");
+    assert_eq!(diagnostic["message"], from_cli);
+    assert_eq!(diagnostic["source"], "frost");
+}
+
+#[test]
+fn frost_lsp_completes_labels_across_packages() {
+    let ws = Workspace::multi("lsp-completion");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let deps = line_of(&text, "deps = [") as u32;
+    let srcs = line_of(&text, "srcs = [") as u32;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            // Inside the first string of the deps array.
+            lsp_at(2, "textDocument/completion", &uri, deps, 10),
+            // A key position: the start of a line that holds a key.
+            lsp_at(3, "textDocument/completion", &uri, srcs, 0),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let labels: Vec<String> = reply_to(&replies, 2)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    // The point of a build-aware server: a package the open file has never
+    // mentioned is still offered, spelled the way it would have to be written.
+    assert!(labels.contains(&"//core:core".to_string()), "{labels:?}");
+    assert!(
+        labels.contains(&"//render:render".to_string()),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"//:gen_version".to_string()), "{labels:?}");
+
+    let keys: Vec<String> = reply_to(&replies, 3)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    // `cc_binary`, so `srcs` and `ldflags` are offered and `cmd` is not.
+    assert!(keys.contains(&"srcs".to_string()), "{keys:?}");
+    assert!(keys.contains(&"ldflags".to_string()), "{keys:?}");
+    assert!(!keys.contains(&"cmd".to_string()), "{keys:?}");
+}
+
+#[test]
+fn frost_lsp_jumps_from_a_label_to_the_line_that_declares_it() {
+    let ws = Workspace::multi("lsp-definition");
+    let manifest = ws.dir.join("text/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    // By the assignment, not by the label: this manifest's opening comment
+    // names //core:core too, and a cursor in a comment is not on a label.
+    let deps = line_of(&text, "deps = [") as u32;
+    let column = text
+        .lines()
+        .nth(deps as usize)
+        .unwrap()
+        .find("//core")
+        .unwrap() as u32
+        + 2;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/definition", &uri, deps, column),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let location = reply_to(&replies, 2);
+    let target = ws.dir.join("core/frost.toml");
+    assert_eq!(location["uri"], lsp_uri(&target), "{location:#?}");
+    let core = std::fs::read_to_string(&target).unwrap();
+    assert_eq!(
+        location["range"]["start"]["line"],
+        line_of(&core, "[target.core]"),
+        "the jump lands on the declaration, not the top of the file"
+    );
+}
+
+#[test]
+fn frost_lsp_hover_and_references_are_the_answers_query_gives() {
+    // The rule this enforces is "no second implementation": both features call
+    // the functions `frost query` calls, so a disagreement here would mean the
+    // editor had grown its own idea of the graph.
+    let ws = Workspace::multi("lsp-query-agreement");
+    let manifest = ws.dir.join("core/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let header = line_of(&text, "[target.core]") as u32;
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/hover", &uri, header, 9),
+            lsp_at(3, "textDocument/references", &uri, header, 9),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let (ok, out) = ws.frost(&["query", "rdeps", "//core:core", "--json"]);
+    assert!(ok, "{out}");
+    let rdeps: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let expected = rdeps["targets"].as_array().unwrap();
+
+    // One location per target `rdeps` names, each at that target's own
+    // declaration. `includeDeclaration` is set, so the sets match exactly.
+    let references = reply_to(&replies, 3);
+    let references = references.as_array().expect("a location list");
+    assert_eq!(
+        references.len(),
+        expected.len(),
+        "references and `query rdeps` disagree:\n{references:#?}\n{expected:#?}"
+    );
+    for target in expected {
+        let label = target.as_str().unwrap();
+        let (package, name) = label
+            .trim_start_matches("//")
+            .split_once(':')
+            .expect("a workspace label");
+        let declaring = if package.is_empty() {
+            ws.dir.join("frost.toml")
+        } else {
+            ws.dir.join(package).join("frost.toml")
+        };
+        let declaration = std::fs::read_to_string(&declaring).unwrap();
+        let uri = lsp_uri(&declaring);
+        assert!(
+            references.iter().any(|location| {
+                location["uri"] == uri
+                    && location["range"]["start"]["line"]
+                        == line_of(&declaration, &format!("[target.{name}]"))
+            }),
+            "no reference at {label}'s declaration:\n{references:#?}"
+        );
+    }
+
+    let (ok, out) = ws.frost(&["query", "deps", "//core:core", "--json"]);
+    assert!(ok, "{out}");
+    let deps: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let closure = deps["targets"].as_array().unwrap().len();
+
+    let hover = reply_to(&replies, 2);
+    let markdown = hover["contents"]["value"].as_str().expect("markdown");
+    assert!(markdown.contains("**//core:core**"), "{markdown}");
+    assert!(markdown.contains("`cc_library`"), "{markdown}");
+    assert!(
+        markdown.contains(&format!(
+            "{closure} targets in `frost query deps //core:core`"
+        )),
+        "the hover's closure size is not the one query prints ({closure}):\n{markdown}"
+    );
+    // The declared output, which only the configured graph knows.
+    assert!(markdown.contains(".frost/lib/debug/"), "{markdown}");
+}
+
+#[test]
+fn frost_lsp_keeps_answering_while_a_manifest_does_not_parse() {
+    // The state a manifest is in for most of the time it is being edited. A
+    // server that went quiet here would be useless exactly when it is wanted.
+    let ws = Workspace::multi("lsp-mid-edit");
+    let manifest = ws.dir.join("apps/cli/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let uri = lsp_uri(&manifest);
+    let deps = line_of(&text, "deps = [") as u32;
+    let half_typed = format!(
+        "{}\ndeps = [\n  \"//co",
+        &text[..text.find("deps = [").unwrap()]
+    );
+
+    let replies = lsp_session(
+        &ws.dir,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &half_typed),
+            // Inside the unterminated string on the last line.
+            lsp_at(
+                2,
+                "textDocument/completion",
+                &uri,
+                half_typed.lines().count() as u32 - 1,
+                7,
+            ),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+    let _ = deps;
+
+    let diagnostics = diagnostics_for(&replies, &uri);
+    assert_eq!(diagnostics.len(), 1, "the syntax error is reported once");
+    let labels: Vec<String> = reply_to(&replies, 2)
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(
+        labels.contains(&"//core:core".to_string()),
+        "labels are still offered while the document does not parse: {labels:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn frost_lsp_answers_about_a_document_opened_through_a_symlink() {
+    // The case macOS CI found: `frost -C` resolves the workspace root, an
+    // editor sends whatever path the user opened, and on macOS every temp
+    // directory is reached through `/var` while its real path is
+    // `/private/var`. Comparing those literally puts every file in the root
+    // package, so every local label resolves to a target that does not exist
+    // and the server answers nothing, anywhere.
+    //
+    // A symlink reproduces it on any Unix host, which is the point: the
+    // earlier E2E only failed on macOS because only macOS supplied one.
+    let ws = Workspace::multi("lsp-symlink");
+    let link = ws.dir.with_extension("link");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&ws.dir, &link).expect("symlink the workspace");
+
+    let manifest = link.join("text/frost.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    // Deliberately unresolved: this is the spelling an editor sends.
+    let uri = format!("file://{}", manifest.display());
+    // The target's own header, so the question is what package this document
+    // is in. An absolute label like `//core:core` resolves the same whatever
+    // the answer, and would pass with the bug still there.
+    let header = line_of(&text, "[target.text]") as u32;
+
+    let replies = lsp_session(
+        &link,
+        &[
+            lsp_initialize(),
+            lsp_did_open(&uri, &text),
+            lsp_at(2, "textDocument/hover", &uri, header, 9),
+            lsp_at(3, "textDocument/references", &uri, header, 9),
+        ]
+        .into_iter()
+        .chain(lsp_exit())
+        .collect::<Vec<_>>(),
+    );
+
+    let hover = reply_to(&replies, 2);
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .is_some_and(|markdown| markdown.contains("**//text:text**")),
+        "the document's own target went unrecognized through a symlink: {hover:#?}"
+    );
+    let references = reply_to(&replies, 3);
+    assert!(
+        references.as_array().is_some_and(|locations| locations
+            .iter()
+            .any(|location| { location["uri"] == lsp_uri(&ws.dir.join("apps/cli/frost.toml")) })),
+        "references went silent through a symlink: {references:#?}"
+    );
+
+    let _ = std::fs::remove_file(&link);
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics: where the mistake is, what was probably meant, what to do next.
+//
+// The failure path is the output read most often and the one a competitor is
+// judged against, so these hold its shape rather than only its exit code.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_unknown_target_offers_the_targets_it_might_have_been() {
+    let ws = Workspace::multi("diagnostic-target");
+
+    // A bare name in a multi-package workspace: the label is what has to come
+    // back, because that is what would actually have worked.
+    let (ok, out) = ws.frost(&["build", "cli"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("unknown target \"cli\""), "{out}");
+    assert!(out.contains("did you mean \"//apps/cli:cli\"?"), "{out}");
+
+    // A typo inside a label stays inside its package: `//core:core` is what
+    // was meant, so it leads the list even when other names are near enough to
+    // be offered after it.
+    let (ok, out) = ws.frost(&["build", "//core:cor"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("did you mean \"//core:core\""), "{out}");
+
+    // Nothing close: the known set, since this workspace is small enough to
+    // print. A suggestion that is not actually similar is worse than none.
+    let (ok, out) = ws.frost(&["build", "qqqqqqqq"]);
+    assert!(!ok, "{out}");
+    assert!(!out.contains("did you mean"), "{out}");
+    assert!(out.contains("//core:core"), "{out}");
+}
+
+#[test]
+fn a_broken_manifest_says_which_line_and_what_was_meant() {
+    let ws = Workspace::empty("diagnostic-manifest");
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/main.c", "int main(void) { return 0; }\n");
+
+    // A mistyped key. The suggestion is the whole point: `expected one of` on
+    // its own is a list of twenty-two names to read.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binary\"\nsrc = [\"src/main.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    // Workspace-relative and `path:line:column`, which is the form an editor
+    // and a `grep` both already know how to jump to — and which is identical
+    // on every machine, so it is a shape a test can hold.
+    assert!(
+        out.contains("frost.toml:3:1: unknown field `src`"),
+        "the position and the problem come first:\n{out}"
+    );
+    assert!(out.contains("3 | src = [\"src/main.c\"]"), "{out}");
+    assert!(
+        out.contains("^^^"),
+        "the caret covers the offending span:\n{out}"
+    );
+    assert!(out.contains("= did you mean `srcs`?"), "{out}");
+    assert!(out.contains("= expected one of `kind`, `srcs`"), "{out}");
+
+    // A mistyped value of a closed set gets the same treatment.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binry\"\nsrcs = [\"src/main.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("frost.toml:2:8: unknown variant `cc_binry`"),
+        "{out}"
+    );
+    assert!(out.contains("= did you mean `cc_binary`?"), "{out}");
+
+    // Syntax, where the parser's own span is the authority.
+    ws.write(
+        "frost.toml",
+        "[target.app]\nkind = \"cc_binary\"\nsrcs = [\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("frost.toml:3:9:"), "{out}");
+    assert!(out.contains("unclosed array"), "{out}");
+
+    // A package manifest names itself, not the root.
+    ws.write(
+        "frost.toml",
+        "[workspace]\ndefault_targets = [\"//core:core\"]\n",
+    );
+    std::fs::create_dir_all(ws.dir.join("core/src")).unwrap();
+    ws.write("core/src/core.c", "int core(void) { return 1; }\n");
+    ws.write(
+        "core/frost.toml",
+        "[target.core]\nkind = \"cc_library\"\nsrc = [\"src/core.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("core/frost.toml:3:1:"), "{out}");
+}
+
+#[test]
+fn a_missing_tool_says_where_it_looked_and_what_it_blocks() {
+    let ws = Workspace::empty("diagnostic-tool");
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/a.in", "input\n");
+    ws.write(
+        "frost.toml",
+        "[toolchain.tools]\n\
+         absent = \"frost-e2e-definitely-absent-tool\"\n\
+         \n\
+         [target.first]\n\
+         kind = \"command\"\n\
+         tool = \"absent\"\n\
+         args = [\"${in}\"]\n\
+         inputs = [\"src/a.in\"]\n\
+         outputs = [\".frost/out/${config}/first.out\"]\n\
+         \n\
+         [target.second]\n\
+         kind = \"command\"\n\
+         tool = \"absent\"\n\
+         args = [\"${in}\"]\n\
+         inputs = [\"src/a.in\"]\n\
+         outputs = [\".frost/out/${config}/second.out\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["build", "first", "second"]);
+    assert!(!ok, "{out}");
+    // One message carrying all four things a reader needs: which key asked for
+    // it, what it named, where frost looked, and what stops working until it
+    // is there. Any one of them alone leaves the next step a guess.
+    //
+    // `a_missing_tool_says_where_it_looked_and_who_needed_it` asks the same of
+    // the same message and is not a duplicate of this: it names one target and
+    // runs only on unix, so it cannot see whether the attribution sorts and
+    // joins more than one, or whether any of this survives on Windows.
+    assert!(out.contains("[toolchain.tools].absent"), "{out}");
+    assert!(out.contains("frost-e2e-definitely-absent-tool"), "{out}");
+    assert!(out.contains("PATH entries"), "{out}");
+    assert!(out.contains("required by first, second"), "{out}");
+    assert!(out.contains("frost doctor"), "{out}");
+}
+
+#[test]
+fn exit_codes_separate_a_bad_invocation_from_a_bad_build() {
+    // The distinction a script acts on: 1 is an answer about your code, 2 is
+    // an answer about your command line or your environment. Both are in
+    // docs/28; this is the part that holds them to it.
+    let ws = Workspace::new("diagnostic-exit-codes");
+
+    let code = |args: &[&str]| -> i32 {
+        Command::new(frost_bin())
+            .arg("-C")
+            .arg(&ws.dir)
+            .args(args)
+            .output()
+            .expect("spawn frost")
+            .status
+            .code()
+            .expect("frost exits rather than being signalled")
+    };
+
+    // A workspace with no `[profile.*]` sections gives any profile a bare
+    // tree on purpose, so declaring one is what makes an undeclared profile a
+    // mistake rather than a choice.
+    ws.append("frost.toml", "\n[profile.release]\ncflags = [\"-O2\"]\n");
+
+    assert_eq!(code(&["build"]), 0, "a build that succeeds");
+    assert_eq!(code(&["build"]), 0, "and again, from the cache");
+
+    // Frost could not run the work as asked: each of these asks for something
+    // that does not exist, and none of them is a result about the code. They
+    // run against a healthy tree so a compile failure cannot stand in for the
+    // exit code being tested.
+    for invocation in [
+        vec!["build", "no-such-target"],
+        vec!["build", "--profile", "no-such-profile"],
+        vec!["build", "--platform", "no-such-platform"],
+        vec!["query", "deps", "no-such-target"],
+    ] {
+        assert_eq!(
+            code(&invocation),
+            2,
+            "`frost {}` is a question frost cannot act on",
+            invocation.join(" ")
+        );
+    }
+
+    // The work ran and did not succeed.
+    ws.write(
+        "src/util.c",
+        "#include \"util.h\"\nint util(void) { return \"not an int\"; }\n",
+    );
+    assert_eq!(code(&["build"]), 1, "a compile that fails");
+
+    // A workspace that is not one at all.
+    let empty = Workspace::empty("diagnostic-exit-codes-empty");
+    let out = Command::new(frost_bin())
+        .arg("-C")
+        .arg(&empty.dir)
+        .arg("build")
+        .output()
+        .expect("spawn frost");
+    assert_eq!(out.status.code(), Some(2), "a directory with no manifest");
+    assert!(
+        normalized_output(&out.stderr).contains("frost init"),
+        "and it says what to do about it"
+    );
+}
+
+/// The exit code of one `frost` invocation in `workspace`.
+fn exit_code(workspace: &Path, args: &[&str]) -> i32 {
+    Command::new(frost_bin())
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .expect("spawn frost")
+        .status
+        .code()
+        .expect("frost exits rather than being signalled")
+}
+
+#[test]
+fn fmt_rewrites_a_manifest_once_and_then_leaves_it_alone() {
+    let ws = Workspace::new("fmt-idempotent");
+
+    // Keys out of canonical order, an array past the wrap width, and a comment
+    // that has to survive both. Appended to the real manifest rather than
+    // replacing it, so the workspace still builds and the last assertion here
+    // means something.
+    ws.append(
+        "frost.toml",
+        "\n[target.extra]\n\
+         # why this target exists\n\
+         srcs = [\"src/util.c\"]\n\
+         kind = \"cc_library\"\n\
+         cflags = [\"-Wall\", \"-Wextra\", \"-Wpedantic\", \"-Wshadow\", \"-Wconversion\", \
+         \"-Wsign-conversion\", \"-Wdouble-promotion\"]\n\
+         includes = [\"include\"]\n",
+    );
+
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt", "--check"]),
+        1,
+        "starts unformatted"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    let once = std::fs::read_to_string(ws.dir.join("frost.toml")).unwrap();
+
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt", "--check"]),
+        0,
+        "now it is clean"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    let twice = std::fs::read_to_string(ws.dir.join("frost.toml")).unwrap();
+    assert_eq!(once, twice, "formatting is a fixed point");
+
+    // The three things a formatter must not lose.
+    assert!(once.contains("# why this target exists"), "{once}");
+    assert!(once.contains("src/util.c"), "{once}");
+    assert!(once.contains("-Wsign-conversion"), "{once}");
+    // `kind` is what a reader looks for first, so canonical order puts it there.
+    let extra = once
+        .split("[target.extra]")
+        .nth(1)
+        .expect("the target survived");
+    assert!(
+        extra.trim_start().starts_with("kind = \"cc_library\""),
+        "keys are canonically ordered: {extra}"
+    );
+    // Which line ending the file has is the checkout's business — a Windows
+    // one is CRLF — and is covered by `fmt::tests::
+    // a_file_keeps_the_line_ending_it_arrived_with`. This test is about
+    // layout, so it reads the layout without asserting on the ending.
+    let layout = once.replace("\r\n", "\n");
+    // The long array wrapped; the short one did not.
+    assert!(layout.contains("cflags = [\n"), "{layout}");
+    assert!(layout.contains("includes = [\"include\"]"), "{layout}");
+
+    // And it is still the same workspace afterwards.
+    assert_eq!(exit_code(&ws.dir, &["build"]), 0);
+}
+
+#[test]
+fn fmt_reaches_every_package_of_a_workspace() {
+    let ws = Workspace::multi("fmt-packages");
+    ws.append(
+        "core/frost.toml",
+        "\n[target.extra]\nsrcs = [\"src/core.c\"]\nkind = \"cc_library\"\nincludes = [\"include\"]\n",
+    );
+
+    let (ok, out) = ws.frost(&["fmt", "--check"]);
+    assert!(!ok, "{out}");
+    // Two things at once: `--check` from the root reached into a package rather
+    // than stopping at the root manifest, and it named that package with `/`
+    // on every host. The second is why the assertion is not written with
+    // `std::path::MAIN_SEPARATOR` — a workspace-relative path is printed so it
+    // reads the same everywhere, the same rule a manifest error follows, and a
+    // test that accepted either spelling would not hold anything to it.
+    // Windows CI is the only job here that can tell the difference.
+    assert!(out.contains("core/frost.toml"), "{out}");
+
+    assert_eq!(exit_code(&ws.dir, &["fmt"]), 0);
+    assert_eq!(exit_code(&ws.dir, &["fmt", "--check"]), 0);
+    assert_eq!(exit_code(&ws.dir, &["build"]), 0, "and it still builds");
+}
+
+#[test]
+fn fmt_works_on_a_manifest_that_does_not_load() {
+    // Formatting is most wanted mid-edit. A manifest that parses as TOML but
+    // names an unknown target is exactly that moment, and a formatter that
+    // needs the workspace to be valid first is no use there.
+    let ws = Workspace::new("fmt-invalid");
+    ws.write(
+        "frost.toml",
+        "[workspace]\ndefault_targets = [\"app\"]\n\n\
+         [target.app]\nsrcs = [\"src/main.c\"]\nkind = \"cc_binary\"\ndeps = [\"nope\"]\n",
+    );
+
+    assert_eq!(exit_code(&ws.dir, &["build"]), 2, "the workspace is broken");
+    assert_eq!(
+        exit_code(&ws.dir, &["fmt"]),
+        0,
+        "and formatting still works"
+    );
+    assert_eq!(exit_code(&ws.dir, &["fmt", "--check"]), 0);
+}
+
+#[test]
+fn the_shipped_samples_are_already_formatted() {
+    // `frost fmt --check` has to be true of what the repository ships, or the
+    // first thing a reader copies is a workspace their own CI would reject.
+    //
+    // Lint is not asserted here: `this_repository_and_its_samples_pass_their_own_lint`
+    // covers it against the files in the tree rather than against copies, and
+    // over more samples than this loop has fixtures for.
+    for sample in ["fmt-clean-c", "fmt-clean-multi"] {
+        let ws = if sample.ends_with("multi") {
+            Workspace::multi(sample)
+        } else {
+            Workspace::new(sample)
+        };
+        assert_eq!(
+            exit_code(&ws.dir, &["fmt", "--check"]),
+            0,
+            "{sample} is formatted"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

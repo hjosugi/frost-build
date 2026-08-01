@@ -16,6 +16,10 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   accepted keys. A tool frost cannot find now says which `[toolchain]` line
   declared it, how many PATH entries were searched, which targets need it, and
   to run `frost doctor` — previously it said only that the tool was not on PATH.
+  The position lives on a `ManifestError` rather than only inside the
+  formatted string, so `frost lsp` puts its squiggle on the bytes the parser
+  identified and shows the sentence without the position repeated in it.
+  docs/28 gains the exit-code classification table.
 
 - The test summary counts a skipped test as skipped rather than failed. A test
   that never ran because something upstream failed was reported as a failure,
@@ -253,8 +257,67 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   on the thing being bootstrapped. The manifest deliberately has no
   `[workspace]` section, because that would make Frost discover the nested
   sample manifests and pull every sample workspace in as a package of this one.
+  `frost build binaries` produces `frost` and `frostd` through the same
+  manifest, so the release path is run by the thing it builds.
 
-### Added
+- `frost lsp` speaks the Language Server Protocol for `frost.toml` on
+  stdin/stdout: diagnostics, completion of labels across packages and of the
+  keys a target's kind accepts, go-to-definition for a label, find-references,
+  and hover. It is a projection of what frost already knows, not a second
+  analysis — references call `graph.rdeps_closure`, the function `frost query
+  rdeps` calls, and hover reports the closure size `frost query deps` prints,
+  with an E2E that compares them so a disagreement fails rather than ships. A
+  cross-package diagnostic carries the build's own sentence byte for byte,
+  placed on the token that sentence names; a parse error is placed on the span
+  the parser recorded. The workspace is
+  re-read on save through the graph store's warm path, so an unchanged tree
+  costs a stamp check; syntax and per-target errors are reported against the
+  editor's buffer as it is typed. While a manifest does not parse, or a label
+  names nothing, the server keeps answering from the declarations that did
+  load, because that is the state a manifest spends most of its editing life
+  in. Formatting, rename and non-manifest files are out of scope. Any LSP
+  client works; the VS Code extension is the first.
+
+- `frost build --report` and `frost test --report` write a self-contained HTML
+  file explaining one build: the critical path with each action's measured
+  duration, the cache breakdown per kind of work, the slowest actions that ran,
+  invalidation reasons grouped by `--explain`'s vocabulary, test results
+  including shards, and failing actions with the tail of their output. No
+  server, no network, no JavaScript, no external stylesheet — it opens from
+  `file://` and can be attached to a message, which is what makes a Chrome
+  trace a poor thing to hand to a colleague. `--stats` remains the counters and
+  `--trace` the raw timeline; when both are asked for, the report links to the
+  trace relatively so the pair travels together. Nothing is measured for the
+  report: the critical path is the one the scheduler ordered its queue with,
+  the durations are the journal's, and rendering happens after the build has
+  been timed and summarized, so it cannot move a number it shows. It does
+  forgo the no-op certificate, because a certificate answers without planning a
+  build and so has nothing to report — about 10 ms on an otherwise 7 ms
+  1000-action no-op, against under a millisecond for the rendering itself
+  (`frost-bench report`, `bench/baselines/2026-08-01-vm-report-overhead.json`).
+
+- `frostw` and `frostw.cmd`, checked in beside a one-line `.frost-version`, run
+  the frost release a repository requires rather than the one a machine
+  happens to have — the gradlew/bazelisk shape, which before 1.0 matters
+  because a minor release may change the manifest grammar and the resulting
+  error is correct while saying nothing about the version difference that
+  caused it. The wrapper prefers a matching `frost` already on `PATH`, then a
+  copy under `$FROST_HOME/versions/<version>`, then the GitHub release, whose
+  archive is verified against `SHA256SUMS` before it is unpacked into a
+  staging directory that is renamed into place — so a rejected or truncated
+  download leaves nothing for the next run to trust. Every failure names what
+  to put where to continue by hand. `frost init` writes all three for a new
+  workspace and `frost init --wrapper` adds them to one that already has a
+  manifest; frost itself warns once, on stderr, when it is not the declared
+  version. `.frost-version` names one exact version — no ranges, no `latest` —
+  because the reason to check it in is that two machines run the same build.
+  This repository checks its own in, so `./frostw test --all` runs the gate on
+  a machine with no frost at all.
+
+- A `Taskfile.yml` ([Task](https://taskfile.dev)) naming the entry points:
+  `task`, `task check`, `task bootstrap`. It has no dependency graph and no
+  cache and does not pretend to — every task is a name for a command, and
+  `frost.toml` remains the thing that decides whether a stage has to run.
 
 - A VS Code extension at `tools/vscode/`, unpublished and built in CI. It
   provides a task provider, target and test pickers, "build the targets owning
@@ -269,6 +332,30 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   one exception noted in its source: no CLI primitive lists every target, so
   the universe is derived from `graph --dot` topology and the kinds come from
   `query`.
+
+### Fixed
+
+- Package discovery stops at a nested workspace root. A subdirectory whose own
+  `frost.toml` declares `[workspace]` is a separate workspace — a sample, a
+  vendored dependency, an unrelated project in the same tree — and absorbing
+  its targets as packages silently dropped the toolchain, profiles and default
+  targets it declared for itself. Nested manifests without `[workspace]`, which
+  is what a package is, are unaffected.
+
+- `frost lsp` answered nothing on Windows, and nothing about any package on
+  macOS. Both were the same class of mistake: comparing path spellings rather
+  than the files they name. A client sending `file://C:/…` — the drive in the
+  authority position — mapped to no path at all, and a canonicalized root
+  carries a `\\?\` prefix no editor would send back; on macOS every temp
+  directory is reached through `/var` while its real path is `/private/var`, so
+  every document looked like it was in the root package and every local label
+  resolved to a target that did not exist.
+
+- Ordering a graph whose manifest declared an unknown dependency panicked
+  instead of reporting it. `Manifest::load` rejects that before anything is
+  configured, so it was unreachable until `frost lsp` needed the manifests a
+  failed validation had already assembled; the invariant is now checked rather
+  than assumed.
 
 ## [0.9.0] - 2026-08-01
 

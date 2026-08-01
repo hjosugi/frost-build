@@ -20,8 +20,11 @@ end of this document.
 | `frost.toml` grammar and keys | A manifest that loads keeps loading. Keys are added, not repurposed; a key's meaning does not change under the same name | [06_manifest_spec.md](06_manifest_spec.md) plus the parser's own test suite |
 | CLI subcommand names, long options, positionals | A command line that works keeps working. Options are added, not renamed | `cli_surface_tests::the_command_surface_matches_the_checked_in_contract`, against `crates/frostbuild-cli/tests/cli-surface.txt` |
 | Exit codes | The three outcomes below stay distinguishable | `cli_surface_tests::exit_codes_keep_their_documented_meanings` |
-| `--json` output of `doctor`, `info`, `query`, `cache stats` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
+| `--json` output of `doctor`, `info`, `query`, `cache stats`, `lint` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
+| `frost lint` rule identifiers | A rule keeps its name and keeps meaning the same thing, so a `lint_allow` written into a manifest keeps silencing what it was written to silence. A retired rule stops being reported and stays accepted where it is named. The rules themselves are in [06_manifest_spec.md](06_manifest_spec.md#frost-lint) | `this_repository_and_its_samples_pass_their_own_lint` |
 | `frost info` keys | A key keeps naming the same thing. New keys are added | `info_answers_path_questions_without_a_graph` |
+| `.frost-version` format | One `X.Y.Z` line, optional `#` comments, whitespace insignificant. A file `frostw` reads today keeps being read the same way, by the wrapper and by frost itself | `wrapper::tests::a_version_is_read_the_way_the_wrapper_scripts_read_it`, `this_repository_checks_in_the_wrapper_frost_writes` |
+| Release asset names and `SHA256SUMS` | `frostbuild-v<version>-<triple>.{tar.gz,zip}` beside a `SHA256SUMS` listing them, under `releases/download/v<version>/`. A checked-in `frostw` from an older release keeps resolving newer ones | `frostw_fetches_verifies_and_runs_the_version_the_workspace_declares` |
 | `--build-event-json` events | Every line carries `schema`. Fields are added, never removed or retyped; `event` and `result` names keep their meaning. A bump means a field changed meaning or left | `the_build_event_stream_is_ndjson_a_ci_job_can_read` |
 | Artifact layout under the configured output tree | `.frost/out/<config>`, `.frost/bin/<config>` and the `${config}` rule stay as documented, and `frost info` answers them so callers need not encode the rule | `info_answers_path_questions_without_a_graph` |
 
@@ -34,11 +37,11 @@ the reader is too old to understand.
 
 ### Exit codes
 
-| Code | Meaning | Examples |
-|---|---|---|
-| `0` | the requested work completed | build succeeded or was already up to date; `doctor` found everything |
-| `1` | the work ran and did not succeed | a compile failed; a test failed; `doctor` found a missing required tool |
-| `2` | frost could not run the work as asked | unusable command line, missing or invalid manifest, unreadable workspace, internal error |
+| Code | Class | Meaning | What falls in it |
+|---|---|---|---|
+| `0` | result | the requested work completed | a build, test or query that finished; a fully cached build; `doctor` finding everything it requires |
+| `1` | result | the work ran and did not succeed | a compile or link failed; a test failed; a determinism check found a difference; `doctor` found a missing required tool; a query whose answer is legitimately empty (`somepath` with no path) |
+| `2` | refusal | frost could not run the work as asked | an unparsable command line; an unknown target, profile or platform; a manifest that does not parse or does not validate; a missing or unreadable workspace; a configured tool that is not executable; an internal error |
 
 The distinction that matters to a script is `1` versus `2`: `1` is an answer
 about your code, `2` is an answer about your invocation or environment. A
@@ -46,7 +49,26 @@ mistyped target name, an unreadable `frost.toml` and a tool frost cannot find
 are all `2`; a compile or test that ran and failed is `1`.
 `exit_codes_separate_your_code_from_your_invocation` drives one case of each
 through the real binary, because a document that says so and a binary that does
-so are different claims.
+so are different claims; `exit_codes_separate_a_bad_invocation_from_a_bad_build`
+covers the rest of the refusal rows — an unknown profile, an unknown platform, a
+query for a target that does not exist — on every host rather than only on unix.
+
+### What a refusal says
+
+A `2` is frost declining to act, so it owes the reader the way forward. Each of
+these is enforced by a test rather than by intent:
+
+- an unknown target lists up to three targets it might have been, spelled as
+  labels, and points at `frost query deps //...` when the workspace is too
+  large to enumerate;
+- a manifest error is `path:line:column: problem`, workspace-relative, with the
+  offending line, a caret over the span the parser recorded, and — when a valid
+  alternative is close enough to what was written — `did you mean`;
+- a configured tool that is not executable names the manifest key that declared
+  it, where frost looked, which targets needed it, and `frost doctor`.
+
+The wording of any of it is [not contract](#not-contract). Which class an exit
+code falls in is.
 
 ## What the VS Code extension depends on
 
@@ -79,6 +101,8 @@ period. Depending on them is a choice to track the implementation.
 | Action-key construction | The key covers whatever correctness requires. Adding a field is a cache miss, which is the safe direction. `frost info action_key_schema` reports the current layout so tooling can observe a bump instead of inferring one |
 | Internal crate APIs (`frostbuild-core`, `-exec`, `-store`, `-daemon`) | The published artifact is the `frost` binary. The crates are how it is built |
 | Progress, log and diagnostic text | Human-facing output is improved continuously. Machine consumers use `--json`, the Chrome trace or the build event stream |
+| `frost lsp` beyond the protocol itself | Which LSP capabilities are advertised, and what a completion list or hover contains, follow what is useful to an editor. The protocol framing and the meaning of a diagnostic's message are not this row: the message is the loader's, covered where the loader is |
+| `--report` HTML structure | The document is a rendering for a person to read: its elements, classes, wording and layout change whenever a clearer one exists. What the numbers in it *mean* is contract, because they are the journal's durations, the scheduler's critical path and `--explain`'s reasons, each covered where it is defined. Parse the trace or `--json`, never this |
 | Benchmark numbers | Measurements of a host, not promises. See [05_benchmark_methodology.md](05_benchmark_methodology.md) |
 | Daemon socket path and wire protocol | The daemon is an optimization behind the same CLI; a client and server that disagree fall back to an in-process build |
 

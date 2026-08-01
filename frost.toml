@@ -3,6 +3,11 @@
 #   frost test --all            the whole pre-PR gate, incrementally
 #   frost test rust_test        one stage
 #   frost test --all --explain  why a stage did or did not rerun
+#   frost build binaries        frost and frostd, release
+#
+# `./frostw` runs the version `.frost-version` names, fetching that release once
+# if this machine does not have it, so none of the above needs a frost to be
+# installed first. `cargo build --release` remains the bootstrap.
 #
 # This is the dogfood, and it is also the answer to "should this repository
 # adopt a task runner". It should not adopt someone else's: it *is* a build
@@ -26,11 +31,90 @@
 # Stages are `kind = "test"` because a gate stage has no artifact — it has a
 # verdict. Frost owns the success stamp, so a passing stage is cached and a
 # failing one records nothing and runs again.
+#
+# `binaries` is the exception, and the other half of the dogfood: it produces
+# the artifact this repository ships. `frost build binaries` after
+# `frost test --all` is the whole release path, run by the thing it builds.
 
 [toolchain.tools]
 cargo = "cargo"
 python3 = "python3"
 npm = "npm"
+
+[target.binaries]
+kind = "command"
+tool = "cargo"
+# `cargo install` rather than `cargo build`, because a declared output has to be
+# a path Frost can name and `--out-dir` is still unstable; `--root` gives
+# exactly that. `--force` is required: `.crates.toml` lives outside the owned
+# directory, so without it Cargo reports "already installed" over a directory
+# Frost has just emptied.
+args = [
+  "install",
+  "--locked",
+  "--force",
+  "--quiet",
+  "--target-dir",
+  "target/self",
+  "--root",
+  ".frost/self/${config}",
+  "--path",
+  "crates/frostbuild-cli",
+]
+inputs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "crates/**/*.rs",
+  "crates/**/*.toml",
+  "crates/**/*.json",
+  "crates/frostbuild-cli/assets/*",
+]
+# The binary names carry a host-specific suffix, so the file list cannot be
+# written down in a manifest that has to work on Windows too; owning the
+# directory is the honest description. Cargo's `.crates.toml` and
+# `.crates2.json` land beside it rather than in it.
+#
+# Always a release build. `${config}` is there because Frost isolates owned
+# trees per configuration, not because this target has a debug variant — a
+# debug frost is what `cargo build` is for.
+output_dirs = [".frost/self/${config}/bin"]
+# The daemon ships in the same archive, so it belongs in the same action: one
+# journal entry means the pair is never half-rebuilt.
+steps = [
+  { tool = "cargo", args = [
+    "install",
+    "--locked",
+    "--force",
+    "--quiet",
+    "--target-dir",
+    "target/self",
+    "--root",
+    ".frost/self/${config}",
+    "--path",
+    "crates/frostbuild-daemon",
+  ] },
+]
+# Deliberately without HOME and PATH. Frost passes both through regardless;
+# naming them additionally makes them action-key material, and a two-minute
+# release build that misses whenever a shell exports a different PATH would pay
+# for nothing. What PATH selects here is cargo, and the resolved cargo is
+# already in the toolchain fingerprint. `frost lint` reports the other spelling.
+pass_env = [
+  "CARGO_HOME",
+  "RUSTUP_HOME",
+  "RUSTUP_TOOLCHAIN",
+  "CARGO_NET_OFFLINE",
+  "CARGO_BUILD_JOBS",
+  "RUSTFLAGS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]
+timeout = 3600
+sandbox = false
 
 [target.clippy]
 kind = "test"

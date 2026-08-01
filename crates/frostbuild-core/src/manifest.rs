@@ -64,40 +64,6 @@ pub fn default_arflags() -> &'static [String] {
     })
 }
 
-/// Add a "did you mean" to serde's unknown-field error.
-///
-/// serde lists every accepted key, which for a target is twenty-three of them:
-/// correct, and useless, because the one that matters is buried. The name and
-/// the candidate list are already in the message, so the suggestion is derived
-/// from it rather than by rebuilding the schema somewhere this would drift
-/// from it.
-///
-/// This reads another crate's wording, so it is written to degrade quietly: if
-/// toml ever phrases the error differently the pattern simply does not match
-/// and the original message is returned unchanged. A test pins the behaviour
-/// so the loss would be visible.
-fn with_key_suggestion(error: toml::de::Error) -> anyhow::Error {
-    let text = error.to_string();
-    let Some(rest) = text.split_once("unknown field `").map(|(_, rest)| rest) else {
-        return anyhow::Error::new(error);
-    };
-    let Some((field, rest)) = rest.split_once('`') else {
-        return anyhow::Error::new(error);
-    };
-    let Some(expected) = rest.split_once("expected one of ").map(|(_, list)| list) else {
-        return anyhow::Error::new(error);
-    };
-    let candidates: Vec<&str> = expected
-        .split(',')
-        .map(|item| item.trim().trim_matches(|c| c == '`' || c == '\n'))
-        .filter(|item| !item.is_empty())
-        .collect();
-    match closest(field, candidates.iter().copied()) {
-        Some(hint) => anyhow::anyhow!("{text}\n\ndid you mean `{hint}`?"),
-        None => anyhow::Error::new(error),
-    }
-}
-
 /// The closest candidates to `input`, best first, at most `limit` of them.
 ///
 /// Labels are scored by their parts rather than as whole strings. In a
@@ -144,8 +110,13 @@ fn split_label(label: &str) -> (&str, &str) {
     }
 }
 
-/// The closest candidate to `input`, when one is close enough to be worth
-/// suggesting. Turns "unknown X" into "unknown X, did you mean Y".
+/// One edit per three characters: short names need a near-exact match, longer
+/// ones tolerate a typo or two. A suggestion that is not actually similar is
+/// worse than no suggestion.
+fn suggestion_budget(input: &str) -> usize {
+    1 + input.chars().count() / 3
+}
+
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     let mut best: Option<(usize, &str)> = None;
     for candidate in candidates {
@@ -154,11 +125,7 @@ pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -
             best = Some((distance, candidate));
         }
     }
-    // One edit per three characters: short names need a near-exact match,
-    // longer ones tolerate a typo or two. A suggestion that is not actually
-    // similar is worse than no suggestion.
-    let budget = 1 + input.chars().count() / 3;
-    best.filter(|&(distance, _)| distance <= budget)
+    best.filter(|&(distance, _)| distance <= suggestion_budget(input))
         .map(|(_, name)| name)
 }
 
@@ -278,6 +245,41 @@ struct RawProfile {
     #[serde(default)]
     ldflags: Vec<String>,
 }
+
+/// Every key a `[target.*]` table accepts, in declaration order.
+///
+/// `RawTarget` is `deny_unknown_fields`, so this is the whole surface. It is
+/// spelled out rather than derived because `frost fmt` orders these keys and a
+/// new one has to be given a position deliberately; a test compares the two
+/// lists so adding a field here is what raises the question there.
+pub const TARGET_KEYS: &[&str] = &[
+    "kind",
+    "srcs",
+    "deps",
+    "includes",
+    "cflags",
+    "ldflags",
+    "cmd",
+    "tool",
+    "args",
+    "env",
+    "pass_env",
+    "steps",
+    "clean_dirs",
+    "preserve_outputs",
+    "timeout",
+    "shard_count",
+    "flaky_retries",
+    "lint_allow",
+    "visibility",
+    "platform",
+    "depfile",
+    "depfile_format",
+    "inputs",
+    "outputs",
+    "output_dirs",
+    "sandbox",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -564,8 +566,207 @@ pub struct Manifest {
     pub manifest_paths: Vec<String>,
 }
 
+/// A manifest that would not load, and exactly where.
+///
+/// The TOML parser records a byte span for every syntax and shape error.
+/// Throwing that away is what turns "this file is wrong" into a hunt, so it is
+/// carried on a type of our own rather than only inside a formatted string:
+/// `frost` prints the position and a snippet, and `frost lsp` puts the squiggle
+/// on the same bytes without re-deriving them from the text.
+#[derive(Debug)]
+pub struct ManifestError {
+    /// The manifest as it was named to the reader, so the message points at a
+    /// path they can open.
+    pub path: PathBuf,
+    /// Byte range in the document, when the parser recorded one.
+    pub span: Option<std::ops::Range<usize>>,
+    /// 1-based position of the span's start.
+    pub line: usize,
+    pub column: usize,
+    /// What is wrong, with no position and no notes attached.
+    pub headline: String,
+    /// Supporting lines: the valid alternatives, and a suggestion when one of
+    /// them is close enough to what was written to be what was meant.
+    pub notes: Vec<String>,
+    /// The offending line, for the snippet.
+    source_line: Option<String>,
+}
+
+impl ManifestError {
+    fn from_toml(path: &Path, text: &str, error: &toml::de::Error) -> Self {
+        let span = error.span();
+        let (line, column, source_line) = match &span {
+            Some(span) => position_of(text, span.start),
+            None => (1, 1, None),
+        };
+        // "unknown field `src`, expected one of `kind`, `srcs`, …" is one
+        // sentence carrying two different things: what is wrong, and what would
+        // have been right. Split so the first is the headline a reader acts on
+        // and the second is a note they consult.
+        let message = error.message();
+        let (headline, alternatives) = match message.split_once(", expected one of ") {
+            Some((headline, rest)) => (headline.to_string(), Some(rest.to_string())),
+            None => (message.to_string(), None),
+        };
+        let mut notes = Vec::new();
+        if let Some(alternatives) = &alternatives {
+            if let Some(suggestion) = suggest_from(&headline, alternatives) {
+                notes.push(format!("did you mean `{suggestion}`?"));
+            }
+            notes.push(format!("expected one of {alternatives}"));
+        }
+        Self {
+            // `/` on every host. A manifest writes its own paths that way — the
+            // spec says so — and the reason to report a workspace-relative path
+            // at all was that it reads the same everywhere; `core\frost.toml`
+            // on Windows and `core/frost.toml` elsewhere would give that up.
+            path: PathBuf::from(path.to_string_lossy().replace('\\', "/")),
+            span,
+            line,
+            column,
+            headline,
+            notes,
+            source_line,
+        }
+    }
+
+    /// The problem and its notes, without the position or the snippet.
+    ///
+    /// This is what an editor shows: it already knows which file and which
+    /// line, and repeating them inside the message is noise there while being
+    /// the whole point in a terminal.
+    pub fn message(&self) -> String {
+        let mut message = self.headline.clone();
+        for note in &self.notes {
+            message.push_str("; ");
+            message.push_str(note);
+        }
+        message
+    }
+}
+
+impl std::fmt::Display for ManifestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `path:line:column: message` first, because that is the form every
+        // editor and every `grep` already knows how to jump to.
+        write!(
+            f,
+            "{}:{}:{}: {}",
+            self.path.display(),
+            self.line,
+            self.column,
+            self.headline
+        )?;
+        if let (Some(source), Some(span)) = (&self.source_line, &self.span) {
+            let gutter = " ".repeat(self.line.to_string().len());
+            // The caret covers the span, clamped to the line: a span that runs
+            // to the end of the input would otherwise draw past it.
+            let width = span.len().max(1).min(
+                source
+                    .chars()
+                    .count()
+                    .saturating_sub(self.column - 1)
+                    .max(1),
+            );
+            write!(
+                f,
+                "\n{gutter} |\n{} | {source}\n{gutter} | {}{}",
+                self.line,
+                " ".repeat(self.column - 1),
+                "^".repeat(width),
+            )?;
+        }
+        for note in &self.notes {
+            write!(f, "\n  = {note}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ManifestError {}
+
+/// 1-based line and column of a byte offset, with the line it lands on.
+fn position_of(text: &str, offset: usize) -> (usize, usize, Option<String>) {
+    let mut start = 0usize;
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let end = start + line.len();
+        if offset < end || end == text.len() {
+            let within = offset.saturating_sub(start);
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            // Columns count characters, not bytes: a caret under a multi-byte
+            // character otherwise lands in the middle of it.
+            let column = trimmed
+                .get(..within.min(trimmed.len()))
+                .map_or(within, |prefix| prefix.chars().count());
+            return (index + 1, column + 1, Some(trimmed.to_string()));
+        }
+        start = end;
+    }
+    (1, 1, None)
+}
+
+/// The alternative closest to the name a message says is unknown.
+fn suggest_from(headline: &str, alternatives: &str) -> Option<String> {
+    let wrong = backticked(headline)?;
+    let candidates: Vec<&str> = alternatives.split(", ").filter_map(backticked).collect();
+    closest(wrong, candidates.iter().copied()).map(str::to_string)
+}
+
+fn backticked(text: &str) -> Option<&str> {
+    let (_, rest) = text.split_once('`')?;
+    let (inner, _) = rest.split_once('`')?;
+    Some(inner)
+}
+
+/// A workspace load with the manifest and the verdict kept apart.
+///
+/// A build wants only the verdict: an unknown dependency means it must not
+/// proceed. An editor wants both — the error is the diagnostic, and the
+/// targets that *did* load are what "go to definition" and "find references"
+/// answer from. Those stay correct while one label somewhere is wrong, and a
+/// server that discarded them would go quiet exactly when it is most wanted.
+pub struct Load {
+    /// Every target that parsed, present even when a cross-file check failed.
+    /// `None` only when the workspace could not be assembled at all.
+    pub manifest: Option<Manifest>,
+    pub error: Option<anyhow::Error>,
+}
+
 impl Manifest {
     pub fn load(workspace_root: &Path) -> Result<Self> {
+        let load = Self::load_reporting(workspace_root);
+        match (load.manifest, load.error) {
+            (_, Some(error)) => Err(error),
+            (Some(manifest), None) => Ok(manifest),
+            (None, None) => unreachable!("a load with no manifest reports why"),
+        }
+    }
+
+    /// Read the workspace, reporting what is wrong with it separately from
+    /// what it contains. See [`Load`].
+    pub fn load_reporting(workspace_root: &Path) -> Load {
+        match Self::assemble(workspace_root) {
+            Err(error) => Load {
+                manifest: None,
+                error: Some(error),
+            },
+            Ok(manifest) => {
+                let error = validate_dependencies(&manifest.targets)
+                    .and_then(|()| validate_default_targets(&manifest))
+                    .and_then(|()| validate_visibility(&manifest))
+                    .and_then(|()| validate_platform_overlays(&manifest))
+                    .err();
+                Load {
+                    manifest: Some(manifest),
+                    error,
+                }
+            }
+        }
+    }
+
+    /// Every manifest in the workspace, merged. Cross-file checks are the
+    /// caller's, so that a caller which needs the result anyway can have it.
+    fn assemble(workspace_root: &Path) -> Result<Self> {
         let path = workspace_root.join(MANIFEST_FILE);
         let text = std::fs::read_to_string(&path).map_err(|_| {
             anyhow::anyhow!(
@@ -574,9 +775,12 @@ impl Manifest {
                 workspace_root.display()
             )
         })?;
+        // Workspace-relative, like the package manifests below it and like
+        // every path the manifest itself declares. It is also what keeps the
+        // message identical on every machine, which is what makes it something
+        // a snapshot can hold.
         let raw: RawManifest = toml::from_str(&text)
-            .map_err(with_key_suggestion)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
+            .map_err(|error| ManifestError::from_toml(Path::new(MANIFEST_FILE), &text, &error))?;
         let root_has_workspace = toml::from_str::<toml::Value>(&text)
             .ok()
             .and_then(|v| v.get("workspace").cloned())
@@ -613,8 +817,7 @@ impl Manifest {
                 let package_text = std::fs::read_to_string(workspace_root.join(&rel))
                     .with_context(|| format!("failed to read {}", rel.display()))?;
                 let package_raw: RawManifest = toml::from_str(&package_text)
-                    .map_err(with_key_suggestion)
-                    .with_context(|| format!("failed to parse {}", rel.display()))?;
+                    .map_err(|error| ManifestError::from_toml(&rel, &package_text, &error))?;
                 let mut child = Self::from_raw_unvalidated(package_raw)?;
                 if !child.visibility_groups.is_empty() {
                     bail!(
@@ -654,18 +857,35 @@ impl Manifest {
                 );
             }
         }
-        validate_dependencies(&manifest.targets)?;
-        validate_default_targets(&manifest)?;
-        validate_visibility(&manifest)?;
-        validate_platform_overlays(&manifest)?;
+        // No `validate_*` call belongs here, and one arriving in a merge is the
+        // second time it has: `load_reporting` needs the manifests that parsed
+        // even when the verdict is an error, because that is the state a
+        // manifest is in for most of the time `frost lsp` is looking at one.
+        // Validation runs in `load_reporting` and `from_raw`, which is where a
+        // new check goes.
         Ok(manifest)
     }
 
     pub fn parse_str(text: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(text)
-            .map_err(with_key_suggestion)
-            .context("failed to parse manifest")?;
+            .map_err(|error| ManifestError::from_toml(Path::new(MANIFEST_FILE), text, &error))?;
         Self::from_raw(raw)
+    }
+
+    /// Parse one manifest file the way [`Manifest::load`] parses each of them:
+    /// syntax and per-target shape, and none of the cross-file checks that
+    /// need the rest of the workspace to answer.
+    ///
+    /// `frost lsp` reports on whatever is in an editor's buffer, which is one
+    /// file and is usually mid-edit. Running the whole-workspace validation
+    /// against it alone would call a dependency unknown because the package
+    /// declaring it was never read — a confident diagnostic about the wrong
+    /// thing. `path` only names the file in the error, so the message matches
+    /// the one a build prints for the same mistake.
+    pub fn parse_document(path: &Path, text: &str) -> Result<Self> {
+        let raw: RawManifest =
+            toml::from_str(text).map_err(|error| ManifestError::from_toml(path, text, &error))?;
+        Self::from_raw_unvalidated(raw)
     }
 
     /// Resolves the effective toolchain for a platform: the root `[toolchain]`
@@ -720,6 +940,8 @@ impl Manifest {
         }
         validate_dependencies(&manifest.targets)?;
         validate_default_targets(&manifest)?;
+        validate_visibility(&manifest)?;
+        validate_platform_overlays(&manifest)?;
         Ok(manifest)
     }
 
@@ -1226,6 +1448,16 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
             }
             let ty = entry.file_type()?;
             if ty.is_dir() && !ty.is_symlink() {
+                // A subdirectory whose own manifest declares `[workspace]` is
+                // the root of a separate workspace: a vendored dependency, a
+                // sample, an unrelated project that happens to live in this
+                // tree. Absorbing its targets as packages would silently drop
+                // the toolchain, profiles and default targets it declared for
+                // itself, so discovery stops at that boundary rather than
+                // descending through it.
+                if declares_workspace(&entry.path().join(MANIFEST_FILE)) {
+                    continue;
+                }
                 walk(root, &entry.path(), out)?;
             } else if ty.is_file() && name == MANIFEST_FILE {
                 out.push(entry.path().strip_prefix(root).unwrap().to_path_buf());
@@ -1238,7 +1470,22 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn resolve_label(raw: &str, package: &str) -> String {
+/// Whether a manifest claims to be a workspace root.
+///
+/// Unreadable and unparseable files answer "no" so that the boundary check
+/// never turns into a second place that reports manifest syntax errors; a file
+/// that is genuinely a package is parsed, and reported on, where packages are.
+fn declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .is_some_and(|value| value.get("workspace").is_some())
+}
+
+/// A dependency label as written, resolved against the package that wrote it:
+/// `//pkg:name` is already absolute, `//:name` names a root target, and
+/// anything else is local to `package`.
+pub fn resolve_label(raw: &str, package: &str) -> String {
     if let Some(root) = raw.strip_prefix("//:") {
         root.to_string()
     } else if raw.starts_with("//") {
@@ -2471,12 +2718,14 @@ mod tests {
 
     #[test]
     fn a_broken_manifest_says_where_it_broke() {
-        // Line, column, the offending line and a caret. This comes from `toml`
-        // rather than from us, so the test is here to notice if a dependency
-        // bump takes it away.
+        // Line, column, the offending line and a caret. The span comes from
+        // `toml`, so this notices a dependency bump that takes it away; the
+        // rendering is ours, because `frost lsp` needs the position as a range
+        // rather than as a sentence, and `path:line:column:` is what an editor
+        // and a terminal both already know how to read.
         let error = Manifest::parse_str("[target.app\nkind = \"cc_binary\"\n").unwrap_err();
         let text = format!("{error:#}");
-        assert!(text.contains("line 1, column 12"), "{text}");
+        assert!(text.contains("frost.toml:1:12:"), "{text}");
         assert!(text.contains("[target.app"), "{text}");
         assert!(text.contains('^'), "{text}");
     }
@@ -3252,5 +3501,132 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn target_keys_is_what_the_parser_accepts() {
+        // `TARGET_KEYS` is written down, and a written-down list of someone
+        // else's fields goes stale silently. It did: `platform` arrived on
+        // `RawTarget` and the list did not notice, because the only thing
+        // comparing it to anything compared it to another written-down list.
+        //
+        // serde names every accepted field when it rejects one, so the parser
+        // can be asked directly.
+        let error = Manifest::parse_str(
+            "[target.app]\nkind = \"cc_binary\"\nsrcs = [\"a.c\"]\nzzz_not_a_key = 1\n",
+        )
+        .unwrap_err();
+        let text = format!("{error:#}");
+        let (_, listed) = text
+            .split_once("expected one of ")
+            .expect("serde lists the fields it accepts");
+        let mut accepted: Vec<&str> = listed
+            .split(',')
+            .map(|item| {
+                item.trim()
+                    .trim_matches(|c: char| c == '`' || c.is_whitespace())
+            })
+            .filter(|item| !item.is_empty())
+            .collect();
+        accepted.sort_unstable();
+        let mut declared: Vec<&str> = TARGET_KEYS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(declared, accepted);
+    }
+
+    #[test]
+    fn a_manifest_error_reads_the_same_on_every_host() {
+        // Package manifests are discovered by walking the filesystem, so their
+        // paths arrive with the host's separator. The message is meant to be
+        // the same string everywhere — that is why it is workspace-relative
+        // rather than absolute — so the separator is normalized with it.
+        let text = "[target.core]\nkind = \"cc_library\"\nsrc = [\"src/core.c\"]\n";
+        let error = Manifest::parse_document(
+            &PathBuf::from("core").join("nested").join(MANIFEST_FILE),
+            text,
+        )
+        .unwrap_err();
+
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.starts_with("core/nested/frost.toml:3:1: unknown field `src`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains('\\'), "{rendered}");
+    }
+
+    #[test]
+    fn package_discovery_stops_at_a_nested_workspace_root() {
+        // A repository that builds itself with Frost also contains sample and
+        // vendored workspaces. Those declare their own toolchain and default
+        // targets, so absorbing their targets as packages would build them
+        // with the outer workspace's configuration — silently, and wrongly.
+        let root = std::env::temp_dir().join(format!(
+            "frost-core-nested-workspace-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("lib/src")).unwrap();
+        std::fs::create_dir_all(root.join("vendor/demo/src")).unwrap();
+        std::fs::create_dir_all(root.join("vendor/demo/nested")).unwrap();
+        std::fs::write(root.join("lib/src/lib.c"), "int lib(void) { return 1; }\n").unwrap();
+        std::fs::write(
+            root.join("vendor/demo/src/a.c"),
+            "int a(void) { return 2; }\n",
+        )
+        .unwrap();
+
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            "[workspace]\ndefault_targets = [\"//lib:lib\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("lib/frost.toml"),
+            "[target.lib]\nkind = \"cc_library\"\nsrcs = [\"src/lib.c\"]\n",
+        )
+        .unwrap();
+        // Its own root, with its own toolchain — not a package of the above.
+        std::fs::write(
+            root.join("vendor/demo/frost.toml"),
+            "[workspace]\ndefault_targets = [\"a\"]\n\n\
+             [target.a]\nkind = \"cc_library\"\nsrcs = [\"src/a.c\"]\n",
+        )
+        .unwrap();
+        // A package of the vendored workspace. It is reached only by
+        // descending through that workspace's root, so the outer workspace
+        // must not see it either — the boundary skips the subtree, not just
+        // the manifest that marks it.
+        std::fs::write(
+            root.join("vendor/demo/nested/b.c"),
+            "int b(void) { return 3; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("vendor/demo/nested/frost.toml"),
+            "[target.b]\nkind = \"cc_library\"\nsrcs = [\"b.c\"]\n",
+        )
+        .unwrap();
+
+        let manifest = Manifest::load(&root).unwrap();
+
+        assert_eq!(
+            manifest.targets.keys().collect::<Vec<_>>(),
+            vec!["//lib:lib"],
+            "only the outer workspace's own packages are packages"
+        );
+        assert_eq!(
+            manifest.manifest_paths,
+            vec!["frost.toml", "lib/frost.toml"]
+        );
+
+        // The vendored workspace still builds as one, from its own root.
+        let vendored = Manifest::load(&root.join("vendor/demo")).unwrap();
+        assert_eq!(
+            vendored.targets.keys().collect::<Vec<_>>(),
+            vec!["//nested:b", "a"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

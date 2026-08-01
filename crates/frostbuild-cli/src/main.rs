@@ -22,9 +22,12 @@ mod bazel;
 mod events;
 mod frostrc;
 mod jar;
+mod lsp;
 mod npm;
 mod progress;
+mod report;
 mod wheel;
+mod wrapper;
 
 #[derive(Parser)]
 #[command(
@@ -163,6 +166,10 @@ enum Cmd {
         /// Write a Chrome/Perfetto trace JSON
         #[arg(long, value_hint = ValueHint::FilePath)]
         trace: Option<PathBuf>,
+        /// Write a self-contained HTML report of this build; `--report=PATH`
+        /// chooses where, plain `--report` writes under .frost/report/
+        #[arg(long, num_args = 0..=1, require_equals = true, value_name = "PATH", value_hint = ValueHint::FilePath)]
+        report: Option<Option<PathBuf>>,
         /// Report scheduling measurements: makespan, worker utilization and
         /// distance from the estimated critical path
         #[arg(long)]
@@ -409,6 +416,10 @@ enum Cmd {
         remote_timeout: u64,
         #[arg(long)]
         explain: bool,
+        /// Write a self-contained HTML report of this run; `--report=PATH`
+        /// chooses where, plain `--report` writes under .frost/report/
+        #[arg(long, num_args = 0..=1, require_equals = true, value_name = "PATH", value_hint = ValueHint::FilePath)]
+        report: Option<Option<PathBuf>>,
         /// Stop any test still running after this many seconds; overrides the
         /// default limit and is itself overridden by a target's own `timeout`
         #[arg(long, value_name = "SECONDS")]
@@ -531,6 +542,10 @@ enum Cmd {
         /// Source family; omit to auto-detect (mixed families require a choice)
         #[arg(long, value_enum)]
         language: Option<InitLanguage>,
+        /// Write only frostw, frostw.cmd and .frost-version, pinned to this
+        /// frost, into a workspace that already has a manifest
+        #[arg(long, conflicts_with = "language")]
+        wrapper: bool,
     },
     /// Compare scheduling strategies without building anything
     Simulate {
@@ -672,6 +687,8 @@ enum Cmd {
         #[arg(long, value_hint = ValueHint::FilePath)]
         output: PathBuf,
     },
+    /// Speak the Language Server Protocol for frost.toml on stdin/stdout
+    Lsp,
     /// Report workspace, output and cache locations for scripts and editors
     Info {
         /// Print only this key's value; omit for the whole table
@@ -1399,6 +1416,9 @@ fn run(cli: Cli) -> Result<i32> {
         .workspace
         .canonicalize()
         .with_context(|| format!("workspace {} not found", cli.workspace.display()))?;
+    // Said before the work, not after: the point is to name the version
+    // difference before the reader starts debugging whatever it caused.
+    wrapper::warn_on_version_mismatch(&root);
 
     match cli.command {
         Cmd::Build {
@@ -1420,6 +1440,7 @@ fn run(cli: Cli) -> Result<i32> {
             check_determinism,
             timeout,
             trace,
+            report,
             stats,
             no_tui,
             daemon,
@@ -1439,6 +1460,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: check_determinism.is_some(),
                 trace,
+                report,
                 stats,
                 remote_cache,
                 remote_upload,
@@ -1576,6 +1598,7 @@ fn run(cli: Cli) -> Result<i32> {
             remote_upload,
             remote_timeout,
             explain,
+            report,
             profile,
             platform,
             all_platforms,
@@ -1598,6 +1621,7 @@ fn run(cli: Cli) -> Result<i32> {
                 sandbox,
                 check_determinism: false,
                 trace: None,
+                report,
                 stats: false,
                 remote_cache,
                 remote_upload,
@@ -1628,7 +1652,7 @@ fn run(cli: Cli) -> Result<i32> {
             let graph = load_graph(&root, &profile, &platform)?;
             let requested = resolve_targets(&graph, targets)?;
             let closure = graph.action_closure(&requested)?;
-            let toolchain = toolchain_closure_fingerprint_cached(&root, &graph.toolchain)?;
+            let toolchain = toolchain_fingerprint(&root, &graph)?;
             let opts = BuildOptions {
                 jobs: default_jobs(),
                 keep_going: true,
@@ -1878,7 +1902,7 @@ fn run(cli: Cli) -> Result<i32> {
                 &root,
                 &graph,
                 closure,
-                toolchain_closure_fingerprint_cached(&root, &graph.toolchain)?,
+                toolchain_fingerprint(&root, &graph)?,
                 BuildOptions {
                     dry_run: true,
                     keep_going: true,
@@ -1928,7 +1952,12 @@ fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Cmd::Init { dry_run, language } => run_init(&root, dry_run, language),
+        Cmd::Lsp => lsp::serve(&root),
+        Cmd::Init {
+            dry_run,
+            language,
+            wrapper,
+        } => run_init(&root, dry_run, language, wrapper),
         Cmd::Simulate {
             targets,
             jobs,
@@ -2353,6 +2382,9 @@ struct BuildRequest {
     sandbox: bool,
     check_determinism: bool,
     trace: Option<PathBuf>,
+    /// `None` writes no report; `Some` writes one, at the default path when
+    /// the inner option is empty.
+    report: Option<Option<PathBuf>>,
     stats: bool,
     remote_cache: Option<String>,
     remote_upload: bool,
@@ -2419,6 +2451,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         sandbox: false,
         check_determinism: false,
         trace: None,
+        report: None,
         stats: false,
         remote_cache: None,
         remote_upload: false,
@@ -3067,6 +3100,7 @@ fn run_target(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3258,6 +3292,7 @@ fn run_ide(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3662,6 +3697,7 @@ fn run_debug(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -3867,6 +3903,7 @@ fn run_pick(
             sandbox: false,
             check_determinism: false,
             trace: None,
+            report: None,
             stats: false,
             remote_cache: None,
             remote_upload: false,
@@ -4134,6 +4171,9 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         && !request.sandbox
         && !request.check_determinism
         && request.trace.is_none()
+        // The certificate answers without producing a BuildReport, and a
+        // report of a build that was never planned would have nothing in it.
+        && request.report.is_none()
         && !request.stats
         && !request.affected
         && !request.predictive
@@ -4174,8 +4214,7 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     // from an unfiltered run.
     graph.apply_test_options(&request.test_options);
     let graph = graph;
-    let toolchain = toolchain_closure_fingerprint_cached(root, &graph.toolchain)
-        .map_err(|error| attribute_missing_tool(error, &graph))?;
+    let toolchain = toolchain_fingerprint(root, &graph)?;
     let mut requested = if request.test_mode && (request.all || request.targets.is_empty()) {
         graph
             .targets
@@ -4323,9 +4362,10 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
     }
 
-    if let Some(trace) = request.trace {
-        write_trace(root, trace, &report)?;
-    }
+    let trace = match request.trace {
+        Some(trace) => Some(write_trace(root, trace, &report)?),
+        None => None,
+    };
 
     if let Some(remote) = &remote {
         let summary = remote.summary();
@@ -4473,6 +4513,42 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
         }
         println!("{summary}");
     }
+
+    // Written last, and deliberately: the build has already been timed,
+    // summarized and had its failures printed, so rendering cannot move any
+    // number the report goes on to show. A failed build gets one too — that is
+    // the build whose report someone actually wants.
+    if let Some(destination) = request.report {
+        let destination = destination
+            .unwrap_or_else(|| report::default_path(&request.profile, &request.platform));
+        let destination = if destination.is_absolute() {
+            destination
+        } else {
+            root.join(destination)
+        };
+        report::write(
+            &destination,
+            &report::Build {
+                workspace: root
+                    .file_name()
+                    .map_or_else(
+                        || root.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    )
+                    .as_str(),
+                profile: &request.profile,
+                platform: &request.platform,
+                targets: &requested,
+                report: &report,
+                graph_actions: graph.actions.len(),
+                elapsed_ms: elapsed,
+                trace: trace.as_deref(),
+                test_mode: request.test_mode,
+            },
+        )?;
+        println!("frost: report {}", destination.display());
+    }
+
     Ok(if frostbuild_exec::was_cancelled() {
         130
     } else if report.success() {
@@ -4482,11 +4558,13 @@ fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     })
 }
 
+/// Returns where the trace landed, so a report written alongside it can link
+/// to it rather than describing where to look.
 fn write_trace(
     root: &std::path::Path,
     destination: PathBuf,
     report: &frostbuild_exec::BuildReport,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let mut timestamp = 0u64;
     let mut events = Vec::new();
     for result in &report.results {
@@ -4512,14 +4590,32 @@ fn write_trace(
         root.join(destination)
     };
     std::fs::write(
-        path,
+        &path,
         serde_json::to_vec(&serde_json::json!({ "traceEvents": events }))?,
     )?;
-    Ok(())
+    Ok(path)
 }
 
 /// Load the configured graph, taking the manifest-free warm path when the
 /// sources stamp proves the workspace inputs are unchanged; otherwise fall
+/// The configured toolchain's fingerprint, naming what needs a tool that is
+/// missing.
+///
+/// `frostbuild-exec` knows which manifest key declared a program and where it
+/// looked for it; only the graph knows which targets would have run it. A
+/// message carrying all three is the difference between "install something" and
+/// knowing what to install and what stops working until you do.
+/// The toolchain fingerprint, with a missing tool attributed to the targets
+/// that need it.
+///
+/// A wrapper rather than the `map_err` at each call site, because every path
+/// that needs the fingerprint wants the same attribution: the reader who ran
+/// `frost explain` deserves it as much as the one who ran `frost build`.
+fn toolchain_fingerprint(root: &std::path::Path, graph: &BuildGraph) -> Result<String> {
+    toolchain_closure_fingerprint_cached(root, &graph.toolchain)
+        .map_err(|error| attribute_missing_tool(error, graph))
+}
+
 /// back to a full manifest load and (re)compile.
 /// Turn the `--test-*` flags into the options the graph understands.
 ///
@@ -4578,11 +4674,16 @@ fn run_fmt(root: &std::path::Path, check: bool) -> Result<i32> {
         }
     }
 
+    // `/` on every host, for the reason a manifest error is normalized the same
+    // way (`a_manifest_error_reads_the_same_on_every_host`): the path is
+    // workspace-relative so that it reads identically everywhere, and
+    // `core\frost.toml` on Windows beside `core/frost.toml` elsewhere gives
+    // that up. A manifest spells its own paths with `/` too.
     let relative = |path: &std::path::Path| {
         path.strip_prefix(root)
             .unwrap_or(path)
-            .display()
-            .to_string()
+            .to_string_lossy()
+            .replace('\\', "/")
     };
     if changed.is_empty() {
         println!("fmt: {} manifest(s) already canonical", manifests.len());
@@ -5265,12 +5366,37 @@ fn summarize(
 
 /// Write a starter manifest for a directory that has sources but no
 /// `frost.toml`, so the first thing a newcomer runs is not a dead end.
-fn run_init(root: &std::path::Path, dry_run: bool, language: Option<InitLanguage>) -> Result<i32> {
+fn run_init(
+    root: &std::path::Path,
+    dry_run: bool,
+    language: Option<InitLanguage>,
+    wrapper_only: bool,
+) -> Result<i32> {
+    let version = env!("CARGO_PKG_VERSION");
+    // `--wrapper` is the path into a workspace that already has a manifest,
+    // which is where a version pin is most wanted and where plain `init`
+    // refuses to touch anything.
+    if wrapper_only {
+        if dry_run {
+            println!("frost init --wrapper would write, pinned to frost {version}:");
+            for name in [
+                wrapper::VERSION_FILE,
+                wrapper::WRAPPER_SH,
+                wrapper::WRAPPER_CMD,
+            ] {
+                println!("  {}", root.join(name).display());
+            }
+            return Ok(0);
+        }
+        report_wrapper(&wrapper::write_wrapper(root, version)?, version);
+        return Ok(0);
+    }
+
     let manifest_path = root.join(frostbuild_core::manifest::MANIFEST_FILE);
     if manifest_path.exists() && !dry_run {
         bail!(
-            "{} already exists. delete it first, or use --dry-run to see what \
-             init would write",
+            "{} already exists. delete it first, use --wrapper to add only the \
+             version wrapper, or use --dry-run to see what init would write",
             manifest_path.display()
         );
     }
@@ -5287,9 +5413,20 @@ fn run_init(root: &std::path::Path, dry_run: bool, language: Option<InitLanguage
     for line in &scaffold.summary {
         println!("  {line}");
     }
+    // A workspace is scaffolded once and built by everyone, so the version it
+    // was written against is worth recording while it is still known.
+    report_wrapper(&wrapper::write_wrapper(root, version)?, version);
     println!();
     println!("  read it before trusting it, then: frost build");
     Ok(0)
+}
+
+fn report_wrapper(written: &[std::path::PathBuf], version: &str) {
+    println!("frost: pinned this workspace to frost {version}");
+    for path in written {
+        println!("  {}", path.display());
+    }
+    println!("  commit these, then build with ./frostw build on any machine");
 }
 
 #[cfg(test)]

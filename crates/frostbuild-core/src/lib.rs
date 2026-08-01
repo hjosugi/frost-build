@@ -17,6 +17,33 @@ pub mod visibility;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Environment an action inherits whose value must not change its output.
+/// These name scratch locations and the search path for tools; an action
+/// whose result depends on them is not hermetic, which is what `--sandbox`
+/// and `--check-determinism` exist to surface. Keying on them would rebuild
+/// the world every time a shell exports a different TMPDIR.
+///
+/// PATH is here rather than in the key for a specific reason: its effect on
+/// the compiler is already captured, because the toolchain fingerprint hashes
+/// the *resolved* cc/cxx/ar binaries. What it does not capture is a genrule
+/// invoking some other tool found on PATH — the same blind spot as any
+/// undeclared input.
+///
+/// It lives here rather than in the executor because two crates have to agree
+/// about it: the executor passes these through, and `frost lint` reports a
+/// `pass_env` that names one, which is only sound if the two lists are the
+/// same list.
+pub const ENV_PASSTHROUGH: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    // Go uses this as its default cache root on Windows. It is operational
+    // scratch state, like TMP, rather than an input that changes built bytes.
+    "LOCALAPPDATA",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionKey {
     pub builder: String,

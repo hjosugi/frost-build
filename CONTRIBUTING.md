@@ -12,7 +12,8 @@ correctness boundary.
 Before a PR:
 
 ```bash
-frost test --all          # the gate, incrementally, if you have a frost built
+./frostw test --all       # the gate, incrementally, with no frost installed
+frost test --all          # the same, through a frost you already have
 scripts/check.sh          # the same stages, unconditionally, with no frost
 ```
 
@@ -28,9 +29,15 @@ and extension suites alone, which `scripts/check.sh` cannot do. Measured here,
 a second run of an unchanged tree is 1.6 s against 103 s. `frost test --all
 --explain` says which input changed and why a stage reran.
 
-`scripts/check.sh` stays because bootstrapping cannot depend on the thing being
-bootstrapped — a contributor with no frost, or one whose frost does not build,
-still needs the gate.
+`./frostw` closes the "if you have a frost built" gap: it runs the release
+`.frost-version` names, fetching and verifying it once. `scripts/check.sh`
+still stays, because bootstrapping cannot depend on the thing being
+bootstrapped — a contributor with no frost, no network, or one whose frost does
+not build, still needs the gate. See
+[docs/22_developer_loop.md](docs/22_developer_loop.md).
+
+`frost build binaries` produces `frost` and `frostd` themselves, which is the
+other half of the same dogfood.
 
 ## Releasing
 

@@ -1,0 +1,115 @@
+# Task (https://taskfile.dev) — the names, not the build.
+#
+#   task check        # the whole pre-PR gate, incrementally
+#   task build        # the frost and frostd binaries
+#   task --list       # everything below, with descriptions
+#
+# This file orchestrates nothing. `frost.toml` is the build — it declares what
+# each stage reads and decides whether the stage has to run, which is the point
+# of a repository that builds itself with its own build tool. Task is a name
+# for a command line, and every task below is one line long for that reason. If
+# a task here ever grows logic, that logic belongs in frost.toml instead.
+#
+# `scripts/check.sh` stays: it is the path that needs no frost, and CI takes
+# it.
+#
+# FROST defaults to ./frostw, which runs the release named in .frost-version,
+# downloading it once if this machine does not have it. Point it elsewhere to
+# use a frost you just built:
+#
+#   task check FROST=./target/release/frost
+
+version: '3'
+
+vars:
+  FROST: '{{.FROST | default "./frostw"}}'
+
+tasks:
+  default:
+    desc: Run the whole pre-PR gate, skipping the stages whose inputs did not move
+    cmds:
+      - task: check
+
+  check:
+    desc: Run every stage — cargo test, clippy, fmt, the Python suite, the extension's
+    cmds:
+      - '{{.FROST}} test --all'
+
+  build:
+    desc: Build the frost and frostd binaries into .frost/self/debug/bin
+    cmds:
+      - '{{.FROST}} build binaries'
+
+  check:direct:
+    desc: The same gates without frost, for a machine that has none yet
+    cmds:
+      - scripts/check.sh
+
+  fmt:
+    desc: Check formatting
+    cmds:
+      - '{{.FROST}} test fmt'
+
+  clippy:
+    desc: Lint with clippy, warnings denied
+    cmds:
+      - '{{.FROST}} test clippy'
+
+  test:
+    desc: Run the Rust workspace test suite
+    cmds:
+      - '{{.FROST}} test rust_test'
+
+  test:python:
+    desc: Run the Python simulator and harness tests
+    cmds:
+      - '{{.FROST}} test python_test'
+
+  test:vscode:
+    desc: Run the VS Code extension's suite
+    cmds:
+      - '{{.FROST}} test vscode_test'
+
+  lint:
+    desc: Report frost.toml patterns that load fine and go wrong later
+    cmds:
+      - '{{.FROST}} lint'
+
+  # Not frost targets: they rewrite the tree rather than deciding something
+  # about it, and a cached "already formatted" would be a lie the moment
+  # anything else edited a file.
+  fix:
+    desc: Rewrite sources into rustfmt's canonical form
+    cmds:
+      - cargo fmt --all
+
+  fix:manifest:
+    desc: Rewrite every frost.toml into canonical form
+    cmds:
+      - '{{.FROST}} fmt'
+
+  why:
+    desc: Run the gate and say which input made each stage rerun
+    cmds:
+      - '{{.FROST}} test --all --explain'
+
+  report:
+    desc: Run the gate and write a self-contained HTML report of it
+    cmds:
+      - '{{.FROST}} test --all --report'
+
+  graph:
+    desc: Print the self-build dependency graph as DOT
+    cmds:
+      - '{{.FROST}} graph --dot'
+
+  clean:
+    desc: Remove frost's outputs and cached decisions for this workspace
+    cmds:
+      - '{{.FROST}} clean --cache'
+
+  bootstrap:
+    desc: Build frost with cargo alone, for a machine with neither frost nor network
+    cmds:
+      - cargo build --release --locked
+      - echo 'built ./target/release/frost — use it with: task check FROST=./target/release/frost'

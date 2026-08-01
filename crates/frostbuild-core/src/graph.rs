@@ -1605,7 +1605,15 @@ fn toposort_targets(manifest: &Manifest) -> Result<Vec<String>> {
         path: &mut Vec<String>,
         order: &mut Vec<String>,
     ) -> Result<()> {
-        match states[name] {
+        // `Manifest::load` rejects an unknown dependency before anything is
+        // configured, so this is an invariant rather than user input. It is
+        // still checked: `Manifest::load_reporting` hands out manifests that
+        // did not pass that check, and a panic deep in a topological sort is a
+        // poor way to find out.
+        let Some(state) = states.get(name) else {
+            bail!("target {name:?} is not declared, so the graph cannot be ordered");
+        };
+        match state {
             State::Done => return Ok(()),
             State::Visiting => {
                 let start = path.iter().position(|p| p == name).unwrap_or(0);

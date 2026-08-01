@@ -159,3 +159,205 @@ IDE E2E parses both generated files, checks the
 pre-launch task reference and proves a second invocation refuses overwrite.
 Doctor E2E covers both a fully buildable scaffold and a missing required named
 tool while retaining optional-integration results.
+
+## The version this repository requires
+
+```bash
+./frostw build             # runs the frost named in .frost-version
+frost init --wrapper       # add the wrapper to a workspace that has a manifest
+```
+
+`frost init` writes `.frost-version`, `frostw` and `frostw.cmd` alongside the
+manifest; `frost init --wrapper` adds only those three to a workspace that
+already has one. Committing them makes the build instruction `./frostw build`
+on every machine, instead of a README paragraph asking for a particular frost
+first.
+
+The wrapper prefers, in order: a `frost` already on `PATH` that reports the
+declared version, a copy under `$FROST_HOME/versions/<version>` from an earlier
+run, and finally that version's GitHub release — whose archive is verified
+against the release's `SHA256SUMS` before it is unpacked, into a staging
+directory that is renamed into place, so a rejected or truncated download
+leaves nothing behind for the next run to trust. Every failure names what to
+put where to continue by hand: no network, an unpublished version and a
+checksum mismatch are all dead ends otherwise.
+
+`.frost-version` is a file rather than a `frost.toml` key on purpose: reading
+the manifest requires a frost, and which frost to run is the question being
+asked. It names one exact version — no ranges, no `latest` — because the reason
+to check it in is that two machines run the same build.
+
+Running `frost` directly is not prevented. It warns, once, on stderr, naming
+the declared version and this one, because before 1.0 a minor release may
+change the manifest grammar and the resulting error is correct while saying
+nothing about the version difference that caused it.
+
+## Frost builds Frost
+
+The repository's own `frost.toml` runs the pre-PR gate as five declared stages
+and produces `frost` and `frostd` themselves:
+
+```bash
+./frostw test --all       # the gate, incrementally, needing no frost installed
+./frostw test --all --explain   # which input made each stage rerun
+./frostw build binaries   # frost and frostd, release
+```
+
+Cargo still owns crate resolution, feature unification and rustc invocation
+order. Every stage wraps a whole `cargo`, `python3` or `npm` invocation with a
+declared input set — the same boundary `sample_spring` and `sample_maven` draw
+around Gradle and Maven — so Frost decides *whether* the invocation has to
+happen, not *what* it does. That is what `scripts/check.sh` cannot do: it runs
+all five every time, while a stage whose inputs did not move is a cached
+success. Editing a `.rs` file reruns the three Rust stages and leaves the
+Python and extension suites alone.
+
+The manifest has no `[workspace]` section, deliberately: that would make Frost
+discover the nested sample manifests and pull every sample workspace in as a
+package of this one. Bare target names are the legacy single-manifest form, and
+they are right for a repository whose subdirectories are not its packages.
+
+The gate stages are `kind = "test"` because a stage has no artifact, it has a
+verdict, and Frost owns the success stamp — a passing stage caches, a failing
+one records nothing and runs again. `binaries` is the exception and produces
+the artifact this repository ships.
+
+[Task](https://taskfile.dev) supplies names for those command lines and nothing
+else:
+
+```bash
+task check        # ./frostw test --all
+task build        # ./frostw build binaries
+task --list       # the rest
+task bootstrap    # cargo build --release, for a machine with no frost at all
+```
+
+Every task is one line long on purpose. Task has no dependency graph and no
+cache, `frost.toml` is where the deciding happens, and a task that grew logic
+would be logic in the wrong file.
+
+`scripts/check.sh` stays, and CI takes it: bootstrapping cannot depend on the
+thing being bootstrapped, and a contributor with no network needs a gate that
+`./frostw` cannot give them.
+
+## Explain one build, in one file
+
+```bash
+frost build --report                       # .frost/report/<platform>-<profile>.html
+frost build --report=build.html --trace t.json
+frost test --all --report=tests.html
+```
+
+`--report` writes a self-contained HTML file: the critical path with each
+action's measured duration, the cache breakdown per kind of work, the slowest
+actions that ran, the invalidation reasons grouped by `--explain`'s vocabulary,
+the test results including shards, and the failing actions with the tail of
+their output. No server, no network, no JavaScript, no external stylesheet —
+it opens from `file://` and survives being attached to a message.
+
+The three views divide as follows. `--stats` is the counters, for a terminal.
+`--trace` is the raw timeline, for `chrome://tracing`, and when both are asked
+for the report links to it relatively so the pair can be copied together.
+`--report` is the summary — the one meant to be handed to someone else, which
+is what `chrome://tracing`'s "open this in the right tool first" makes a Chrome
+trace bad at. Comparing *across* builds is not this file's job; that is
+`frost journal export` / `diff`.
+
+Nothing here is measured for the report's benefit. The critical path is the one
+the scheduler used to order its ready queue, the durations are the journal's,
+and the reasons are the strings `--explain` prints. Rendering happens after the
+build has been timed, summarized and had its failures printed, so it cannot
+move a number it goes on to show.
+
+It does have one cost, and it is not the rendering. `--report` forgoes the
+no-op certificate, because a certificate answers "nothing to do" without ever
+planning a build and so has nothing to report. On a 1000-action workspace that
+is about 10 ms on an otherwise 7 ms no-op; rendering itself is under a
+millisecond there, and inside the noise floor at every larger size:
+
+| scenario | build | rendering | `--report` total |
+|---|---|---|---|
+| clean | 2870 ms | +26 ms (+0.9%) | −73 ms (noise) |
+| incremental leaf | 56 ms | +1.1 ms (+2.1%) | −2.0 ms (noise) |
+| no-op | 7.3 ms | +0.3 ms (+1.7%) | +10.2 ms |
+
+Medians of 15 interleaved iterations, 4 workers, from
+`frost-bench report`; the run is `bench/baselines/2026-08-01-vm-report-overhead.json`,
+with its host metadata. The "rendering" column compares against `--stats`,
+which takes the same full check path without writing anything, so the
+certificate's absence is not attributed to the renderer.
+
+## The manifest, in an editor
+
+```bash
+frost lsp        # Language Server Protocol on stdin/stdout
+```
+
+`frost.toml` is edited as plain TOML today, so an editor knows nothing about
+labels or kinds: a typo in `deps = ["//core:core"]` is valid TOML and stays
+silent until a build says otherwise — correctly, in a terminal, which is not
+where the cursor is. `frost lsp` provides:
+
+- **diagnostics** — the manifest loader's own errors. A parse or shape error is
+  placed on the span the parser recorded and shows the sentence without the
+  position repeated in it, since the editor draws the range itself; a
+  cross-package error, which has no span, carries the build's sentence byte for
+  byte and is placed on the token that sentence names
+- **completion** — labels across every package, `kind` values, `[toolchain.tools]`
+  names, and the keys the target's kind accepts
+- **definition** — a label to the `[target.<name>]` line that declares it, in
+  whichever package that is
+- **references** — `graph.rdeps_closure`, the function `frost query rdeps`
+  calls, each dependent reported at its own declaration
+- **hover** — kind, declared outputs, direct dependencies, and the size of the
+  closure `frost query deps` prints
+
+None of it is a second analysis. References and hover call the same functions
+the query subcommands call, which is what
+`frost_lsp_hover_and_references_are_the_answers_query_gives` enforces: a
+disagreement there would mean the editor had grown its own idea of the graph,
+and the editor's would be the untested one.
+
+Two boundaries are worth knowing. The workspace is re-read on save, through the
+graph store's warm path, so an unchanged tree costs a stamp check rather than a
+parse of every manifest; cross-package errors therefore appear when a file is
+saved, while syntax and per-target errors are reported against the buffer as it
+is typed. And when a manifest does not parse, or a label names nothing, the
+server keeps answering from the declarations that did load — that is the state
+a manifest is in for most of the time it is being edited, and going quiet then
+would be going quiet exactly when it is wanted.
+
+The server implements no formatting — that is `frost fmt` below — no rename,
+and nothing about files other than `frost.toml`; source code belongs to its own
+language's server. Any LSP client works — the VS Code extension in
+`tools/vscode/` is the first, and Neovim or a JetBrains IDE gets the same
+features from the same server.
+
+## The manifest, canonical and checked
+
+```bash
+frost fmt              # rewrite every frost.toml in the workspace
+frost fmt --check      # exit 1 if any of them would change
+frost lint             # patterns that load fine and go wrong later
+frost lint --json      # the same findings, machine-readable
+```
+
+Both are described where the manifest is:
+[06_manifest_spec.md](06_manifest_spec.md#frost-fmt) for the canonical form and
+[the rules](06_manifest_spec.md#frost-lint) for what `lint` reports and what
+`lint_allow` accepts. What belongs here is how they fit the loop: both exit `1`
+on a finding and `2` only when the workspace could not be read, so a CI job is
+the command and nothing else, and neither needs a build to answer.
+
+One boundary worth knowing while editing: `frost fmt` works on a manifest that
+does not load. That is the state a manifest is in for most of the time it is
+being edited, and the moment formatting is most wanted — so it is `frost fmt`,
+not `frost lsp`, that an editor's format-on-save should reach for. The server
+deliberately implements no formatting of its own.
+
+A file also keeps the line ending it arrived with. `core.autocrlf` is on by
+default on Windows, so a manifest is checked out there with CRLF; a formatter
+that called every such file unformatted and then rewrote it whole would be
+arguing with the checkout rather than formatting the manifest. `*.toml` is
+deliberately not pinned in `.gitattributes`, so the Windows CI job keeps
+exercising that path — it is the only host in this project that can.

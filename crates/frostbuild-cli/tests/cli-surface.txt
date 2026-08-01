@@ -1,6 +1,6 @@
 frost --build-event-json=VALUE --config=VALUE --no-frostrc -C/--workspace=VALUE
 frost bazel-dev <target> <args...> --bazel-arg=VALUE --bazel=VALUE --debounce-ms=VALUE
-frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --sandbox --scheduler=VALUE --stamp-optional --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
+frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --sandbox --scheduler=VALUE --stamp-optional --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
 frost cache
 frost cache stats --json
 frost clean --cache --platform=VALUE --profile=VALUE
@@ -23,11 +23,12 @@ frost import-bazel --bazel=VALUE --dry-run --query=VALUE
 frost import-ninja <ninja> --output=VALUE
 frost import-npm --dry-run --node=VALUE --npm=VALUE --script=VALUE --vite-builds
 frost info <key> --json --platform=VALUE --profile=VALUE
-frost init --dry-run --language=VALUE
+frost init --dry-run --language=VALUE --wrapper
 frost journal
 frost journal diff <first> <second>
 frost journal export --out=VALUE --platform=VALUE --profile=VALUE
 frost lint --json
+frost lsp
 frost pack-jar --input=VALUE --main-class=VALUE --output=VALUE
 frost pack-wheel --distribution=VALUE --input=VALUE --output=VALUE --version=VALUE
 frost pick --platform=VALUE --print --profile=VALUE --tests
@@ -41,5 +42,5 @@ frost query somepath <from> <to> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost query targets --attr=VALUE --json --kind=VALUE --output=VALUE
 frost run <target> <program_args...> --platform=VALUE --print --profile=VALUE --runner=VALUE -j/--jobs=VALUE
 frost simulate <targets...> --jobs=VALUE --json --platform=VALUE --profile=VALUE
-frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --runs-per-test=VALUE --sandbox --scheduler=VALUE --stamp-optional --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --test-output=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
+frost test <targets...> --affected --all --all-platforms --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --runs-per-test=VALUE --sandbox --scheduler=VALUE --stamp-optional --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --test-output=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
 frost watch <targets...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --run=VALUE -j/--jobs=VALUE

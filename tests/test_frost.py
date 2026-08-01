@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import io
 import os
 import json
 import pathlib
@@ -731,6 +733,65 @@ class FrostBenchTestCase(unittest.TestCase):
         self.assertGreaterEqual(
             report["results"][0]["scenarios"]["noop"]["median_ms"], 0
         )
+
+
+    def test_report_suite_separates_rendering_from_the_certificate_it_forgoes(self) -> None:
+        # `--report` costs two separable things, and reporting them as one
+        # number would attribute the no-op certificate's absence to rendering.
+        frost = shutil.which("frost") or next(
+            (
+                path
+                for path in (
+                    pathlib.Path(__file__).resolve().parents[1] / "target" / build / "frost"
+                    for build in ("release", "debug")
+                )
+                if path.is_file()
+            ),
+            None,
+        )
+        if frost is None:
+            self.skipTest("requires a built frost binary")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = io.StringIO()
+            with mock.patch("sys.stdout", captured):
+                code = frost_bench.run_report_command(
+                    SimpleNamespace(
+                        sizes="3",
+                        scenarios="noop",
+                        iterations=1,
+                        jobs=1,
+                        workdir=tmp,
+                        keep_workdir=True,
+                        out=None,
+                    ),
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["schema"], "frost-bench-report-v1")
+        self.assertEqual(
+            payload["config"]["variants"], ["plain", "no_certificate", "report"]
+        )
+        noop = payload["results"][0]["scenarios"]["noop"]
+        for variant in ("plain", "no_certificate", "report"):
+            self.assertGreaterEqual(noop[variant]["median_ms"], 0)
+        # Both deltas are present and consistent with the medians they came
+        # from, so a reader cannot mistake one for the other.
+        self.assertAlmostEqual(
+            noop["delta_ms"],
+            noop["report"]["median_ms"] - noop["plain"]["median_ms"],
+            places=2,
+        )
+        self.assertAlmostEqual(
+            noop["render_delta_ms"],
+            noop["report"]["median_ms"] - noop["no_certificate"]["median_ms"],
+            places=2,
+        )
+
+    def test_report_suite_rejects_an_unknown_scenario(self) -> None:
+        with self.assertRaises(argparse.ArgumentTypeError):
+            frost_bench.parse_csv("noop,hot_header", valid=frost_bench.REPORT_SCENARIOS)
 
 
 if __name__ == "__main__":

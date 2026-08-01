@@ -20,6 +20,22 @@ definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win
 
 ## Quick start
 
+FrostBuild builds itself. Cloned fresh, with no frost installed:
+
+```bash
+./frostw test --all     # the whole pre-PR gate, skipping what did not change
+./frostw build binaries # frost and frostd, release
+task --list             # the same entry points by name (https://taskfile.dev)
+```
+
+`frostw` is checked in beside `.frost-version`, the way `gradlew` and
+`bazelisk` are: it finds or downloads exactly that release, verifies it against
+the release's `SHA256SUMS`, and runs it. `frost init` writes one for a new
+workspace, and `frost init --wrapper` adds one to a workspace that already has
+a manifest. `task bootstrap` is the path for a machine with neither frost nor
+network — it is `cargo build --release`. See
+[docs/22_developer_loop.md](docs/22_developer_loop.md).
+
 ```bash
 # In a directory that already has C/C++, Java, Rust, Go, TypeScript or Python
 # sources:
@@ -519,6 +535,15 @@ Before 1.0, FrostBuild follows SemVer with breaking changes allowed in minor
 versions. Build locally with Cargo, use `cargo install --path crates/frostbuild-cli`,
 or download a checksummed Linux, macOS or Windows archive from a tagged GitHub
 release. Each archive contains both `frost` and the optional `frostd` daemon.
+
+That covers which frost is on a machine. Which frost a *repository* requires is
+the other half, and it is answered by committing `.frost-version` and `frostw`
+next to the manifest: the wrapper runs exactly that release, fetching and
+verifying it once if this machine does not have it. Because breaking changes
+are allowed in minor versions before 1.0, a manifest written against one and
+built with another otherwise fails with an error that is correct and never
+mentions the version difference. Running `frost` directly still works and warns
+once, naming both versions.
 
 Which surfaces a release promises not to break — the manifest grammar, the CLI
 names and exit codes, the `--json` schemas — and which are explicitly
