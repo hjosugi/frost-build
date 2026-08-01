@@ -91,6 +91,8 @@ function makeTestController(id: string, label: string): any {
 /** Everything the stub saw, for tests to assert against. */
 export interface Recorded {
   commands: Map<string, (...args: unknown[]) => unknown>;
+  /** Context keys set through `setContext`, which is what gates `when`. */
+  contextKeys: Map<string, unknown>;
   taskProviders: Map<string, unknown>;
   diagnostics: Map<string, StubDiagnostic[]>;
   diagnosticClears: number;
@@ -150,6 +152,7 @@ function uri(fsPath: string): StubUri {
 export function installVscodeStub(): { recorded: Recorded; dispose: () => void } {
   const recorded: Recorded = {
     commands: new Map(),
+    contextKeys: new Map(),
     taskProviders: new Map(),
     diagnostics: new Map(),
     diagnosticClears: 0,
@@ -337,6 +340,18 @@ export function installVscodeStub(): { recorded: Recorded; dispose: () => void }
       registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
         recorded.commands.set(id, handler);
         return disposable;
+      },
+      // `setContext` is how `when` clauses learn anything the editor does not
+      // already know. Recording it makes the menu-visibility rule testable
+      // without an editor, which is otherwise the sort of contribution that is
+      // only ever verified by someone noticing it looks wrong.
+      executeCommand: (id: string, ...args: unknown[]) => {
+        if (id === 'setContext' && typeof args[0] === 'string') {
+          recorded.contextKeys.set(args[0], args[1]);
+          return Promise.resolve(undefined);
+        }
+        const handler = recorded.commands.get(id);
+        return Promise.resolve(handler ? handler(...args) : undefined);
       },
     },
     tasks: {

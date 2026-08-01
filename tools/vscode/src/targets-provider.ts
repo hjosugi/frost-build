@@ -6,11 +6,10 @@
 
 import * as vscode from 'vscode';
 
-import { queryLabelKind, runFrost } from './frost/cli';
-import { parseDotGraph, rootTargets } from './frost/graph';
+import { queryLabelKind, queryTargets } from './frost/cli';
 import { parseLabelKind } from './frost/targets';
 import type { LabeledTarget } from './frost/types';
-import { cliOptions, configurationArgs, readSettings } from './workspace';
+import { cliOptions, readSettings } from './workspace';
 
 export class TargetIndex {
   private readonly cache = new Map<string, LabeledTarget[]>();
@@ -50,25 +49,21 @@ export class TargetIndex {
       return cached;
     }
     const options = cliOptions(folder, settings);
-    const dot = await runFrost(
-      ['graph', '--dot', ...configurationArgs(settings)],
-      options,
-    ).catch(() => undefined);
+    // `frost query` has no --profile/--platform of its own; the target set is
+    // a property of the manifest, not of the configuration it is built for.
+    // The cache key still covers both, so a profile change refreshes anyway.
+    const text = await queryTargets([], options).catch(() => undefined);
     // A folder that is not a frost workspace produces nothing here, which is
     // the answer rather than an error: a multi-root window may hold both. It is
     // deliberately not cached — a frost that has not been built yet fails the
     // same way, and remembering that would outlive the reason for it.
-    if (!dot || dot.code !== 0) {
+    if (text === undefined) {
       return [];
     }
-    const byLabel = new Map<string, LabeledTarget>();
-    for (const root of rootTargets(parseDotGraph(dot.stdout))) {
-      const text = await queryLabelKind(['deps', root], options).catch(() => '');
-      for (const target of parseLabelKind(text)) {
-        byLabel.set(target.label, target);
-      }
-    }
-    const targets = [...byLabel.values()].sort((a, b) =>
+    // frost prints these sorted, but the comparison is its own; sorting here
+    // keeps the tree's order a property of the tree rather than of two
+    // languages agreeing about how to order strings.
+    const targets = parseLabelKind(text).sort((a, b) =>
       a.label < b.label ? -1 : a.label > b.label ? 1 : 0,
     );
     this.cache.set(key, targets);
