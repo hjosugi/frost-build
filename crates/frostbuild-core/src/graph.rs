@@ -304,8 +304,6 @@ impl BuildGraph {
                     for dep in &target.deps {
                         inputs.extend(dep_outputs(&graph, dep));
                     }
-                    let stamp = format!(".frost/test/{tree}/{}/passed", path_key(name));
-                    let stamp_id = graph.file(&stamp);
                     let (argv, followup_argv, env, pass_env) =
                         if let Some(tool_name) = target.tool.as_deref() {
                             let Some(driver) = toolchain.tools.get(tool_name) else {
@@ -373,27 +371,35 @@ impl BuildGraph {
                                 Vec::new(),
                             )
                         };
-                    let action = graph.push_action(ActionNode {
-                        id: format!("test:{name}"),
-                        desc: format!("TEST {name}"),
-                        kind: ActionKind::Test,
-                        target: name.clone(),
-                        sandbox: target.sandbox,
-                        argv,
-                        followup_argv,
-                        clean_dirs: Vec::new(),
-                        preserve_outputs: false,
-                        env,
-                        pass_env,
-                        inputs,
-                        order_only_inputs: Vec::new(),
-                        outputs: vec![stamp_id],
-                        output_dirs: Vec::new(),
-                        depfile: None,
-                        depfile_format: crate::depfile::Format::Make,
-                    })?;
-                    target_node.actions.push(action);
-                    target_node.outputs = vec![stamp_id];
+                    // Each shard is a whole action: its own key, its own cache
+                    // entry, its own place in the schedule. One shard failing
+                    // or being invalidated leaves the others alone.
+                    let mut stamp_ids = Vec::new();
+                    for shard in test_shards(&tree, name, target.shard_count) {
+                        let stamp_id = graph.file(&shard.stamp);
+                        let action = graph.push_action(ActionNode {
+                            id: shard.id,
+                            desc: shard.desc,
+                            kind: ActionKind::Test,
+                            target: name.clone(),
+                            sandbox: target.sandbox,
+                            argv: argv.clone(),
+                            followup_argv: followup_argv.clone(),
+                            clean_dirs: Vec::new(),
+                            preserve_outputs: false,
+                            env: merge_shard_env(&env, &pass_env, &shard.env, name)?,
+                            pass_env: pass_env.clone(),
+                            inputs: inputs.clone(),
+                            order_only_inputs: Vec::new(),
+                            outputs: vec![stamp_id],
+                            output_dirs: Vec::new(),
+                            depfile: None,
+                            depfile_format: crate::depfile::Format::Make,
+                        })?;
+                        target_node.actions.push(action);
+                        stamp_ids.push(stamp_id);
+                    }
+                    target_node.outputs = stamp_ids;
                     exported_libs.insert(name.clone(), SharedSet::join(Vec::new(), lib_parents));
                     exported_includes.insert(name.clone(), include_set);
                     genrule_outputs.insert(name.clone(), SharedSet::join(Vec::new(), gen_parents));
@@ -764,29 +770,32 @@ impl BuildGraph {
                                 SharedSet::join(Vec::new(), lib_parents.clone()),
                             );
                             if target.kind == TargetKind::CcTest {
-                                let stamp = format!(".frost/test/{tree}/{}/passed", path_key(name));
-                                let stamp_id = graph.file(&stamp);
-                                let test = graph.push_action(ActionNode {
-                                    id: format!("test:{name}"),
-                                    desc: format!("TEST {name}"),
-                                    kind: ActionKind::Test,
-                                    target: name.clone(),
-                                    sandbox: target.sandbox,
-                                    argv: vec![bin.clone()],
-                                    followup_argv: Vec::new(),
-                                    clean_dirs: Vec::new(),
-                                    preserve_outputs: false,
-                                    env: BTreeMap::new(),
-                                    pass_env: Vec::new(),
-                                    inputs: vec![bin_id],
-                                    order_only_inputs: Vec::new(),
-                                    outputs: vec![stamp_id],
-                                    output_dirs: Vec::new(),
-                                    depfile: None,
-                                    depfile_format: crate::depfile::Format::Make,
-                                })?;
-                                target_node.actions.push(test);
-                                target_node.outputs = vec![stamp_id];
+                                let mut stamp_ids = Vec::new();
+                                for shard in test_shards(&tree, name, target.shard_count) {
+                                    let stamp_id = graph.file(&shard.stamp);
+                                    let test = graph.push_action(ActionNode {
+                                        id: shard.id,
+                                        desc: shard.desc,
+                                        kind: ActionKind::Test,
+                                        target: name.clone(),
+                                        sandbox: target.sandbox,
+                                        argv: vec![bin.clone()],
+                                        followup_argv: Vec::new(),
+                                        clean_dirs: Vec::new(),
+                                        preserve_outputs: false,
+                                        env: shard.env,
+                                        pass_env: Vec::new(),
+                                        inputs: vec![bin_id],
+                                        order_only_inputs: Vec::new(),
+                                        outputs: vec![stamp_id],
+                                        output_dirs: Vec::new(),
+                                        depfile: None,
+                                        depfile_format: crate::depfile::Format::Make,
+                                    })?;
+                                    target_node.actions.push(test);
+                                    stamp_ids.push(stamp_id);
+                                }
+                                target_node.outputs = stamp_ids;
                             }
                         }
                         TargetKind::Genrule
@@ -1207,6 +1216,83 @@ fn expand_dep_singles(arg: &str, map: &[(String, Vec<String>)]) -> Result<String
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// One slice of a sharded test: its action identity, its success stamp, and
+/// the environment that tells the runner which slice to run.
+struct TestShard {
+    id: String,
+    desc: String,
+    stamp: String,
+    env: BTreeMap<String, String>,
+}
+
+/// Split a test target into `total` shards.
+///
+/// Frost does not divide the test cases — it cannot know them — it divides the
+/// work by telling the runner which slice is its own, using the protocol test
+/// runners already implement. A runner that ignores the variables runs every
+/// case in every shard, which is why `shard_count` is declared per target
+/// rather than applied by Frost on its own.
+///
+/// `total == 1` reproduces exactly the identity, stamp and empty shard
+/// environment Frost has always used, so leaving the field out — or writing
+/// `shard_count = 1` — cannot invalidate an existing journal.
+fn test_shards(tree: &str, name: &str, total: u32) -> Vec<TestShard> {
+    let key = path_key(name);
+    if total <= 1 {
+        return vec![TestShard {
+            id: format!("test:{name}"),
+            desc: format!("TEST {name}"),
+            stamp: format!(".frost/test/{tree}/{key}/passed"),
+            env: BTreeMap::new(),
+        }];
+    }
+    (0..total)
+        .map(|index| {
+            let dir = format!(".frost/test/{tree}/{key}/shard-{index}-of-{total}");
+            let status = format!("{dir}/status");
+            TestShard {
+                id: format!("test:{name}#{index}/{total}"),
+                desc: format!("TEST {name} (shard {}/{total})", index + 1),
+                stamp: format!("{dir}/passed"),
+                env: BTreeMap::from([
+                    ("TEST_SHARD_INDEX".to_string(), index.to_string()),
+                    ("TEST_TOTAL_SHARDS".to_string(), total.to_string()),
+                    ("TEST_SHARD_STATUS_FILE".to_string(), status),
+                    // googletest reads its own spelling, and a gtest binary is
+                    // the most common thing a cc_test contains, so it shards
+                    // without a wrapper script.
+                    ("GTEST_SHARD_INDEX".to_string(), index.to_string()),
+                    ("GTEST_TOTAL_SHARDS".to_string(), total.to_string()),
+                ]),
+            }
+        })
+        .collect()
+}
+
+/// Merge the shard environment into a target's own, refusing a collision.
+///
+/// A target that sets `TEST_SHARD_INDEX` itself has a different intent than
+/// the one sharding implies, and quietly overriding either direction would
+/// make one of them a lie.
+fn merge_shard_env(
+    target_env: &BTreeMap<String, String>,
+    pass_env: &[String],
+    shard: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut env = target_env.clone();
+    for (key, value) in shard {
+        if target_env.contains_key(key) || pass_env.iter().any(|passed| passed == key) {
+            bail!(
+                "test {name:?} declares {key} and also shard_count; \
+                 sharding sets that variable itself"
+            );
+        }
+        env.insert(key.clone(), value.clone());
+    }
+    Ok(env)
 }
 
 fn dep_outputs(graph: &BuildGraph, dep: &str) -> Vec<FileId> {
@@ -1950,6 +2036,155 @@ mod tests {
             .find(|action| action.target == "user")
             .expect("user action");
         Ok(action.argv.clone())
+    }
+
+    fn sharded_test_manifest(shard_count: &str, extra: &str) -> String {
+        format!(
+            r#"
+            [target.split]
+            kind = "test"
+            cmd = "sh run.sh"
+            inputs = ["run.sh"]
+            {shard_count}
+            {extra}
+            "#
+        )
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct TestAction {
+        id: String,
+        stamp: String,
+        env: BTreeMap<String, String>,
+    }
+
+    fn test_actions(manifest: &str) -> Result<Vec<TestAction>> {
+        let graph = BuildGraph::from_manifest(&Manifest::parse_str(manifest)?)?;
+        Ok(graph
+            .actions
+            .iter()
+            .filter(|action| action.kind == ActionKind::Test)
+            .map(|action| TestAction {
+                id: action.id.clone(),
+                stamp: graph.files[action.outputs[0]].path.clone(),
+                env: action.env.clone(),
+            })
+            .collect())
+    }
+
+    #[test]
+    fn an_unsharded_test_keeps_the_identity_it_always_had() {
+        // A journal keyed by these strings must survive the feature landing,
+        // so both spellings of "not sharded" reproduce the old action exactly.
+        let implicit = test_actions(&sharded_test_manifest("", "")).unwrap();
+        let explicit = test_actions(&sharded_test_manifest("shard_count = 1", "")).unwrap();
+        assert_eq!(implicit, explicit);
+        assert_eq!(implicit.len(), 1);
+        assert_eq!(implicit[0].id, "test:split");
+        assert_eq!(implicit[0].stamp, ".frost/test/debug/split/passed");
+        assert!(
+            implicit[0].env.is_empty(),
+            "an unsharded test gets no shard environment: {:?}",
+            implicit[0].env
+        );
+    }
+
+    #[test]
+    fn each_shard_is_a_separate_action_with_its_own_stamp_and_slice() {
+        let actions = test_actions(&sharded_test_manifest("shard_count = 3", "")).unwrap();
+        assert_eq!(actions.len(), 3);
+
+        let ids: Vec<&str> = actions.iter().map(|action| action.id.as_str()).collect();
+        assert_eq!(ids, ["test:split#0/3", "test:split#1/3", "test:split#2/3"]);
+
+        // Distinct stamps are what make the shards cache independently: one
+        // shard failing or being invalidated cannot touch another's result.
+        let stamps: Vec<&str> = actions.iter().map(|action| action.stamp.as_str()).collect();
+        assert_eq!(
+            stamps,
+            [
+                ".frost/test/debug/split/shard-0-of-3/passed",
+                ".frost/test/debug/split/shard-1-of-3/passed",
+                ".frost/test/debug/split/shard-2-of-3/passed",
+            ]
+        );
+
+        let env = &actions[1].env;
+        assert_eq!(env["TEST_SHARD_INDEX"], "1");
+        assert_eq!(env["TEST_TOTAL_SHARDS"], "3");
+        assert_eq!(
+            env["TEST_SHARD_STATUS_FILE"],
+            ".frost/test/debug/split/shard-1-of-3/status"
+        );
+        // googletest reads its own spelling, so a gtest binary shards without
+        // a wrapper.
+        assert_eq!(env["GTEST_SHARD_INDEX"], "1");
+        assert_eq!(env["GTEST_TOTAL_SHARDS"], "3");
+
+        // The environment differs per shard, and the environment is action-key
+        // material, so the shards cannot collide on one cache entry.
+        assert_ne!(actions[0].env, actions[1].env);
+    }
+
+    #[test]
+    fn shard_count_is_rejected_where_it_would_do_nothing_or_contradict() {
+        let error = Manifest::parse_str(
+            r#"
+            [target.lib]
+            kind = "cc_library"
+            srcs = ["a.c"]
+            shard_count = 2
+            "#,
+        )
+        .unwrap_err();
+        // `{:#}` so the assertion reads the cause, not just the "invalid
+        // target" context wrapped around it.
+        let error = format!("{error:#}");
+        assert!(error.contains("test and cc_test targets only"), "{error}");
+
+        let error = Manifest::parse_str(&sharded_test_manifest("shard_count = 0", "")).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("at least 1"), "{error}");
+
+        // Setting a shard variable by hand means something different from
+        // sharding; overriding either direction would make one of them a lie.
+        // Only a direct test can carry `env`, so the collision is tested there.
+        let error = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.split]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            shard_count = 2
+            env = { TEST_SHARD_INDEX = "0" }
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("shard_count"), "{error}");
+        assert!(error.contains("TEST_SHARD_INDEX"), "{error}");
+
+        // The same collision through pass_env, which names a host variable
+        // rather than setting one.
+        let error = test_actions(
+            r#"
+            [toolchain.tools]
+            runner = "runner"
+
+            [target.split]
+            kind = "test"
+            tool = "runner"
+            inputs = ["cases.txt"]
+            shard_count = 2
+            pass_env = ["TEST_TOTAL_SHARDS"]
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("TEST_TOTAL_SHARDS"), "{error}");
     }
 
     #[test]

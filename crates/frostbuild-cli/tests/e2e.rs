@@ -1430,6 +1430,101 @@ fn query_deps_rdeps_somepath() {
     assert!(out.contains("no path"), "{out}");
 }
 
+/// Every shard together covers exactly what one unsharded run covers.
+///
+/// Frost does not divide the cases — it tells the runner which slice is its
+/// own — so the property to check is that a runner honouring the protocol
+/// partitions the set: each case in exactly one shard, none lost, none twice.
+/// The partition is expressed with `awk`, which is why this is a Unix case;
+/// `docs/09_platform_support.md` tabulates host exclusions.
+#[cfg(unix)]
+#[test]
+fn every_shard_together_covers_one_unsharded_run() {
+    let ws = Workspace::empty("shard-coverage");
+    ws.write("cases.txt", "alpha\nbravo\ncharlie\ndelta\necho\n");
+    ws.write(
+        "frost.toml",
+        r#"
+[workspace]
+default_targets = []
+
+[target.split]
+kind = "test"
+cmd = "awk \"NR % $TEST_TOTAL_SHARDS == $TEST_SHARD_INDEX\" cases.txt > ran-$TEST_SHARD_INDEX.txt"
+shard_count = 3
+inputs = ["cases.txt"]
+sandbox = false
+"#,
+    );
+
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("3 passed"), "{out}");
+
+    let mut covered: Vec<String> = Vec::new();
+    for index in 0..3 {
+        let slice = std::fs::read_to_string(ws.dir.join(format!("ran-{index}.txt")))
+            .unwrap_or_else(|_| panic!("shard {index} should have written its slice"));
+        covered.extend(slice.lines().map(str::to_string));
+    }
+    covered.sort();
+    assert_eq!(
+        covered,
+        ["alpha", "bravo", "charlie", "delta", "echo"],
+        "the shards must partition the cases: none lost, none run twice"
+    );
+}
+
+#[test]
+fn one_shard_failing_leaves_the_other_shards_cached() {
+    let ws = Workspace::empty("shard-caching");
+    ws.write("failing.txt", "1\n");
+    // Shard 1 fails; the others pass. Nothing about the sources differs
+    // between them, so this isolates the shard identity itself.
+    #[cfg(unix)]
+    let cmd = r#"grep -qx \"$TEST_SHARD_INDEX\" failing.txt && exit 1; exit 0"#;
+    #[cfg(windows)]
+    let cmd = r#"findstr /X /C:\"%TEST_SHARD_INDEX%\" failing.txt >nul && exit /b 1 || exit /b 0"#;
+    ws.write(
+        "frost.toml",
+        &format!(
+            r#"
+[workspace]
+default_targets = []
+
+[target.split]
+kind = "test"
+cmd = "{cmd}"
+shard_count = 3
+inputs = ["failing.txt"]
+sandbox = false
+"#
+        ),
+    );
+
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(!ok, "one shard fails, so the run fails: {out}");
+    assert!(out.contains("2 passed, 1 failed"), "{out}");
+    // Each shard is its own action, so the failure is attributable.
+    assert!(out.contains("test:split#1/3"), "{out}");
+
+    // Nothing changed. The two that passed are restored from cache and only
+    // the failure runs again — a failed shard cannot invalidate a passing one.
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("0 passed, 1 failed, 2 cached"), "{out}");
+
+    // Fixing the cause reruns only what was not already proven.
+    ws.write("failing.txt", "\n");
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("3 passed"), "{out}");
+
+    let (ok, out) = ws.frost(&["test", "--all"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("0 passed, 0 failed, 3 cached"), "{out}");
+}
+
 #[test]
 fn multi_module_java_sample_builds_across_module_boundaries() {
     let javac_present = Command::new("javac").arg("--version").output().is_ok();

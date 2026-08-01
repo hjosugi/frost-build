@@ -229,6 +229,9 @@ struct RawTarget {
     /// Seconds this action may run before Frost stops it. Absent means the
     /// invocation decides; see `BuildOptions::timeout`.
     timeout: Option<u64>,
+    /// Test targets only: split this test into N independently cached and
+    /// scheduled actions. Absent or 1 leaves the target a single action.
+    shard_count: Option<u32>,
     /// Optional dynamic dependency file (Makefile format by default).
     depfile: Option<String>,
     /// Format of the dynamic dependency report; see `depfile::Format`.
@@ -329,6 +332,9 @@ pub struct Target {
     /// environment, not the result, so it is deliberately not action-key
     /// material (docs/16_action_key_audit.md).
     pub timeout_secs: Option<u64>,
+    /// How many independently cached and scheduled actions this test becomes.
+    /// Always at least 1; only test kinds may declare more.
+    pub shard_count: u32,
     pub depfile: Option<String>,
     /// How this action reports the inputs it read. `showincludes` is read from
     /// captured output, so it comes without a `depfile` path.
@@ -604,6 +610,18 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         bail!("target name must match [A-Za-z0-9_-]+");
     }
 
+    // Sharding is a property of a test runner's protocol, so only test kinds
+    // may declare it. On anything else the field would parse and do nothing,
+    // which is the kind of silence that costs an afternoon.
+    if let Some(shards) = spec.shard_count {
+        if !matches!(spec.kind, TargetKind::Test | TargetKind::CcTest) {
+            bail!("shard_count applies to test and cc_test targets only");
+        }
+        if shards == 0 {
+            bail!("shard_count must be at least 1");
+        }
+    }
+
     let srcs = validate_paths(&spec.srcs).context("srcs")?;
     let includes = validate_paths(&spec.includes).context("includes")?;
     let inputs = validate_paths(&spec.inputs).context("inputs")?;
@@ -851,6 +869,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         clean_dirs,
         preserve_outputs: spec.preserve_outputs,
         timeout_secs: spec.timeout,
+        shard_count: spec.shard_count.unwrap_or(1),
         depfile,
         depfile_format,
         inputs,
