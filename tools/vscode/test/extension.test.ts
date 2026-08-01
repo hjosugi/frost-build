@@ -90,6 +90,27 @@ test('activate registers exactly the commands package.json declares', () => {
   assert.ok(recorded.status.shown, 'the status item is visible from activation');
 });
 
+test('the editor menu is gated on a context key activation actually sets', () => {
+  activate();
+  // package.json can name any key it likes in a `when` clause; a key nothing
+  // sets is simply always false, and the menu item silently never appears.
+  // Asserting both halves against each other is the only way that drift shows
+  // up before a user notices a missing menu entry.
+  assert.equal(recorded.contextKeys.get('frostbuild.active'), true);
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const manifest = require('../../package.json');
+  const menu = manifest.contributes.menus['editor/context'].find(
+    (entry: { command: string }) => entry.command === 'frost.buildFileOwners',
+  );
+  assert.ok(menu, 'the context menu entry must exist');
+  assert.match(
+    menu.when,
+    /frostbuild\.active/,
+    `the menu must be gated on the key activation sets, saw ${menu.when}`,
+  );
+});
+
 test('a save handler is registered and honours buildOnSave', async () => {
   activate();
   assert.equal(recorded.saveHandlers.length, 1);

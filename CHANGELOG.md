@@ -68,6 +68,14 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   sharing a cache entry. The `binaries` target had a comment explaining exactly
   that; the stages above it did the opposite. They no longer do.
 
+- `frost query targets`: the one query with no starting point. `deps` and
+  `rdeps` both need a target to walk from, which made "what is in this
+  workspace" the question they could not answer — tooling was deriving it from
+  the roots of `--output dot`, whose node shapes encode target kind as a
+  *rendering* choice rather than a contract. It shares every filter and output
+  format the other query functions have, and the VS Code extension's workaround
+  and its dot parser were deleted when it landed.
+
 - `frost journal export` and `frost journal diff`, for "CI rebuilt what my
   machine had cached". The export writes every action's key material — argv,
   environment, input digests, toolchain fingerprint, profile, platform and the

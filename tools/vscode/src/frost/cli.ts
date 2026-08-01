@@ -107,3 +107,22 @@ export async function queryLabelKind(
   }
   return run.stdout;
 }
+
+/**
+ * Every target in the workspace, or `undefined` if frost could not answer.
+ *
+ * The distinction matters and is why this does not reuse `queryLabelKind`: a
+ * workspace with no targets and a frost that failed to run both produce no
+ * output, and only the first is a result worth caching. Caching the second
+ * makes correcting `frostbuild.binaryPath` appear to do nothing.
+ */
+export async function queryTargets(
+  args: string[],
+  options: FrostCliOptions,
+): Promise<string | undefined> {
+  const run = await runFrost(
+    ['query', 'targets', ...args, '--output', 'label-kind'],
+    options,
+  );
+  return run.code === 0 ? run.stdout : undefined;
+}

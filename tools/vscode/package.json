@@ -23,7 +23,7 @@
     "workspaceContains:frost.toml"
   ],
   "scripts": {
-    "compile": "tsc -p ./",
+    "compile": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\" && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
     "lint": "tsc --noEmit -p ./"
@@ -79,7 +79,7 @@
         {
           "command": "frost.buildFileOwners",
           "group": "frost@1",
-          "when": "resourceScheme == file"
+          "when": "resourceScheme == file && frostbuild.active"
         }
       ],
       "view/title": [

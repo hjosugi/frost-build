@@ -442,6 +442,53 @@ outputs = [".frost/out/${config}/report.txt"]
 }
 
 #[test]
+fn query_targets_answers_what_is_in_this_workspace() {
+    let ws = Workspace::multi("query-targets");
+
+    // The one query with no starting point. `deps` and `rdeps` both need a
+    // target to walk from, which is exactly why this question needed its own
+    // primitive rather than a walk from roots derived out of `--output dot`.
+    let (ok, out) = ws.frost(&["query", "targets", "--output", "label-kind"]);
+    assert!(ok, "{out}");
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|line| line.contains(" target "))
+        .collect();
+    assert!(lines.contains(&"cc_binary target //apps/cli:cli"), "{out}");
+    assert!(lines.contains(&"cc_test target //core:core_test"), "{out}");
+    assert!(lines.contains(&"genrule target gen_version"), "{out}");
+
+    // Sorted, because a listing whose order changes between runs cannot be
+    // diffed and cannot back a stable tree view.
+    let labels: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.split(" target ").nth(1))
+        .collect();
+    let mut sorted = labels.clone();
+    sorted.sort_unstable();
+    assert_eq!(labels, sorted, "target listing must be ordered:\n{out}");
+
+    // It shares QueryOpts, so every filter and format the other functions have
+    // works here without a second implementation.
+    let (ok, out) = ws.frost(&["query", "targets", "--kind", "cc_test"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        out.lines().filter(|l| l.starts_with("//")).count(),
+        1,
+        "{out}"
+    );
+
+    let (ok, out) = ws.frost(&["query", "targets", "--json"]);
+    assert!(ok, "{out}");
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("json");
+    assert_eq!(parsed["query"], "targets()");
+    assert!(
+        parsed["targets"].as_array().is_some_and(|t| t.len() >= 6),
+        "{out}"
+    );
+}
+
+#[test]
 // POSIX shell command text; see docs/09_platform_support.md.
 #[cfg(unix)]
 fn journal_export_is_stable_and_diff_names_the_cause() {
