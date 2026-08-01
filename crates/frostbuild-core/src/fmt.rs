@@ -89,7 +89,17 @@ pub fn format_manifest(text: &str) -> Result<String> {
         canonicalize_arrays(item);
     }
 
-    Ok(document.to_string())
+    // `toml_edit` keeps the line endings it was given inside untouched decor,
+    // while every prefix this module sets is `\n`. On a CRLF checkout -- which
+    // is what git hands a Windows runner by default -- that mixes the two in
+    // one file. Normalising to whichever the input used keeps `fmt` from
+    // rewriting every line of a file it was asked to tidy, and keeps `--check`
+    // from failing on a platform rather than on a manifest.
+    let rendered = document.to_string();
+    Ok(match text.contains("\r\n") {
+        true => rendered.replace("\r\n", "\n").replace('\n', "\r\n"),
+        false => rendered.replace("\r\n", "\n"),
+    })
 }
 
 /// True when `text` is already canonical.
@@ -194,6 +204,32 @@ mod tests {
             assert_eq!(once, twice, "not idempotent for {input:?}");
             assert!(is_formatted(&once).unwrap());
         }
+    }
+
+    #[test]
+    fn a_files_line_endings_are_its_own_business() {
+        // Found by Windows CI, not here: git checks out CRLF on Windows by
+        // default, `toml_edit` preserves those endings in decor it did not
+        // touch, and every prefix this module sets is "\n". The result was a
+        // file mixing both, so `--check` failed on every manifest for being on
+        // Windows rather than for being wrong.
+        let unix = "[target.a]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n";
+        let windows = unix.replace('\n', "\r\n");
+
+        let formatted_unix = format_manifest(unix).unwrap();
+        let formatted_windows = format_manifest(&windows).unwrap();
+
+        assert!(!formatted_unix.contains('\r'), "{formatted_unix:?}");
+        assert!(
+            !formatted_windows.replace("\r\n", "").contains('\n'),
+            "every newline must be CRLF, not just the untouched ones: {formatted_windows:?}"
+        );
+        // Same content either way, so the choice really is only about endings.
+        assert_eq!(formatted_windows.replace("\r\n", "\n"), formatted_unix);
+
+        // And both are already canonical, which is the property CI checks.
+        assert!(is_formatted(&formatted_unix).unwrap());
+        assert!(is_formatted(&formatted_windows).unwrap());
     }
 
     #[test]
