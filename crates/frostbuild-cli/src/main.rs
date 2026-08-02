@@ -1910,16 +1910,11 @@ fn run(cli: Cli) -> Result<i32> {
                 },
             )
             .run()?;
-            // Name the configuration the way the journal keys it. Reporting
-            // only the profile made `explain app` and
-            // `explain app --platform device` print the same sentence for two
-            // different builds, so a reader could not tell which one they had
-            // just been told about. The lookup was always right; the label was
-            // not.
-            let configuration = match platform.as_str() {
-                frostbuild_core::manifest::HOST_PLATFORM => profile.clone(),
-                other => format!("{other}/{profile}"),
-            };
+            // Name the configuration the way the output tree and journal
+            // already spell it. Reporting only the profile made `explain app`
+            // and `explain app --platform device` print the same sentence for
+            // two different builds.
+            let configuration = frostbuild_core::paths::config(&platform, &profile);
             if current
                 .results
                 .iter()
@@ -3398,11 +3393,7 @@ fn inspect_tool(root: &Path, name: &str, configured: &str, required: bool) -> Do
 /// reimplementing the naming rules — the rules are Frost's to change, the
 /// answers are not.
 fn info_entries(root: &Path, profile: &str, platform: &str) -> Vec<(&'static str, String)> {
-    let config = if platform == frostbuild_core::manifest::HOST_PLATFORM {
-        profile.to_string()
-    } else {
-        format!("{platform}/{profile}")
-    };
+    let config = frostbuild_core::paths::config(platform, profile);
     let show = |path: PathBuf| path.display().to_string();
     #[allow(unused_mut)]
     let mut entries = vec![
@@ -4120,15 +4111,10 @@ fn build_stamps(
     // baseline. This is not an action: its output is not cached, it is not
     // sandboxed, and a status script needs the PATH and credentials of the
     // person or the CI job invoking frost to ask git or a registry anything.
-    // Windows resolves a relative program name against the process working
-    // directory, before `current_dir` applies — the same trap actions go
-    // through `resolve_action_program` to avoid. A bare name stays bare so it
-    // is still found on PATH.
-    let program = Path::new(&stamp.command[0]);
-    let program = match program.is_relative() && program.components().count() > 1 {
-        true => root.join(program),
-        false => program.to_path_buf(),
-    };
+    // The same rule actions are spawned under: Windows resolves a relative
+    // program name against the process working directory, before `current_dir`
+    // applies, and a bare name stays bare so it is still found on PATH.
+    let program = frostbuild_exec::resolve_action_program(root, &stamp.command[0]);
     let output = std::process::Command::new(program)
         .args(&stamp.command[1..])
         .current_dir(root)

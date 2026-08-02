@@ -4,6 +4,24 @@ use anyhow::{bail, Result};
 ///
 /// Rules: non-empty, relative, forward slashes only, no `.`/`..` components.
 /// Returns the normalized form (leading `./` stripped).
+/// The `${config}` segment for a (platform, profile) pair.
+///
+/// One function because this is a *rule*, and docs/28 promises callers need not
+/// encode it. It was written out in three places — the graph building the output
+/// tree, `frost info` answering where things land, and `frost explain` naming
+/// the configuration it is describing — and `info`'s own comment said not to
+/// reimplement it directly above a reimplementation of it. Three copies of a
+/// rule are three chances for one of them to be the odd one out.
+///
+/// The host keeps a single segment so existing workspaces, journals and
+/// documentation stay valid verbatim.
+pub fn config(platform: &str, profile: &str) -> String {
+    match platform == crate::manifest::HOST_PLATFORM {
+        true => profile.to_string(),
+        false => format!("{platform}/{profile}"),
+    }
+}
+
 pub fn validate_rel_path(raw: &str) -> Result<String> {
     if raw.is_empty() {
         bail!("empty path");
@@ -142,6 +160,16 @@ mod executable_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_host_keeps_a_single_segment_and_a_platform_adds_one() {
+        // Now that three callers share this, the host special case is a
+        // contract rather than a local choice: docs/28 promises the layout,
+        // and existing journals were written under the one-segment form.
+        assert_eq!(config(crate::manifest::HOST_PLATFORM, "debug"), "debug");
+        assert_eq!(config("device", "debug"), "device/debug");
+        assert_eq!(config("device", "release"), "device/release");
+    }
 
     #[test]
     fn accepts_and_normalizes() {
