@@ -1,4 +1,5 @@
 pub mod cas;
+pub mod coverage;
 pub mod depfile;
 pub mod fastcdc;
 pub mod fmt;
