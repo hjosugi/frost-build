@@ -5,48 +5,36 @@
     The mark, and the source every PNG beside it is rendered from. Edit this
     file and run scripts/render_mark.py; nothing here is drawn by hand twice.
 
-    A six-point ice crystal that also reads as a dependency graph: one root,
-    six edges, a node at every leaf. Thirteen shapes, where the mark this
-    replaced had roughly forty facets and thirteen scattered nodes.
+    Two shapes: three lines crossing at the centre, and the core they cross
+    on. Three lines through a centre already are six spokes, and a round cap
+    already is a tip, so the six-point crystal costs two elements instead of
+    thirteen. Nothing was removed from the silhouette to get there.
 
-    Three constraints decided the shape, and tests/test_site_mark.py checks
-    each of them rather than leaving it to the eye:
+    Three constraints decided it, and tests/test_site_mark.py checks each
+    rather than leaving it to the eye:
 
     1. It has to survive 32px. The favicon is the smallest and by far the
-       most-seen rendering, and the previous mark dissolved into a smudge
-       there. The stroke is 34 units on a 512 canvas, a little over two
-       device pixels at favicon size, and nothing in the mark is thinner.
+       most-seen rendering. The stroke is 52 units on a 512 canvas, which is
+       3.25 device pixels there, and nothing in the mark is thinner.
 
     2. Nothing in it may be dark. The site puts this on its own dark
-       navigation, where the previous mark's dominant colour measured 1.36:1
-       against #040a13 and effectively vanished. Both colours here clear
-       4.5:1 there while staying legible on white, so one file serves the
-       dark site, the light README and the social preview.
+       navigation, where the mark before last measured 1.36:1 against #040a13
+       and effectively vanished. Both colours here clear 4.5:1 there while
+       staying legible on white, so one file serves the dark site, the light
+       README and the social preview.
 
     3. The palette is the site's own: #377dff and #31d9ff are the blue and
        cyan tokens in styles.css, and the mark introduces no third blue.
        Which one carries the silhouette is the decision, not a preference.
        Cyan measures 1.68:1 on white, so a cyan-bodied mark washes out in
        GitHub's light theme; blue clears 3:1 there and 4.5:1 on the dark
-       navigation. So blue draws every edge and leaf, and cyan is only the
-       core, where the blue converging around it defines the shape anyway.
+       navigation. So blue draws the star, and cyan is only the core, where
+       the blue converging around it defines the shape anyway.
   -->
-  <g fill="none" stroke="#377dff" stroke-width="34" stroke-linecap="round">
-    <path d="M 256 256 L 256 60"/>
-    <path d="M 256 256 L 425.74 158"/>
-    <path d="M 256 256 L 425.74 354"/>
-    <path d="M 256 256 L 256 452"/>
-    <path d="M 256 256 L 86.26 354"/>
-    <path d="M 256 256 L 86.26 158"/>
-  </g>
-  <g fill="#377dff">
-    <circle cx="256" cy="60" r="30"/>
-    <circle cx="425.74" cy="158" r="30"/>
-    <circle cx="425.74" cy="354" r="30"/>
-    <circle cx="256" cy="452" r="30"/>
-    <circle cx="86.26" cy="354" r="30"/>
-    <circle cx="86.26" cy="158" r="30"/>
-  </g>
+  <path fill="none" stroke="#377dff" stroke-width="52" stroke-linecap="round"
+        d="M 256 60 L 256 452
+           M 86.26 158 L 425.74 354
+           M 86.26 354 L 425.74 158"/>
   <polygon fill="#31d9ff"
-           points="314,256 285,306.23 227,306.23 198,256 227,205.77 285,205.77"/>
+           points="322,256 289,313.16 223,313.16 190,256 223,198.84 289,198.84"/>
 </svg>
