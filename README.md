@@ -388,6 +388,49 @@ adds an optional `fzf` UI; `--print` makes it useful in scripts and
 `--tests` restricts the list to test targets. Completion has no `fzf`
 dependency.
 
+## Configuration
+
+`frost.toml` says *what* to build. `.frostrc` says *how* — the flags you would
+otherwise retype or hide in a shell alias.
+
+```toml
+# <workspace>/.frostrc, or ~/.config/frost/frostrc
+[common]
+jobs = 16
+
+[build]
+profile = "release"
+
+[config.ci]
+sandbox = true
+remote-cache = "http://cache.internal/frost"
+```
+
+```bash
+frost build --config ci        # apply a named set
+frost build --no-frostrc       # ignore both files
+frost doctor                   # every setting in effect, with file and line
+```
+
+Precedence runs built-in default < user file < workspace file < named section <
+what you typed. `--config` may be repeated and applies in the order given; it
+does not nest.
+
+Keys are the long option names, and one no subcommand accepts is refused at
+startup with the file, the line, the key and a suggestion — checked against the
+real argument tree, so an option works in a config file the moment it exists on
+the command line.
+
+**A flag from a file is a flag.** It is spliced ahead of the real command line
+and parsed by the same code, so it validates identically and reaches the action
+key identically. Whether an option is key material is a property of the option,
+never of where its value came from: changing `profile` rebuilds and changing
+`sandbox` does not, exactly as on the command line.
+
+Deliberately absent: conditional syntax like `build:linux --foo` (platform
+differences belong in `[platform.*]`) and sections that reference other
+sections.
+
 ## Verification and benchmarks
 
 ```bash

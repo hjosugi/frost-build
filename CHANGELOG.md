@@ -121,6 +121,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Fixed
 
+- `.frostrc`'s `[common]` section applies where it fits instead of breaking the
+  subcommands it does not fit. `[common] jobs = 16` — the most natural line to
+  write in one — made `frost doctor` refuse to start, because `doctor` has no
+  `--jobs`. The two questions are now kept apart: a key in a subcommand's own
+  section must be an option of *that* subcommand, since naming the section is
+  naming the command, while a key in `[common]` or a `[config.*]` set must be an
+  option of *some* subcommand and is skipped where it does not apply. A key no
+  subcommand accepts anywhere is still a typo and still refused with file, line
+  and a suggestion.
+
+
 - `frost explain TARGET --platform NAME` names the platform it is describing.
   It reported only the profile, so `explain app` and
   `explain app --platform device` printed the same sentence for two different

@@ -793,9 +793,18 @@ off a workspace default does what it looks like. An array repeats the option.
 setting in effect with the file, line and section, because "a setting applies"
 is not useful without the line to go and change.
 
-A key no subcommand accepts is refused at startup with the file, the line, the
-key and a suggestion — checked against the real argument tree, so a new option
-works in a config file the moment it exists on the command line.
+Two questions, kept apart. A key in a **subcommand's own section** must be an
+option of that subcommand, because naming the section is naming the command:
+`[build] test-filter` is refused. A key in `[common]` or a `[config.*]` set must
+be an option of *some* subcommand; it is applied where it fits and skipped where
+it does not, which is what "common" has to mean to be worth writing —
+`[common] jobs` would otherwise break `frost doctor`, which has no `--jobs`.
+
+Either way, a key no subcommand accepts anywhere is a typo and is refused at
+startup with the file, the line, the key and a suggestion — checked against the
+real argument tree, so a new option works in a config file the moment it exists
+on the command line. `frost doctor` lists every setting in effect, including the
+ones a subcommand skipped.
 
 **A flag from a file is a flag.** It is spliced ahead of the real command line
 and parsed by exactly the code that parses a typed one, so it is validated the

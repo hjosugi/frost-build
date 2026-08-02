@@ -28,6 +28,10 @@ pub struct Origin {
     pub section: String,
     pub key: String,
     pub line: usize,
+    /// Whether this key reached the command line. A `[common]` key the current
+    /// subcommand does not accept is carried for `frost doctor` to report and
+    /// deliberately not spliced in.
+    pub applies: bool,
 }
 
 /// The arguments a config file contributes, and where each came from.
@@ -58,7 +62,12 @@ pub fn user_config_path() -> Option<PathBuf> {
 /// `configs` names `[config.NAME]` sections, applied in the order given. One
 /// level only: a named section does not pull in another, because a config
 /// language that can reference itself is the thing docs/14 declined.
-pub fn resolve(root: &Path, subcommand: &str, configs: &[String]) -> Result<Resolved> {
+pub fn resolve(
+    root: &Path,
+    subcommand: &str,
+    configs: &[String],
+    accepts: &dyn Fn(&str) -> bool,
+) -> Result<Resolved> {
     let mut resolved = Resolved::default();
     let candidates = user_config_path()
         .into_iter()
@@ -69,7 +78,7 @@ pub fn resolve(root: &Path, subcommand: &str, configs: &[String]) -> Result<Reso
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        apply_file(&path, &text, subcommand, configs, &mut resolved)?;
+        apply_file(&path, &text, subcommand, configs, accepts, &mut resolved)?;
         resolved.files.push(path);
     }
     Ok(resolved)
@@ -86,6 +95,7 @@ fn apply_file(
     text: &str,
     subcommand: &str,
     configs: &[String],
+    accepts: &dyn Fn(&str) -> bool,
     resolved: &mut Resolved,
 ) -> Result<()> {
     let document: toml::Table =
@@ -110,14 +120,24 @@ fn apply_file(
                 continue;
             }
             let line = line_of(text, &section, key);
-            resolved
-                .args
-                .extend(to_args(path, &section, key, value.clone(), line)?);
+            // `[common]` means "wherever it applies". `jobs` is the obvious
+            // thing to put there and `frost doctor` has no `--jobs`, so
+            // splicing it in regardless made the most natural config file break
+            // half the subcommands. A key no subcommand accepts is still
+            // refused, by `validate` — that is the typo case, and it is a
+            // different question from this one.
+            let applies = section == subcommand || accepts(key);
+            if applies {
+                resolved
+                    .args
+                    .extend(to_args(path, &section, key, value.clone(), line)?);
+            }
             resolved.origins.push(Origin {
                 file: path.to_path_buf(),
                 section: section.clone(),
                 key: key.clone(),
                 line,
+                applies,
             });
         }
     }
@@ -224,8 +244,31 @@ pub fn validate(command: &clap::Command, subcommand: &str, resolved: &Resolved) 
                 .get_subcommands()
                 .any(|sub| sub.get_name() == subcommand && matches(sub))
     };
+    // Two different questions, and conflating them is what made `[common]
+    // jobs` break `frost doctor`:
+    //
+    // - a key in a subcommand's own section must be an option of *that*
+    //   subcommand, because naming the section is naming the command;
+    // - a key in `[common]` or a `[config.*]` set must be an option of *some*
+    //   subcommand. It is applied where it fits and skipped where it does not,
+    //   which is what "common" has to mean to be worth writing.
+    //
+    // Either way a key no subcommand accepts anywhere is a typo and is
+    // refused, which is the promise in docs/06.
+    let known_anywhere = |name: &str| -> bool {
+        let long = name.replace('_', "-");
+        let matches = |cmd: &clap::Command| {
+            cmd.get_arguments()
+                .any(|arg| arg.get_long() == Some(long.as_str()))
+        };
+        matches(command) || command.get_subcommands().any(matches)
+    };
     for origin in &resolved.origins {
-        if !known(&origin.key) {
+        let accepted = match origin.section == subcommand {
+            true => known(&origin.key),
+            false => known_anywhere(&origin.key),
+        };
+        if !accepted {
             let hint = nearest_option(command, subcommand, &origin.key)
                 .map(|name| format!(", did you mean `{name}`?"))
                 .unwrap_or_default();
@@ -272,6 +315,7 @@ mod tests {
             text,
             subcommand,
             &owned,
+            &|_| true,
             &mut resolved,
         )
         .unwrap();
@@ -360,6 +404,7 @@ jobs = 32
             "[build]\njobs = { a = 1 }\n",
             "build",
             &[],
+            &|_| true,
             &mut Resolved::default(),
         )
         .unwrap_err();
