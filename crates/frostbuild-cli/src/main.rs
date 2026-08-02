@@ -1375,7 +1375,18 @@ fn resolve_command_line() -> Result<Cli> {
     else {
         return Ok(first);
     };
-    let resolved = frostrc::resolve(&first.workspace, &subcommand, &first.config)?;
+    let accepts = |key: &str| {
+        let long = key.replace('_', "-");
+        let has = |cmd: &clap::Command| {
+            cmd.get_arguments()
+                .any(|arg| arg.get_long() == Some(long.as_str()))
+        };
+        has(&command)
+            || command
+                .get_subcommands()
+                .any(|sub| sub.get_name() == subcommand && has(sub))
+    };
+    let resolved = frostrc::resolve(&first.workspace, &subcommand, &first.config, &accepts)?;
     frostrc::validate(&command, &subcommand, &resolved)?;
     if resolved.args.is_empty() {
         return Ok(first);
@@ -1573,7 +1584,7 @@ fn run(cli: Cli) -> Result<i32> {
             // `doctor` is the only one that reports it, and the read is a
             // couple of small files.
             let frostrc = (!cli.no_frostrc)
-                .then(|| frostrc::resolve(&root, "build", &cli.config))
+                .then(|| frostrc::resolve(&root, "build", &cli.config, &|_| true))
                 .transpose()?
                 .unwrap_or_default();
             run_doctor(&root, &profile, &platform, json, &frostrc)

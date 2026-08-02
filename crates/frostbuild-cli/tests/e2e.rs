@@ -7403,3 +7403,41 @@ fn explain_names_the_platform_it_is_talking_about() {
         "two configurations must not describe themselves identically"
     );
 }
+
+#[test]
+fn a_common_frostrc_key_applies_where_it_fits_and_is_refused_only_when_it_fits_nowhere() {
+    // `[common] jobs` is the most natural line to write in a config file, and
+    // it made `frost doctor` — which has no `--jobs` — refuse to run. "Common"
+    // has to mean "wherever it applies" or it is not worth writing.
+    let ws = Workspace::new("frostrc-common");
+    ws.write(
+        ".frostrc",
+        "[common]\njobs = 3\n\n[build]\nprofile = \"release\"\n",
+    );
+
+    let (ok, out) = ws.frost(&["doctor"]);
+    assert!(ok, "a subcommand without --jobs must still run: {out}");
+
+    // …and it still reaches the ones that do take it.
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(ok, "{out}");
+    assert!(ws.dir.join(".frost/bin/release").is_dir(), "{out}");
+
+    // Naming a subcommand's own section is naming the command, so an option
+    // that belongs to a different one is a mistake rather than a default.
+    ws.write(".frostrc", "[build]\ntest-filter = \"x\"\n");
+    let (code, out) = ws.frost_code(&["build"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("not an option of `frost build`"), "{out}");
+
+    // The same option under [common] is applied where it fits and skipped here.
+    ws.write(".frostrc", "[common]\ntest-filter = \"x\"\n");
+    let (ok, out) = ws.frost(&["build", "--no-tui"]);
+    assert!(ok, "{out}");
+
+    // A key no subcommand accepts anywhere is still a typo, wherever it sits.
+    ws.write(".frostrc", "[common]\njorbs = 3\n");
+    let (code, out) = ws.frost_code(&["build"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("did you mean `jobs`?"), "{out}");
+}
