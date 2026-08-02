@@ -5,6 +5,12 @@
 //! server, or a language server started by a rule dies with the build rather
 //! than outliving it.
 
+// Only the Windows `terminate_process_tree` below needs this, and a host
+// build never compiles it — so it is gated rather than plain, or `cargo fix`
+// deletes it as unused on Linux. `tests/test_cfg_imports.py` fails on the
+// ungated form for exactly that reason.
+#[cfg(windows)]
+use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
