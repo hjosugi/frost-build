@@ -4,9 +4,15 @@
 //! [`crate::build`]; what is here is spawning, addressing and stopping it.
 
 use std::path::Path;
+// Only the Windows `spawn_daemon` below needs these, and a host build never
+// compiles it — so they are gated rather than plain, or `cargo fix` deletes
+// them as unused on Linux and Windows CI is the first thing to notice.
+#[cfg(windows)]
+use std::ffi::OsStr;
 
-use anyhow::bail;
-use anyhow::Result;
+#[cfg(windows)]
+use anyhow::Context;
+use anyhow::{bail, Result};
 
 use crate::build::is_protocol_mismatch;
 use crate::cli::DaemonCmd;
