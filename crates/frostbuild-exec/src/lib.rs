@@ -19,13 +19,14 @@ use std::time::Instant;
 
 use anyhow::Result;
 use frostbuild_core::cas::LocalCas;
-use frostbuild_core::depfile;
 use frostbuild_core::graph::{ActionId, ActionKind, BuildGraph};
 use frostbuild_core::hashcache::HashCache;
 use frostbuild_core::journal::{Journal, JournalEntry};
 use rayon::prelude::*;
 
 mod command;
+mod determinism;
+mod discovered;
 mod estimates;
 mod fast_noop;
 mod keys;
@@ -974,210 +975,21 @@ impl<'a> Engine<'a> {
         let duration_ms = started.elapsed().as_millis() as u64;
         let mut captured = batch.captured;
 
-        // Ingest the dependency report: replace previous discovered deps with
-        // fresh ones and fold their digests into the recorded key. Most tools
-        // write a file; MSVC writes its includes to stdout, so that report is
-        // taken from the captured output and removed from the build log, which
-        // would otherwise carry the whole include tree on every rebuild.
-        let mut discovered = Vec::new();
-        let report = if action.depfile_format.reads_captured_output() {
-            let text = captured.clone();
-            captured = depfile::strip_showincludes(&captured);
-            Some((action.depfile_format.as_str().to_string(), Some(text)))
-        } else {
-            action.depfile.as_ref().map(|dep_rel| {
-                (
-                    dep_rel.clone(),
-                    std::fs::read_to_string(self.root.join(dep_rel)).ok(),
-                )
-            })
-        };
-        if let Some((source, text)) = report {
-            if let Some(text) = text {
-                match depfile::parse_format(action.depfile_format, &text, self.root) {
-                    Ok(deps) => discovered = deps,
-                    Err(err) => {
-                        let detail = format!("failed to parse depfile {source}: {err:#}");
-                        return Outcome::Failed { reason, detail };
-                    }
-                }
-            }
-            let declared: BTreeSet<String> = action
-                .inputs
-                .iter()
-                .map(|&f| self.graph.files[f].path.clone())
-                .collect();
-            discovered.retain(|d| !declared.contains(d));
-            inputs.retain(|path, _| declared.contains(path));
-            match self.digest_all(&discovered) {
-                Ok(extra) => inputs.extend(extra),
-                Err(err) => {
-                    return Outcome::Failed {
-                        reason,
-                        detail: format!("failed to hash discovered deps: {err:#}"),
-                    }
-                }
-            }
+        let discovered = match self.ingest_dependency_report(action, &mut captured, &mut inputs) {
+            Ok(discovered) => discovered,
+            Err(detail) => return Outcome::Failed { reason, detail },
         };
 
-        let mut output_paths: Vec<String> = action
-            .outputs
-            .iter()
-            .map(|&f| self.graph.files[f].path.clone())
-            .collect();
-        // Owned directories are scanned after the command ran, so their file
-        // names never had to be predicted. From here they are ordinary
-        // recorded outputs: digested, published to the CAS, and restored.
-        match self.record_output_dirs(action) {
-            Ok(tree) => output_paths.extend(tree),
-            Err(err) => {
-                return Outcome::Failed {
-                    reason,
-                    detail: format!("{err:#}"),
-                }
-            }
-        }
-        let outputs = match self.digest_all(&output_paths) {
-            Ok(m) => m,
-            Err(err) => {
-                return Outcome::Failed {
-                    reason,
-                    detail: format!("failed to hash outputs: {err:#}"),
-                }
-            }
+        let (output_paths, outputs) = match self.collect_and_publish_outputs(action) {
+            Ok(pair) => pair,
+            Err(detail) => return Outcome::Failed { reason, detail },
         };
-        if let Some(missing) = outputs
-            .iter()
-            .find(|(_, h)| h.as_str() == frostbuild_core::hashcache::MISSING)
-        {
-            let detail = format!(
-                "command succeeded but declared output {} was not created",
-                missing.0
-            );
-            return Outcome::Failed { reason, detail };
-        }
-
-        // A compiler/code generator may publish hundreds of small outputs.
-        // CAS objects are independent, so serial copy+rename publication makes
-        // post-processing dominate the action itself. Deduplicate by digest
-        // first (parallel writers for identical bytes would share a temp name),
-        // then publish distinct immutable objects concurrently.
-        let unique_outputs: BTreeMap<&str, &str> = outputs
-            .iter()
-            .map(|(path, digest)| (digest.as_str(), path.as_str()))
-            .collect();
-        if let Err(err) = unique_outputs
-            .par_iter()
-            .try_for_each(|(digest, path)| self.cas.put(&self.root.join(path), digest))
-        {
-            return Outcome::Failed {
-                reason,
-                detail: format!("failed to store output in CAS: {err:#}"),
-            };
-        }
 
         if self.opts.check_determinism {
-            if let Some(path) = inputs.keys().find(|path| {
-                std::fs::read_to_string(self.root.join(path))
-                    .is_ok_and(|text| text.contains("__TIME__") || text.contains("__DATE__"))
-            }) {
-                let detail = format!(
-                    "non-deterministic action {}: {} uses __DATE__/__TIME__; outputs: {}",
-                    action.id,
-                    path,
-                    output_paths.join(", ")
-                );
-                return Outcome::Failed {
-                    reason: "determinism check failed".into(),
-                    detail,
-                };
-            }
-            let first = outputs.clone();
-            if let Err(err) = self.reset_clean_dirs(action) {
-                return Outcome::Failed {
-                    reason,
-                    detail: format!("determinism rerun setup failed: {err:#}"),
-                };
-            }
-            if action.kind == ActionKind::Test {
-                self.remove_partial_outputs(action);
-            }
-            let second = match self.run_action_commands(action, &inputs) {
-                Ok(batch) => batch,
-                Err(err) => {
-                    return Outcome::Failed {
-                        reason,
-                        detail: format!("determinism rerun failed: {err}"),
-                    }
-                }
-            };
-            if let Some((argv, exit)) = second.failure {
-                return Outcome::Failed {
-                    reason,
-                    detail: format!(
-                        "determinism rerun failed: {} ({exit})\n{}",
-                        shell_join(&argv),
-                        second.captured.trim_end()
-                    ),
-                };
-            }
-            if action.kind == ActionKind::Test {
-                if let Err(err) = self.write_test_success_outputs(action) {
-                    return Outcome::Failed {
-                        reason,
-                        detail: format!("determinism rerun success record failed: {err:#}"),
-                    };
-                }
-            }
-            for path in &output_paths {
-                self.cache.invalidate(path);
-            }
-            // A rerun may name its tree files differently, which is itself
-            // non-determinism: rescan rather than re-digesting the first set,
-            // so an added or renamed file is compared instead of missed.
-            let mut output_paths = output_paths.clone();
-            if !action.output_dirs.is_empty() {
-                output_paths.retain(|path| {
-                    action
-                        .output_dirs
-                        .iter()
-                        .all(|directory| !path.starts_with(&format!("{directory}/")))
-                });
-                match self.record_output_dirs(action) {
-                    Ok(tree) => output_paths.extend(tree),
-                    Err(err) => {
-                        return Outcome::Failed {
-                            reason,
-                            detail: format!("determinism rerun output scan failed: {err:#}"),
-                        }
-                    }
-                }
-            }
-            let second_outputs = match self.digest_all(&output_paths) {
-                Ok(value) => value,
-                Err(err) => {
-                    return Outcome::Failed {
-                        reason,
-                        detail: format!("determinism output hash failed: {err:#}"),
-                    }
-                }
-            };
-            if first != second_outputs {
-                let changed = first
-                    .iter()
-                    .filter_map(|(path, hash)| {
-                        (second_outputs.get(path) != Some(hash)).then_some(path.clone())
-                    })
-                    .collect::<Vec<_>>();
-                let detail = format!(
-                    "non-deterministic action {} produced different output: {}",
-                    action.id,
-                    changed.join(", ")
-                );
-                return Outcome::Failed {
-                    reason: "determinism check failed".into(),
-                    detail,
-                };
+            if let Some(failure) =
+                self.verify_determinism(action, &inputs, &outputs, &output_paths, &reason)
+            {
+                return failure;
             }
         }
 
