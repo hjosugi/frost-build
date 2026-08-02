@@ -27,14 +27,16 @@ Edit the SVG, run `python3 scripts/render_mark.py`, commit the lot.
 `--check` renders to memory and compares instead of writing, so a change to
 the SVG that was never rendered cannot land looking applied.
 
-It is a six-point ice crystal that also reads as a dependency graph: one root,
-six edges, a node at every leaf. Three things about it are not taste, and
-`tests/test_site_mark.py` asserts each rather than trusting the eye — nothing
-may be thinner than the favicon can draw, nothing may fall below 3:1 against
-either the site's dark navigation or a light theme, and every colour must
-already be a token in `styles.css`.
+It is a six-point ice crystal, drawn as three lines crossing at the centre and
+the core they cross on. Three lines through a centre already are six spokes,
+and a round cap already is a tip, so the whole mark is two elements. Four
+things about it are not taste, and `tests/test_site_mark.py` asserts each
+rather than trusting the eye — nothing may be thinner than the favicon can
+draw, nothing may fall below 3:1 against either the site's dark navigation or
+a light theme, every colour must already be a token in `styles.css`, and the
+drawing may not grow past four shapes.
 
-The mark this replaced was a 1254 px PNG from an image model, with no vector
+The mark this began as was a 1254 px PNG from an image model, with no vector
 source: it could be re-prompted but not edited, and the smaller sizes were
 downscales of a picture rather than renderings of a drawing. It had two faults
 that the file itself could not show. Its dominant colour was a dark navy

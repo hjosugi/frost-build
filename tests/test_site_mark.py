@@ -1,9 +1,9 @@
 """The brand mark stays legible where it is actually used.
 
-The mark this replaced was a 1254px PNG from an image model: about forty
-facets and thirteen scattered nodes, with no vector source, so it could be
-re-prompted but not edited. Two things were wrong with it and neither was
-visible in the file itself.
+The mark these tests were written for was a 1254px PNG from an image model:
+about forty facets and thirteen scattered nodes, with no vector source, so it
+could be re-prompted but not edited. Two things were wrong with it and neither
+was visible in the file itself.
 
 Its dominant colour was a dark navy, `#022759`, measuring **1.36:1** against
 the `#040a13` navigation the site puts the mark on. The largest part of the
@@ -60,6 +60,10 @@ CONTRAST_EXCEPTIONS = {
 MINIMUM_FAVICON_PIXELS = 2.0
 VIEWBOX = 512
 FAVICON = 32
+
+# The drawing is a stroked path and the core it crosses on. Room for one more
+# is room to add a shape deliberately; it is not room to drift.
+MOST_SHAPES = 4
 
 
 def relative_luminance(rgb):
@@ -177,13 +181,16 @@ class SiteMarkTest(unittest.TestCase):
                 self.assertIn(colour, tokens, "not a token in site/styles.css")
 
     def test_the_mark_stays_something_a_reader_can_take_in(self):
-        # Not a measure of beauty — a ceiling on element count. The mark this
-        # replaced had roughly forty facets, which is what made it a picture
-        # rather than a mark and what made it dissolve at favicon size.
+        # Not a measure of beauty — a ceiling on element count. The mark two
+        # revisions ago had roughly forty facets, which is what made it a
+        # picture rather than a mark and what made it dissolve at favicon
+        # size. The drawing is two shapes; the ceiling is set just above that
+        # rather than at a round number, because a limit of twenty would not
+        # notice the drift back until it had already happened.
         shapes = len(
             re.findall(r"<(path|circle|polygon|rect|line|ellipse)\b", self.svg)
         )
-        self.assertLessEqual(shapes, 20, "the mark is drifting back to a picture")
+        self.assertLessEqual(shapes, MOST_SHAPES, "the mark is drifting back to a picture")
 
 
 if __name__ == "__main__":
