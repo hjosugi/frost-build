@@ -11,6 +11,8 @@ use std::path::Path;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use rayon::prelude::*;
+
 use frostbuild_core::journal::JournalEntry;
 
 use crate::keys::path_is_inside;
@@ -265,5 +267,59 @@ impl<'a> Engine<'a> {
                 .with_context(|| format!("failed to create {}", path.display()))?;
         }
         Ok(())
+    }
+
+    /// Every path this action is answerable for, digested and published.
+    ///
+    /// The declared outputs plus whatever turned up in the directories it
+    /// owns -- those are scanned rather than predicted, and from here they are
+    /// ordinary recorded outputs. Returns the paths and their digests, or the
+    /// detail of what went wrong; the caller supplies the reason.
+    pub(crate) fn collect_and_publish_outputs(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+    ) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+        let mut output_paths: Vec<String> = action
+            .outputs
+            .iter()
+            .map(|&f| self.graph.files[f].path.clone())
+            .collect();
+        // Owned directories are scanned after the command ran, so their file
+        // names never had to be predicted. From here they are ordinary
+        // recorded outputs: digested, published to the CAS, and restored.
+        match self.record_output_dirs(action) {
+            Ok(tree) => output_paths.extend(tree),
+            Err(err) => return Err(format!("{err:#}")),
+        }
+        let outputs = match self.digest_all(&output_paths) {
+            Ok(m) => m,
+            Err(err) => return Err(format!("failed to hash outputs: {err:#}")),
+        };
+        if let Some(missing) = outputs
+            .iter()
+            .find(|(_, h)| h.as_str() == frostbuild_core::hashcache::MISSING)
+        {
+            return Err(format!(
+                "command succeeded but declared output {} was not created",
+                missing.0
+            ));
+        }
+
+        // A compiler/code generator may publish hundreds of small outputs.
+        // CAS objects are independent, so serial copy+rename publication makes
+        // post-processing dominate the action itself. Deduplicate by digest
+        // first (parallel writers for identical bytes would share a temp name),
+        // then publish distinct immutable objects concurrently.
+        let unique_outputs: BTreeMap<&str, &str> = outputs
+            .iter()
+            .map(|(path, digest)| (digest.as_str(), path.as_str()))
+            .collect();
+        if let Err(err) = unique_outputs
+            .par_iter()
+            .try_for_each(|(digest, path)| self.cas.put(&self.root.join(path), digest))
+        {
+            return Err(format!("failed to store output in CAS: {err:#}"));
+        }
+        Ok((output_paths, outputs))
     }
 }
