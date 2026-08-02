@@ -106,19 +106,32 @@ fn workspace_relative(
     base: &std::path::Path,
     root: &std::path::Path,
 ) -> Option<String> {
+    // Only *directories* are canonicalized, never the file itself.
+    //
+    // A symlinked root — macOS's `/var/folders/...` is one, and so is any
+    // checkout reached through a symlink — has to be resolved on both sides or
+    // `strip_prefix` compares `/var/…` against `/private/var/…` and reports
+    // every file as outside the workspace. Canonicalizing the joined *file*
+    // instead looks equivalent and is not: it silently fails for a source that
+    // no longer exists, leaving one side resolved and the other not, so the
+    // file is dropped on exactly the platform where the root is a symlink.
+    fn real(directory: &std::path::Path) -> std::path::PathBuf {
+        directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.to_path_buf())
+    }
+
     let candidate = std::path::Path::new(path);
-    let absolute = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        base.join(candidate)
+    let absolute = match (
+        candidate.is_absolute(),
+        candidate.parent(),
+        candidate.file_name(),
+    ) {
+        (true, Some(parent), Some(name)) => real(parent).join(name),
+        (true, ..) => candidate.to_path_buf(),
+        (false, ..) => real(base).join(candidate),
     };
-    // Both sides are canonicalized where possible so that a symlinked
-    // checkout — /tmp on macOS is one — does not read as outside the
-    // workspace. A path that no longer exists falls back to the literal form,
-    // which is right for a source file deleted since the build.
-    let absolute = absolute.canonicalize().unwrap_or(absolute);
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let relative = absolute.strip_prefix(&root).ok()?;
+    let relative = absolute.strip_prefix(real(root)).ok()?;
     Some(relative.to_string_lossy().replace('\\', "/"))
 }
 
@@ -231,6 +244,39 @@ mod tests {
         assert!(lcov.contains("SF:m.c"), "{lcov}");
         assert!(!lcov.contains("stdio.h"), "{lcov}");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_workspace_reached_through_a_symlink_still_reports_its_own_files() {
+        // Where the first version of this failed, and it failed only on the
+        // hosts CI runs rather than here: macOS's temp dir is a symlink
+        // (`/var/…` -> `/private/var/…`) and Windows canonicalizes to a
+        // `\\?\` verbatim path. Canonicalizing the *file* resolved the root
+        // but not a source that does not exist on disk, so the two sides no
+        // longer shared a prefix and every file was dropped as "outside the
+        // workspace" — silently, as an empty report.
+        //
+        // Reproduced here by building the same asymmetry on purpose, so the
+        // platform that has it by nature is no longer the only one that checks.
+        let base = std::env::temp_dir().join(format!("frost-cov-{}", std::process::id()));
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // `link` is the workspace root and `m.c` was never written, exactly as
+        // a source deleted since the build would be.
+        let lcov = to_lcov(
+            &[report(&link.to_string_lossy(), &[("m.c", &[(1, 1)])])],
+            &link,
+        );
+        assert_eq!(
+            lcov, "TN:\nSF:m.c\nDA:1,1\nLF:1\nLH:1\nend_of_record\n",
+            "a symlinked root dropped the file it contains"
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
