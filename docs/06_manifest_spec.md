@@ -488,6 +488,43 @@ root are recorded workspace-relative, and the recorded list is sorted, so it doe
 not depend on which spelling the tool printed. `--sandbox` also requires every workspace input to be declared,
 so package managers that traverse a module cache normally use `sandbox = false`.
 
+## Coverage
+
+`frost coverage-lcov` merges one run's gcov data into an lcov tracefile:
+
+```sh
+cc --coverage -c m.c -o obj/m.o && cc --coverage obj/m.o -o m
+GCOV_PREFIX=gcda GCOV_PREFIX_STRIP=99 ./m
+frost coverage-lcov --gcda gcda --objects obj --output coverage.lcov
+```
+
+frost emits the format itself rather than shelling out. Neither `lcov` nor
+`gcovr` ships with a toolchain — `gcov` does — so delegating would put a Perl
+dependency in every CI image that wanted coverage, for a mapping that is a few
+record types wide.
+
+**`.gcda` counters accumulate across executions.** Run the same instrumented
+binary twice and the hit counts double, so a tracefile built from counters left
+where they fell differs on every rerun — and it reads as nondeterminism in the
+build rather than in gcov's data model. The counter directory must therefore be
+reset before each run: `GCOV_PREFIX` puts it somewhere that can be, since gcc
+otherwise writes `.gcda` into the object tree, which holds declared outputs and
+cannot be cleared. With that, the same inputs produce a byte-identical
+tracefile, which a test pins.
+
+Records are sorted by file and by line, because gcov reports them in directory
+and discovery order and neither is stable between machines.
+
+A run that produced no data is refused rather than written as an empty
+tracefile: 0% is a number someone would act on, and "not measured" is a
+different statement from "nothing covered".
+
+**gcc only.** clang writes a different format that `llvm-cov` reads; the
+toolchain, not the host, is what decides, and the test skips when `cc` is not
+gcc. `frost test --coverage` — the flag that would build an instrumented
+configuration and wire this in automatically — is not implemented yet; this is
+the piece frost has to own either way.
+
 ## Visibility
 
 Multi-package labels let a workspace split into modules. Visibility is what

@@ -43,6 +43,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost coverage-lcov`, which merges a run's gcov data into an lcov tracefile.
+  frost emits the format itself because neither `lcov` nor `gcovr` ships with a
+  toolchain while `gcov` does, and delegating would put a Perl dependency in
+  every CI image that wanted coverage. Two properties are the point: records are
+  sorted, since gcov reports files in directory order, and a run that measured
+  nothing is refused rather than written as an empty tracefile, since 0% is a
+  number someone would act on. Groundwork for #143 — `frost test --coverage` is
+  not implemented yet.
+
+
 - `--build-event-json FILE`: one JSON object per line describing the build, so
   a CI job can count failures, chart durations or find the slow target without
   parsing terminal output. It is a third consumer of the progress stream the
