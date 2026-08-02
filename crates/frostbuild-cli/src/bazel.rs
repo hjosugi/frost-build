@@ -4,6 +4,8 @@ use std::process::{Child, Command};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+use crate::launch::find_on_path;
+use crate::watch::{configure_dev_command, stop_dev_process, watch_event_changes_files};
 use anyhow::{bail, Context, Result};
 use notify::{RecursiveMode, Watcher};
 use serde::Deserialize;
@@ -395,8 +397,8 @@ fn resolve_bazel(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(configured) = std::env::var_os("BAZEL_BIN") {
         return Ok(PathBuf::from(configured));
     }
-    super::find_on_path("bazel")
-        .or_else(|| super::find_on_path("bazelisk"))
+    find_on_path("bazel")
+        .or_else(|| find_on_path("bazelisk"))
         .context("Bazel was not found; pass --bazel PATH or set BAZEL_BIN")
 }
 
@@ -426,7 +428,7 @@ fn spawn_bazel_run(
         .arg("--")
         .args(program_args)
         .current_dir(root);
-    super::configure_dev_command(&mut command);
+    configure_dev_command(&mut command);
     command
         .spawn()
         .with_context(|| format!("failed to execute {} run", bazel.display()))
@@ -498,7 +500,7 @@ pub fn run_dev(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => bail!("Bazel filesystem watcher stopped"),
         };
-        let mut changed = if super::watch_event_changes_files(&first.kind) {
+        let mut changed = if watch_event_changes_files(&first.kind) {
             first
                 .paths
                 .iter()
@@ -512,7 +514,7 @@ pub fn run_dev(
             match receiver.recv_timeout(remaining) {
                 Ok(Ok(event)) => {
                     let before = changed.len();
-                    if super::watch_event_changes_files(&event.kind) {
+                    if watch_event_changes_files(&event.kind) {
                         changed.extend(
                             event
                                 .paths
@@ -550,7 +552,7 @@ pub fn run_dev(
         }
 
         if bazel_build(root, &bazel, target, bazel_args)? {
-            super::stop_dev_process(&mut child);
+            stop_dev_process(&mut child);
             match spawn_bazel_run(root, &bazel, target, bazel_args, program_args) {
                 Ok(running) => {
                     println!("`-- Bazel target restarted · pid {}", running.id());
@@ -562,7 +564,7 @@ pub fn run_dev(
             eprintln!("`-- Bazel build failed; keeping the last successful target process");
         }
     }
-    super::stop_dev_process(&mut child);
+    stop_dev_process(&mut child);
     println!("frost: bazel dev stopped");
     Ok(130)
 }
