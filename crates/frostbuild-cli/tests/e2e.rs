@@ -7441,3 +7441,122 @@ fn a_common_frostrc_key_applies_where_it_fits_and_is_refused_only_when_it_fits_n
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("did you mean `jobs`?"), "{out}");
 }
+
+/// gcov ships with gcc; the machines that have one have the other. clang's
+/// coverage data is a different format read by `llvm-cov`, so this is gated on
+/// the toolchain rather than on the host — see docs/06.
+#[cfg(target_os = "linux")]
+fn gcov_available() -> bool {
+    Command::new("gcov")
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| out.status.success())
+        // `cc -v`, not `cc --version`: on this image `--version` prints
+        // "cc (Ubuntu 13.3.0)" with no "gcc" in it, so matching on that
+        // skipped the test silently on the one host where it can run — a
+        // green result for a test that never executed.
+        && Command::new("cc").arg("-v").output().is_ok_and(|out| {
+            String::from_utf8_lossy(&out.stderr)
+                .to_lowercase()
+                .contains("gcc version")
+        })
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn coverage_lcov_merges_gcov_data_and_repeats_byte_for_byte() {
+    if !gcov_available() {
+        eprintln!("skipping coverage E2E: gcc and gcov are required");
+        return;
+    }
+    let ws = Workspace::empty("coverage-lcov");
+    std::fs::create_dir_all(ws.dir.join("obj")).unwrap();
+    std::fs::create_dir_all(ws.dir.join("gcda")).unwrap();
+    ws.write(
+        "m.c",
+        "int add(int a, int b) { if (a > b) return a + b; return b - a; }\n\
+         int main(void) { return add(2, 1) == 3 ? 0 : 1; }\n",
+    );
+    let cc = |args: &[&str]| {
+        let status = Command::new("cc")
+            .current_dir(&ws.dir)
+            .args(args)
+            .status()
+            .expect("cc");
+        assert!(status.success(), "cc {args:?}");
+    };
+    cc(&["--coverage", "-c", "m.c", "-o", "obj/m.o"]);
+    cc(&["--coverage", "obj/m.o", "-o", "m"]);
+
+    // GCOV_PREFIX puts the counters where frost can reset them. Left where gcc
+    // wants them they would sit in the object tree, which holds declared
+    // outputs and cannot be cleared.
+    let run = || {
+        let _ = std::fs::remove_dir_all(ws.dir.join("gcda"));
+        std::fs::create_dir_all(ws.dir.join("gcda")).unwrap();
+        let status = Command::new(ws.dir.join("m"))
+            .current_dir(&ws.dir)
+            .env("GCOV_PREFIX", ws.dir.join("gcda"))
+            .env("GCOV_PREFIX_STRIP", "99")
+            .status()
+            .expect("run the instrumented test");
+        assert!(status.success());
+    };
+
+    run();
+    let (ok, out) = ws.frost(&[
+        "coverage-lcov",
+        "--gcda",
+        "gcda",
+        "--objects",
+        "obj",
+        "--output",
+        "a.lcov",
+    ]);
+    assert!(ok, "{out}");
+    let first = std::fs::read_to_string(ws.dir.join("a.lcov")).unwrap();
+    // Workspace-relative, not the absolute path gcov reported: a tracefile
+    // carrying this machine's checkout path is not comparable with one from
+    // another machine, which is what a coverage report is usually for.
+    assert!(first.contains("SF:m.c"), "{first}");
+    assert!(first.contains("LF:"), "{first}");
+    assert!(first.contains("end_of_record"), "{first}");
+
+    // The acceptance criterion: the same inputs produce the same tracefile.
+    // It holds because the counters were reset — `.gcda` accumulate across
+    // executions, so without that this differs on the second run and looks
+    // like nondeterminism in the build rather than in gcov's data model.
+    run();
+    let (ok, out) = ws.frost(&[
+        "coverage-lcov",
+        "--gcda",
+        "gcda",
+        "--objects",
+        "obj",
+        "--output",
+        "b.lcov",
+    ]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        first,
+        std::fs::read_to_string(ws.dir.join("b.lcov")).unwrap(),
+        "a rerun of an unchanged build must produce the same tracefile"
+    );
+
+    // Nothing measured is refused rather than reported as 0%, which is a
+    // number someone would act on.
+    let _ = std::fs::remove_dir_all(ws.dir.join("gcda"));
+    std::fs::create_dir_all(ws.dir.join("gcda")).unwrap();
+    let (code, out) = ws.frost_code(&[
+        "coverage-lcov",
+        "--gcda",
+        "gcda",
+        "--objects",
+        "obj",
+        "--output",
+        "c.lcov",
+    ]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("no coverage data"), "{out}");
+    assert!(!ws.dir.join("c.lcov").exists(), "an empty run wrote a file");
+}

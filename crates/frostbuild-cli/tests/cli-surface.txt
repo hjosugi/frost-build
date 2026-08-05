@@ -6,6 +6,7 @@ frost cache stats --json
 frost clean --cache --platform=VALUE --profile=VALUE
 frost compdb --output=VALUE --platform=VALUE --profile=VALUE
 frost completions <shell> --dry-run --install
+frost coverage-lcov --gcda=VALUE --gcov=VALUE --objects=VALUE --output=VALUE
 frost daemon
 frost daemon restart
 frost daemon serve

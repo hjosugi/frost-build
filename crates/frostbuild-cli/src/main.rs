@@ -24,6 +24,7 @@ mod clean;
 mod cli;
 mod compdb;
 mod completions;
+mod coverage;
 mod daemon;
 mod doctor;
 mod events;
@@ -449,6 +450,12 @@ fn run(cli: Cli) -> Result<i32> {
             profile,
             platform,
         } => compdb::run_compdb(&root, output, &profile, &platform),
+        Cmd::CoverageLcov {
+            gcda,
+            objects,
+            output,
+            gcov,
+        } => coverage::run_coverage_lcov(&root, &gcda, &objects, &output, &gcov),
         Cmd::Explain {
             target,
             profile,
