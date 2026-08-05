@@ -241,8 +241,30 @@ class SiteStylesheetTestCase(unittest.TestCase):
                     if fragment not in ids:
                         broken.append(f"{name}: #{fragment} matches no id")
                     continue
-                if not (page.parent / path).resolve().exists():
+                destination = (page.parent / path).resolve()
+                if not destination.exists():
                     broken.append(f"{name}: {target} does not exist")
+                    continue
+                if not fragment:
+                    continue
+                # `../#why` names an id on the *other* page, and the check
+                # above cannot see it: `../` is a directory, and a directory
+                # exists whatever the page inside it happens to say. The docs
+                # hub links back into the front page this way, so the anchors
+                # that break are exactly the ones nothing was watching.
+                if destination.is_dir():
+                    destination /= "index.html"
+                if not destination.is_file():
+                    broken.append(f"{name}: {target} has no page to anchor in")
+                    continue
+                elsewhere = set(
+                    re.findall(r'id="([^"]+)"', destination.read_text(encoding="utf-8"))
+                )
+                if fragment not in elsewhere:
+                    broken.append(
+                        f"{name}: {target} matches no id in "
+                        f"{destination.relative_to(REPO).as_posix()}"
+                    )
         self.assertEqual(broken, [])
 
     def test_docs_hero_contains_intrinsic_code_width(self):

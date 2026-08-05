@@ -43,6 +43,15 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- Two checks on the static site, carried over from a branch whose stylesheet
+  work landed by another route. A cross-page anchor is now resolved against the
+  page it points into: the docs hub links back to `../#why`, and the existing
+  check saw only that `../` is a directory, which exists whatever the page
+  inside it says — so the anchors nothing was watching were exactly the ones
+  that could break. And `site/script.js` is parsed with `node --check`, since a
+  page with no build step and no type checker will ship a stray brace and the
+  first reader of the error is a visitor with a blank hero.
+
 - `frost coverage-lcov`, which merges a run's gcov data into an lcov tracefile.
   frost emits the format itself because neither `lcov` nor `gcovr` ships with a
   toolchain while `gcov` does, and delegating would put a Perl dependency in
