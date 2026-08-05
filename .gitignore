@@ -68,3 +68,6 @@ Thumbs.db
 
 # Generated local knowledge graph
 /graphify-out/
+
+# Personal Claude Code settings; .claude/settings.json is the shared one
+/.claude/settings.local.json
