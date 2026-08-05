@@ -508,6 +508,26 @@ pub(crate) enum Cmd {
         )]
         platform: String,
     },
+    /// Merge gcov coverage data into an lcov tracefile
+    ///
+    /// Reads every `.gcda` a run produced, pairs it with the `.gcno` the
+    /// compile wrote, and emits lcov. frost emits the format itself because
+    /// neither `lcov` nor `gcovr` ships with a toolchain, and delegating would
+    /// put a Perl dependency in every CI image that wanted coverage.
+    CoverageLcov {
+        /// Directory holding the run's `.gcda` counter files
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        gcda: PathBuf,
+        /// Object tree holding the matching `.gcno` notes files
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        objects: PathBuf,
+        /// Where to write the tracefile
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        output: PathBuf,
+        /// gcov executable, when it is not the one on PATH
+        #[arg(long, default_value = "gcov", value_hint = ValueHint::CommandName)]
+        gcov: String,
+    },
     /// Explain the most recently recorded decision for a target
     Explain {
         #[arg(add = ArgValueCompleter::new(complete_target))]

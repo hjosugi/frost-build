@@ -43,6 +43,19 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost coverage-lcov`, which merges a run's gcov data into an lcov tracefile.
+  frost emits the format itself because neither `lcov` nor `gcovr` ships with a
+  toolchain while `gcov` does, and delegating would put a Perl dependency in
+  every CI image that wanted coverage. Three properties are the point: `SF:`
+  paths are workspace-relative and records sorted, so a tracefile is comparable
+  between machines rather than describing one checkout; the counters are read
+  from a directory that is reset per run, since `.gcda` accumulate across
+  executions and would otherwise report growing numbers for an unchanged build;
+  and a run that measured nothing is refused rather than written as an empty
+  tracefile, since 0% is a number someone would act on. gcc only — clang's data
+  is `llvm-cov`'s format. Groundwork for #143; `frost test --coverage` is not
+  implemented yet. See docs/06.
+
 - `--build-event-json FILE`: one JSON object per line describing the build, so
   a CI job can count failures, chart durations or find the slow target without
   parsing terminal output. It is a third consumer of the progress stream the
