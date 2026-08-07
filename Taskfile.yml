@@ -25,6 +25,16 @@ vars:
   FROST: '{{.FROST | default "./frostw"}}'
 
 tasks:
+  graphify-setup:
+    desc: "Install graphify and register its skill with Claude, Copilot and Codex"
+    cmds:
+      - "sh scripts/graphify.sh setup"
+
+  graphify-update:
+    desc: "Upgrade graphify, refresh the skill, and update the knowledge graph"
+    cmds:
+      - "sh scripts/graphify.sh update"
+
   default:
     desc: Run the whole pre-PR gate, skipping the stages whose inputs did not move
     cmds:

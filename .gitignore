@@ -71,3 +71,9 @@ Thumbs.db
 
 # Personal Claude Code settings; .claude/settings.json is the shared one
 /.claude/settings.local.json
+.claude/skills/graphify/
+.claude/settings.local.json
+.copilot/skills/graphify/
+.codex/skills/graphify/
+.codex/hooks.json
+graphify-out/
