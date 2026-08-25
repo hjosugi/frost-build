@@ -197,6 +197,9 @@ struct RawToolchain {
     cc: Option<String>,
     cxx: Option<String>,
     ar: Option<String>,
+    /// Coverage reporter paired with `cc`. Only `--coverage` builds run it, so
+    /// it is not resolved or fingerprinted otherwise.
+    gcov: Option<String>,
     kofunc: Option<String>,
     /// Named language/build tools used by `kind = "command"` targets.
     #[serde(default)]
@@ -220,6 +223,7 @@ struct RawPlatform {
     cc: Option<String>,
     cxx: Option<String>,
     ar: Option<String>,
+    gcov: Option<String>,
     kofunc: Option<String>,
     /// Per-platform overrides/additions for `[toolchain.tools]`.
     #[serde(default)]
@@ -443,6 +447,11 @@ pub struct Toolchain {
     pub cc: String,
     pub cxx: String,
     pub ar: String,
+    /// The reporter that turns `.gcda` counters into a coverage report. Paired
+    /// with `cc`, since the data format is the compiler's: a cross toolchain
+    /// needs its own (`aarch64-linux-gnu-gcov`), and reading device counters
+    /// with the host `gcov` fails on the version stamp rather than silently.
+    pub gcov: String,
     /// Kofun compiler driver. It is optional so C-only workspaces do not need
     /// Kofun installed merely to fingerprint their configured toolchain.
     pub kofunc: Option<String>,
@@ -459,6 +468,7 @@ pub struct Platform {
     pub cc: Option<String>,
     pub cxx: Option<String>,
     pub ar: Option<String>,
+    pub gcov: Option<String>,
     pub kofunc: Option<String>,
     pub tools: BTreeMap<String, String>,
     pub arflags: Option<Vec<String>>,
@@ -914,6 +924,7 @@ impl Manifest {
             cc: spec.cc.clone().unwrap_or_else(|| base.cc.clone()),
             cxx: spec.cxx.clone().unwrap_or_else(|| base.cxx.clone()),
             ar: spec.ar.clone().unwrap_or_else(|| base.ar.clone()),
+            gcov: spec.gcov.clone().unwrap_or_else(|| base.gcov.clone()),
             kofunc: spec.kofunc.clone().or_else(|| base.kofunc.clone()),
             tools: base.tools.clone(),
             arflags: spec.arflags.clone().unwrap_or_else(|| base.arflags.clone()),
@@ -982,6 +993,7 @@ impl Manifest {
                     cc: spec.cc,
                     cxx: spec.cxx,
                     ar: spec.ar,
+                    gcov: spec.gcov,
                     kofunc: spec.kofunc,
                     tools: spec.tools,
                     arflags: spec.arflags,
@@ -1002,6 +1014,7 @@ impl Manifest {
                     .cxx
                     .unwrap_or_else(|| default_cxx().to_string()),
                 ar: raw.toolchain.ar.unwrap_or_else(|| "ar".to_string()),
+                gcov: raw.toolchain.gcov.unwrap_or_else(|| "gcov".to_string()),
                 kofunc: raw.toolchain.kofunc,
                 tools: raw.toolchain.tools,
                 arflags: raw

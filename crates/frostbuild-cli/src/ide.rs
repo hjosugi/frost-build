@@ -176,6 +176,7 @@ pub(crate) fn run_ide(
             all: false,
             scheduler: SchedulerArg::CriticalPath,
             estimator: EstimatorArg::Journal,
+            coverage: false,
         },
     )?;
     if build_code != 0 {

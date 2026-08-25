@@ -52,7 +52,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   page with no build step and no type checker will ship a stray brace and the
   first reader of the error is a visitor with a blank hero.
 
-- `frost coverage-lcov`, which merges a run's gcov data into an lcov tracefile.
+- `frost test --coverage` for native C/C++ tests, plus `frost coverage-lcov`
+  for manually produced counters. The automatic path instruments GCC compile
+  and link actions, resets and content-addresses one raw counter tree per test
+  shard, and merges one tracefile per test target under the separate
+  `debug+coverage`-style configuration. Output trees, compiled graph stores and
+  journal identities are isolated, so switching back to an ordinary test is a
+  cache hit; changing one independent test re-runs only its own merge. The
+  counter tree's content stamp, not the empty test-success stamp, keys the
+  merge, so a different filter/env/argument cannot reuse coverage for lines it
+  did not execute.
+
+  `frost coverage-lcov` merges a run's gcov data into an lcov tracefile.
   frost emits the format itself because neither `lcov` nor `gcovr` ships with a
   toolchain while `gcov` does, and delegating would put a Perl dependency in
   every CI image that wanted coverage. Three properties are the point: `SF:`
@@ -62,8 +73,7 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   executions and would otherwise report growing numbers for an unchanged build;
   and a run that measured nothing is refused rather than written as an empty
   tracefile, since 0% is a number someone would act on. gcc only — clang's data
-  is `llvm-cov`'s format. Groundwork for #143; `frost test --coverage` is not
-  implemented yet. See docs/06.
+  is `llvm-cov`'s format. See docs/06.
 
 - `--build-event-json FILE`: one JSON object per line describing the build, so
   a CI job can count failures, chart durations or find the slow target without

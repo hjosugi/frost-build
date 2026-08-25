@@ -25,7 +25,7 @@
   "scripts": {
     "compile": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\" && tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+    "test": "npm run compile && node --test --test-concurrency=1 \"out/test/**/*.test.js\"",
     "lint": "tsc --noEmit -p ./"
   },
   "devDependencies": {

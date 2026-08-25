@@ -50,6 +50,9 @@ impl<'a> Engine<'a> {
         inputs: &BTreeMap<String, String>,
     ) -> std::result::Result<CommandBatch, String> {
         let mut captured = String::new();
+        if let Some(spec) = &action.coverage {
+            return Ok(self.merge_coverage(action, spec));
+        }
         for argv in std::iter::once(&action.argv).chain(&action.followup_argv) {
             // The graph carries the reference; the value arrives here, once
             // per build. Doing it at execution rather than at graph
@@ -127,6 +130,81 @@ impl<'a> Engine<'a> {
             captured,
             failure: None,
         })
+    }
+
+    /// Run a coverage merge in process rather than spawning it.
+    ///
+    /// The work is one `gcov` call per counter file plus a merge into lcov, and
+    /// the shell pipeline that did the same would need `lcov` or `gcovr` —
+    /// neither of which ships with a toolchain, while `gcov` does. Doing it here
+    /// keeps a Perl dependency out of every CI image that wants coverage, and
+    /// keeps the merge one cacheable action rather than a script per test.
+    ///
+    /// Emptiness is a *failure*, not an empty tracefile: 0% is a number someone
+    /// would act on, and "not measured" is a different statement from "nothing
+    /// covered". A missing `.gcno` is a warning on the captured output, which is
+    /// where the rest of an action's diagnostics go.
+    fn merge_coverage(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        spec: &frostbuild_core::graph::CoverageSpec,
+    ) -> CommandBatch {
+        let mut captured = String::new();
+        let gcda_dirs: Vec<std::path::PathBuf> = spec
+            .gcda_dirs
+            .iter()
+            .map(|dir| self.root.join(dir))
+            .collect();
+        let notes: Vec<std::path::PathBuf> =
+            spec.notes.iter().map(|note| self.root.join(note)).collect();
+        let gcov = &action.argv[0];
+        let mut warnings = Vec::new();
+        let lcov =
+            match frostbuild_core::coverage::merge(self.root, &gcda_dirs, &notes, gcov, |warning| {
+                warnings.push(warning)
+            }) {
+                Ok(lcov) => lcov,
+                Err(error) => {
+                    return CommandBatch {
+                        captured,
+                        failure: Some((action.argv.clone(), format!("{error:#}"))),
+                    }
+                }
+            };
+        for warning in warnings {
+            captured.push_str(&format!("coverage: {warning}\n"));
+        }
+        if lcov.is_empty() {
+            return CommandBatch {
+                captured,
+                failure: Some((
+                    action.argv.clone(),
+                    format!(
+                        "no coverage data for {}: the test produced no counters, \
+                         or none of the files it covered are in this workspace",
+                        action.target
+                    ),
+                )),
+            };
+        }
+        let destination = self.root.join(&spec.output);
+        let written = destination
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&destination, &lcov));
+        if let Err(error) = written {
+            return CommandBatch {
+                captured,
+                failure: Some((
+                    action.argv.clone(),
+                    format!("writing {}: {error}", spec.output),
+                )),
+            };
+        }
+        CommandBatch {
+            captured,
+            failure: None,
+        }
     }
 
     fn command_for_argv(

@@ -55,6 +55,122 @@ pub struct GcovReport {
     pub current_working_directory: String,
 }
 
+/// Collect the counters under `gcda_dirs` and render them as one lcov
+/// tracefile, using `notes` to find each counter's `.gcno`.
+///
+/// gcov reads the two as a pair and a coverage build does not put them
+/// together: the notes file is written by the compile into the object tree,
+/// while the counters are relocated by `GCOV_PREFIX` into a directory that can
+/// be emptied before every run — which is what stops them accumulating and the
+/// tracefile from differing for a build that did not change. So the notes are
+/// staged beside the counters rather than the counters being left where gcc
+/// wants them, in a tree that holds declared outputs and cannot be cleared.
+///
+/// `--json-format --stdout` rather than gcov's default: the default writes
+/// `.gcov.json.gz`, and reading that would mean a gzip decoder for data gcov is
+/// willing to hand over uncompressed.
+///
+/// A counter with no matching notes file is reported through `warn` and skipped
+/// — it is an object that was not compiled in this configuration, and the wrong
+/// thing to do is to be quiet about a report that is therefore short.
+pub fn merge(
+    root: &std::path::Path,
+    gcda_dirs: &[std::path::PathBuf],
+    notes: &[std::path::PathBuf],
+    gcov: &str,
+    mut warn: impl FnMut(String),
+) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let mut by_stem = BTreeMap::new();
+    for note in notes {
+        let Some(stem) = note.file_stem() else {
+            continue;
+        };
+        if let Some(previous) = by_stem.insert(stem.to_os_string(), note) {
+            anyhow::bail!(
+                "coverage notes {} and {} have the same object name; \
+                 instrumented object names must be unique across the linked test",
+                previous.display(),
+                note.display()
+            );
+        }
+    }
+
+    let mut reports = Vec::new();
+    for directory in gcda_dirs {
+        let mut counters: Vec<std::path::PathBuf> = files_under(directory)
+            .into_iter()
+            .filter(|path| path.extension().is_some_and(|ext| ext == "gcda"))
+            .collect();
+        // Sorted so two runs read the same data in the same order. `to_lcov`
+        // sorts its records too, but a stable read order keeps a failure
+        // reproducible rather than depending on directory iteration.
+        counters.sort();
+        for counter in &counters {
+            let Some(stem) = counter.file_stem() else {
+                continue;
+            };
+            let Some(note) = by_stem.get(stem) else {
+                warn(format!(
+                    "no .gcno for {}; was it compiled with coverage?",
+                    counter.display()
+                ));
+                continue;
+            };
+            let staged = counter.with_extension("gcno");
+            if staged != **note {
+                std::fs::copy(note, &staged)
+                    .with_context(|| format!("staging {} beside its counters", note.display()))?;
+            }
+            let out = std::process::Command::new(gcov)
+                .args(["--json-format", "--stdout"])
+                .arg(counter)
+                .current_dir(directory)
+                .output()
+                .with_context(|| format!("running {gcov}"))?;
+            if !out.status.success() {
+                anyhow::bail!(
+                    "{gcov} failed on {}: {}",
+                    counter.display(),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
+            }
+            // A stream rather than one document: gcov prints one JSON object
+            // per input it was given, concatenated, and `from_str` rejects the
+            // second as trailing characters.
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for report in serde_json::Deserializer::from_str(&stdout).into_iter::<GcovReport>() {
+                reports.push(
+                    report.with_context(|| {
+                        format!("reading {gcov} output for {}", counter.display())
+                    })?,
+                );
+            }
+        }
+    }
+    Ok(to_lcov(&reports, root))
+}
+
+/// Every file under `dir`, or nothing when it does not exist.
+fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match path.is_dir() {
+                true => stack.push(path),
+                false => found.push(path),
+            }
+        }
+    }
+    found
+}
+
 /// Render one or more gcov reports as a single lcov tracefile.
 ///
 /// `root` is the workspace root: every `SF:` is made relative to it, and a
@@ -138,6 +254,21 @@ fn workspace_relative(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_flattened_object_names_are_refused() {
+        let root = std::env::temp_dir().join("frost-coverage-duplicate-notes");
+        let notes = vec![
+            root.join("first/shared.gcno"),
+            root.join("second/shared.gcno"),
+        ];
+        let error = merge(&root, &[], &notes, "gcov", |_| {})
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("same object name"), "{error}");
+        assert!(error.contains("first/shared.gcno"), "{error}");
+        assert!(error.contains("second/shared.gcno"), "{error}");
+    }
 
     fn report(cwd: &str, files: &[(&str, &[(u32, u64)])]) -> GcovReport {
         GcovReport {

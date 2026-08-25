@@ -80,6 +80,7 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         all: false,
         scheduler: SchedulerArg::CriticalPath,
         estimator: EstimatorArg::Journal,
+        coverage: false,
     }
 }
 

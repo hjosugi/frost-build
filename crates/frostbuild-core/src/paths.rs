@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::{bail, Result};
 
 /// Validate and normalize a workspace-relative path from a manifest.
@@ -16,8 +18,41 @@ use anyhow::{bail, Result};
 /// The host keeps a single segment so existing workspaces, journals and
 /// documentation stay valid verbatim.
 pub fn config(platform: &str, profile: &str) -> String {
+    configured(platform, profile, false)
+}
+
+/// The profile-shaped part of a configuration, with instrumentation axes.
+///
+/// Kept separate from [`configured`] because the graph store and execution
+/// journal need the same collision-free identity without the platform path
+/// separator. `+` cannot occur in a declared profile name, so an instrumented
+/// configuration cannot alias a user-authored profile.
+pub fn instrumented_profile(profile: &str, coverage: bool) -> Cow<'_, str> {
+    match coverage {
+        true => Cow::Owned(format!("{profile}+coverage")),
+        false => Cow::Borrowed(profile),
+    }
+}
+
+/// The `${config}` segment, including whether coverage is instrumented.
+///
+/// Coverage is an axis here rather than a profile because a profile name has to
+/// be one the manifest declares — `graph.rs` refuses an undeclared one, which
+/// is what stops `--profile relase` from silently building into its own tree.
+/// A synthesized `debug-coverage` would therefore fail on every workspace that
+/// declares any profile at all. Being an axis instead means an instrumented
+/// build reaches its own output tree, journal identity and cache through the
+/// machinery already described in docs/28, and an ordinary build cannot serve a
+/// cache hit to one that measures coverage.
+///
+/// `+` separates it, and the character matters: profile names are
+/// `[A-Za-z0-9_-]`, so `debug+coverage` is a segment no profile can spell. With
+/// `-` a workspace declaring `[profile.debug-coverage]` would quietly share one
+/// output tree with `--profile debug --coverage`.
+pub fn configured(platform: &str, profile: &str, coverage: bool) -> String {
+    let profile = instrumented_profile(profile, coverage);
     match platform == crate::manifest::HOST_PLATFORM {
-        true => profile.to_string(),
+        true => profile.into_owned(),
         false => format!("{platform}/{profile}"),
     }
 }

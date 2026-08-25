@@ -15,7 +15,7 @@ use anyhow::Result;
 use frostbuild_core::graph::BuildGraph;
 use frostbuild_core::manifest::Manifest;
 use frostbuild_core::manifest::TargetKind;
-use frostbuild_exec::toolchain_closure_fingerprint_cached;
+use frostbuild_exec::toolchain_closure_fingerprint_cached_instrumented;
 use frostbuild_exec::try_fast_noop;
 use frostbuild_exec::BuildOptions;
 use frostbuild_exec::Engine;
@@ -23,7 +23,7 @@ use frostbuild_exec::Outcome;
 
 use crate::cli::{DaemonCmd, EstimatorArg, SchedulerArg, TestOutputArg};
 use crate::daemon::daemon_command;
-use crate::graph::{attribute_missing_tool, load_graph, resolve_targets};
+use crate::graph::{attribute_missing_tool, load_graph, load_graph_instrumented, resolve_targets};
 use crate::human_bytes;
 use crate::{events, progress, report};
 
@@ -72,6 +72,10 @@ pub(crate) struct BuildRequest {
     pub(crate) all: bool,
     pub(crate) scheduler: SchedulerArg,
     pub(crate) estimator: EstimatorArg,
+    /// Build instrumented for coverage and merge a tracefile per test target.
+    /// Part of the configuration rather than an option applied to one: it
+    /// selects a different output tree, journal identity and cache.
+    pub(crate) coverage: bool,
 }
 pub(crate) fn run_build_selected(
     root: &std::path::Path,
@@ -241,6 +245,7 @@ pub(crate) fn run_pick(
             all: false,
             scheduler: SchedulerArg::CriticalPath,
             estimator: EstimatorArg::Journal,
+            coverage: false,
         },
     )
 }
@@ -275,7 +280,11 @@ fn run_build_via_daemon(
         args.push("--no-cache".into());
     }
     // A flag dropped here is a build the daemon runs differently from the one
-    // that was asked for, silently: `--no-stamp` would come back stamped.
+    // that was asked for, silently: `--no-stamp` would come back stamped, and
+    // `--coverage` would come back measuring nothing.
+    if request.coverage {
+        args.push("--coverage".into());
+    }
     if request.no_stamp {
         args.push("--no-stamp".into());
     }
@@ -525,7 +534,8 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
             return Ok(0);
         }
     }
-    let mut graph = load_graph(root, &request.profile, &request.platform)?;
+    let mut graph =
+        load_graph_instrumented(root, &request.profile, &request.platform, request.coverage)?;
     // In memory only. The stored graph stays the manifest's, so a run with
     // `--test-filter parse` cannot leave a filtered graph behind for the next
     // one; and because argv and env are already action-key material, the
@@ -922,7 +932,11 @@ fn write_trace(
 /// that needs the fingerprint wants the same attribution: the reader who ran
 /// `frost explain` deserves it as much as the one who ran `frost build`.
 pub(crate) fn toolchain_fingerprint(root: &std::path::Path, graph: &BuildGraph) -> Result<String> {
-    toolchain_closure_fingerprint_cached(root, &graph.toolchain)
+    let needs_gcov = graph
+        .actions
+        .iter()
+        .any(|action| action.kind == frostbuild_core::graph::ActionKind::Coverage);
+    toolchain_closure_fingerprint_cached_instrumented(root, &graph.toolchain, needs_gcov)
         .map_err(|error| attribute_missing_tool(error, graph))
 }
 

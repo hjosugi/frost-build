@@ -15,6 +15,26 @@ pub const LIB_DIR: &str = ".frost/lib";
 pub const BIN_DIR: &str = ".frost/bin";
 /// Frost-owned stamps recording the contents of declared `output_dirs`.
 pub const TREE_STAMP_DIR: &str = ".frost/tree";
+/// Raw coverage counters and the tracefiles merged from them.
+pub const COVERAGE_DIR: &str = ".frost/coverage";
+
+/// What instruments a compile and a link for coverage.
+///
+/// One flag rather than `-fprofile-arcs -ftest-coverage`, because gcc and clang
+/// both accept it and it is the spelling their documentation uses; which of the
+/// two underlying flags belongs on which command is not something a manifest
+/// author should have to know.
+const COVERAGE_FLAG: &str = "--coverage";
+
+/// How many leading directory components `GCOV_PREFIX` drops.
+///
+/// All of them. gcc names a counter file after the *object* it belongs to,
+/// prefixing the object's absolute path; keeping any of that would put this
+/// machine's checkout path inside a declared output, so two machines building
+/// identical sources would record different trees. Flattening is only safe
+/// because coverage objects are named to be unique across every object linked
+/// into a test — see [`object_key`].
+const GCOV_PREFIX_STRIP: u32 = 99;
 
 /// How a build-stamp value is referenced from a manifest. The reference — not
 /// the value — is what survives graph construction: values arrive once per
@@ -53,6 +73,30 @@ pub enum ActionKind {
     Test,
     KofunCompile,
     Command,
+    /// Collect one test target's coverage counters and emit lcov. Executed by
+    /// the engine rather than spawned, because the work is one `gcov` call per
+    /// counter file plus a merge, and a shell pipeline that did the same would
+    /// need `lcov` or `gcovr` — neither of which ships with a toolchain.
+    Coverage,
+}
+
+/// What a [`ActionKind::Coverage`] action reads and writes.
+///
+/// The paths are named rather than discovered by scanning the output tree: an
+/// action that globbed would report whatever an earlier configuration left
+/// behind, and its key could not see the difference.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoverageSpec {
+    /// Directories the instrumented test wrote `.gcda` counters into — one per
+    /// shard, since each shard resets its own.
+    pub gcda_dirs: Vec<String>,
+    /// The `.gcno` notes files gcov needs beside those counters. Every object
+    /// linked into the test contributes one, including the ones compiled for a
+    /// dependency, because the counters are per object and the running binary
+    /// writes all of them.
+    pub notes: Vec<String>,
+    /// Where the tracefile goes.
+    pub output: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,6 +157,13 @@ pub struct ActionNode {
     /// rather than the graph below it.
     #[serde(default)]
     pub volatile_stamps: Vec<String>,
+    /// Present only on [`ActionKind::Coverage`], which needs paths an argv
+    /// cannot carry — the engine runs it in process.
+    // Do not use `skip_serializing_if` here: graph stores use postcard's
+    // positional struct encoding, where omitting a trailing `None` would make
+    // the next action's first byte look like this Option's discriminant.
+    #[serde(default)]
+    pub coverage: Option<CoverageSpec>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -194,6 +245,11 @@ pub struct BuildGraph {
     /// that reads one, and it gets here without having parsed a manifest.
     #[serde(default)]
     pub stamp: Option<crate::manifest::Stamp>,
+    /// Whether this graph's C/C++ actions are instrumented for coverage. Part
+    /// of the configuration, like `profile` and `platform`, so an instrumented
+    /// graph is never mistaken for an ordinary one — see [`crate::paths::configured`].
+    #[serde(default)]
+    pub coverage: bool,
     #[serde(skip)]
     file_ids: HashMap<String, FileId>,
 }
@@ -277,6 +333,20 @@ impl BuildGraph {
         profile: &str,
         platform: &str,
     ) -> Result<Self> {
+        Self::from_manifest_instrumented(manifest, profile, platform, false)
+    }
+
+    /// The configured graph, optionally instrumented for coverage.
+    ///
+    /// Coverage is threaded through as a flag rather than as a profile because
+    /// it has to reach the output tree without being a name the manifest
+    /// declares; [`crate::paths::configured`] holds that reasoning.
+    pub fn from_manifest_instrumented(
+        manifest: &Manifest,
+        profile: &str,
+        platform: &str,
+        coverage: bool,
+    ) -> Result<Self> {
         if profile.is_empty()
             || !profile
                 .chars()
@@ -305,7 +375,7 @@ impl BuildGraph {
             );
         }
         let toolchain = manifest.toolchain_for(platform)?;
-        let tree = crate::paths::config(platform, profile);
+        let tree = crate::paths::configured(platform, profile, coverage);
         let order = toposort_targets(manifest)?;
         let mut graph = BuildGraph {
             profile: profile.to_string(),
@@ -313,6 +383,7 @@ impl BuildGraph {
             toolchain: toolchain.clone(),
             default_targets: manifest.default_targets.clone(),
             stamp: manifest.stamp.clone(),
+            coverage,
             ..BuildGraph::default()
         };
         let profile_flags = manifest.profiles.get(profile).cloned().unwrap_or_default();
@@ -325,6 +396,10 @@ impl BuildGraph {
         let mut exported_includes: HashMap<String, Rc<SharedSet>> = HashMap::new();
         let mut exported_libs: HashMap<String, Rc<SharedSet>> = HashMap::new();
         let mut genrule_outputs: HashMap<String, Rc<SharedSet>> = HashMap::new();
+        // `.gcno` notes per C/C++ target, own plus inherited. Only C/C++
+        // targets appear, so a lookup is `get` rather than an index: a genrule
+        // dependency contributes no objects and therefore no counters.
+        let mut coverage_notes: HashMap<String, Vec<String>> = HashMap::new();
 
         for name in &order {
             // The overlay is applied once, here, so everything downstream sees
@@ -404,6 +479,7 @@ impl BuildGraph {
                         flaky_retries: 0,
                         stable_stamps: Vec::new(),
                         volatile_stamps: Vec::new(),
+                        coverage: None,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = outputs;
@@ -517,6 +593,7 @@ impl BuildGraph {
                             flaky_retries: target.flaky_retries,
                             stable_stamps: Vec::new(),
                             volatile_stamps: Vec::new(),
+                            coverage: None,
                         })?;
                         target_node.actions.push(action);
                         stamp_ids.push(stamp_id);
@@ -689,6 +766,7 @@ impl BuildGraph {
                         flaky_retries: 0,
                         stable_stamps,
                         volatile_stamps,
+                        coverage: None,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = output_ids;
@@ -753,6 +831,7 @@ impl BuildGraph {
                         flaky_retries: 0,
                         stable_stamps: Vec::new(),
                         volatile_stamps: Vec::new(),
+                        coverage: None,
                     })?;
                     target_node.actions.push(action);
                     target_node.outputs = vec![bin_id];
@@ -776,10 +855,15 @@ impl BuildGraph {
                     // One compile action per translation unit.
                     let mut objs: Vec<String> = Vec::new();
                     let mut obj_ids: Vec<FileId> = Vec::new();
+                    let mut notes: Vec<String> = Vec::new();
                     for src in &target.srcs {
                         let is_cxx = is_cxx_source(src);
                         let driver = if is_cxx { &tc.cxx } else { &tc.cc };
-                        let obj = format!("{OBJ_DIR}/{tree}/{}/{src}.o", path_key(name));
+                        let obj = format!(
+                            "{OBJ_DIR}/{tree}/{}/{}.o",
+                            path_key(name),
+                            object_key(name, src, coverage)
+                        );
                         let depfile = format!("{obj}.d");
                         let mut argv = vec![driver.clone()];
                         argv.extend(cflags.iter().cloned());
@@ -788,6 +872,9 @@ impl BuildGraph {
                             argv.extend(profile_flags.cxxflags.iter().cloned());
                         }
                         argv.extend(include_flags.iter().cloned());
+                        if coverage {
+                            argv.push(COVERAGE_FLAG.into());
+                        }
                         argv.extend([
                             "-MD".into(),
                             "-MF".into(),
@@ -804,6 +891,17 @@ impl BuildGraph {
                         let order_only_inputs =
                             gen_outs.iter().map(|gen| graph.file(gen)).collect();
                         let obj_id = graph.file(&obj);
+                        // The notes file is a real product of the compile, not
+                        // a side effect to be rediscovered later: declaring it
+                        // puts the raw coverage data in the CAS with everything
+                        // else, and means a cache hit restores the pair gcov
+                        // needs rather than half of it.
+                        let mut outputs = vec![obj_id];
+                        if coverage {
+                            let note = notes_path(&obj);
+                            outputs.push(graph.file(&note));
+                            notes.push(note);
+                        }
                         let action = graph.push_action(ActionNode {
                             id: format!("compile:{name}:{src}"),
                             desc: format!("CC {src} ({name})"),
@@ -818,17 +916,32 @@ impl BuildGraph {
                             pass_env: Vec::new(),
                             inputs,
                             order_only_inputs,
-                            outputs: vec![obj_id],
+                            outputs,
                             output_dirs: Vec::new(),
                             depfile: Some(depfile),
                             depfile_format: crate::depfile::Format::Make,
                             flaky_retries: 0,
                             stable_stamps: Vec::new(),
                             volatile_stamps: Vec::new(),
+                            coverage: None,
                         })?;
                         target_node.actions.push(action);
                         objs.push(obj);
                         obj_ids.push(obj_id);
+                    }
+                    if coverage {
+                        // Inherited before use: the counters a test writes
+                        // cover every object linked into it, including a
+                        // library's, so the notes have to travel with the
+                        // dependency edge the same way the archive does.
+                        for dep in &target.deps {
+                            if let Some(inherited) = coverage_notes.get(dep) {
+                                notes.extend(inherited.iter().cloned());
+                            }
+                        }
+                        notes.sort();
+                        notes.dedup();
+                        coverage_notes.insert(name.clone(), notes.clone());
                     }
 
                     match target.kind {
@@ -860,6 +973,7 @@ impl BuildGraph {
                                 flaky_retries: 0,
                                 stable_stamps: Vec::new(),
                                 volatile_stamps: Vec::new(),
+                                coverage: None,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![lib_id];
@@ -881,6 +995,13 @@ impl BuildGraph {
                             argv.extend(tc.ldflags.iter().cloned());
                             argv.extend(profile_flags.ldflags.iter().cloned());
                             argv.extend(target.ldflags.iter().cloned());
+                            // The link needs it too: without libgcov the
+                            // instrumented objects have nothing to write their
+                            // counters with, and the failure is an undefined
+                            // `__gcov_*` symbol rather than an empty report.
+                            if coverage {
+                                argv.push(COVERAGE_FLAG.into());
+                            }
                             argv.extend(["-o".into(), bin.clone()]);
                             let mut inputs = obj_ids.clone();
                             for lib in &libs {
@@ -908,6 +1029,7 @@ impl BuildGraph {
                                 flaky_retries: 0,
                                 stable_stamps: Vec::new(),
                                 volatile_stamps: Vec::new(),
+                                coverage: None,
                             })?;
                             target_node.actions.push(action);
                             target_node.outputs = vec![bin_id];
@@ -917,8 +1039,58 @@ impl BuildGraph {
                             );
                             if target.kind == TargetKind::CcTest {
                                 let mut stamp_ids = Vec::new();
+                                let mut counter_stamp_ids = Vec::new();
+                                let mut gcda_dirs = Vec::new();
                                 for shard in test_shards(&tree, name, target.shard_count) {
                                     let stamp_id = graph.file(&shard.stamp);
+                                    let mut outputs = vec![stamp_id];
+                                    let mut env = shard.env;
+                                    let mut clean_dirs = Vec::new();
+                                    let mut output_dirs = Vec::new();
+                                    if coverage {
+                                        // Two things happen here, and the first
+                                        // is what makes the tracefile
+                                        // reproducible. `.gcda` counters
+                                        // *accumulate*: run the same binary
+                                        // twice and the hit counts double, so a
+                                        // rerun of an unchanged build would
+                                        // report different numbers and read as
+                                        // nondeterminism in the build rather
+                                        // than in gcov's data model. A
+                                        // `clean_dir` is emptied before every
+                                        // execution including a
+                                        // `--check-determinism` rerun, so the
+                                        // property holds by construction.
+                                        //
+                                        // The second is that they land there at
+                                        // all. gcc writes `.gcda` beside the
+                                        // object, and the object tree holds
+                                        // declared outputs -- it cannot be
+                                        // emptied. `GCOV_PREFIX` relocates
+                                        // them; `_STRIP` drops the absolute
+                                        // path gcc would otherwise mirror,
+                                        // whose components differ per machine.
+                                        env.insert("GCOV_PREFIX".to_string(), shard.gcda.clone());
+                                        env.insert(
+                                            "GCOV_PREFIX_STRIP".to_string(),
+                                            GCOV_PREFIX_STRIP.to_string(),
+                                        );
+                                        clean_dirs.push(shard.gcda.clone());
+                                        // Raw data is a declared product, so it
+                                        // is content-addressed like any other
+                                        // and a cached test still has counters
+                                        // to report from.
+                                        output_dirs.push(shard.gcda.clone());
+                                        gcda_dirs.push(shard.gcda.clone());
+                                        // The directory's file list and
+                                        // digests become a graph input through
+                                        // this stamp. A success stamp is empty
+                                        // by design and cannot distinguish two
+                                        // different counter sets.
+                                        let counter_stamp = graph.file(&shard.coverage_stamp);
+                                        outputs.push(counter_stamp);
+                                        counter_stamp_ids.push(counter_stamp);
+                                    }
                                     let test = graph.push_action(ActionNode {
                                         id: shard.id,
                                         desc: shard.desc,
@@ -927,22 +1099,75 @@ impl BuildGraph {
                                         sandbox: target.sandbox,
                                         argv: vec![bin.clone()],
                                         followup_argv: Vec::new(),
-                                        clean_dirs: Vec::new(),
+                                        clean_dirs,
                                         preserve_outputs: false,
-                                        env: shard.env,
+                                        env,
                                         pass_env: Vec::new(),
                                         inputs: vec![bin_id],
                                         order_only_inputs: Vec::new(),
-                                        outputs: vec![stamp_id],
-                                        output_dirs: Vec::new(),
+                                        outputs,
+                                        output_dirs,
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
                                         flaky_retries: target.flaky_retries,
                                         stable_stamps: Vec::new(),
                                         volatile_stamps: Vec::new(),
+                                        coverage: None,
                                     })?;
                                     target_node.actions.push(test);
                                     stamp_ids.push(stamp_id);
+                                }
+                                if coverage {
+                                    // One merge per test target rather than one
+                                    // for the workspace: a single global merge
+                                    // would rerun whenever any test did, and
+                                    // "change one file, re-measure one test" is
+                                    // the behaviour that makes coverage usable
+                                    // in an edit loop.
+                                    let notes =
+                                        coverage_notes.get(name).cloned().unwrap_or_default();
+                                    let lcov =
+                                        format!("{COVERAGE_DIR}/{tree}/{}.lcov", path_key(name));
+                                    // Content stamps, rather than the empty
+                                    // success stamps, put the exact raw
+                                    // counter trees in the merge key.
+                                    let mut inputs = counter_stamp_ids;
+                                    inputs.push(bin_id);
+                                    inputs.extend(notes.iter().map(|note| graph.file(note)));
+                                    let lcov_id = graph.file(&lcov);
+                                    let merge = graph.push_action(ActionNode {
+                                        id: format!("coverage:{name}"),
+                                        desc: format!("COV {name}"),
+                                        kind: ActionKind::Coverage,
+                                        target: name.clone(),
+                                        sandbox: false,
+                                        // The reporter, and only the reporter:
+                                        // its identity belongs in the action
+                                        // key, and a different `gcov` reads the
+                                        // same counters differently.
+                                        argv: vec![tc.gcov.clone()],
+                                        followup_argv: Vec::new(),
+                                        clean_dirs: Vec::new(),
+                                        preserve_outputs: false,
+                                        env: BTreeMap::new(),
+                                        pass_env: Vec::new(),
+                                        inputs,
+                                        order_only_inputs: Vec::new(),
+                                        outputs: vec![lcov_id],
+                                        output_dirs: Vec::new(),
+                                        depfile: None,
+                                        depfile_format: crate::depfile::Format::Make,
+                                        flaky_retries: 0,
+                                        stable_stamps: Vec::new(),
+                                        volatile_stamps: Vec::new(),
+                                        coverage: Some(CoverageSpec {
+                                            gcda_dirs,
+                                            notes,
+                                            output: lcov,
+                                        }),
+                                    })?;
+                                    target_node.actions.push(merge);
+                                    stamp_ids.push(lcov_id);
                                 }
                                 target_node.outputs = stamp_ids;
                             }
@@ -982,6 +1207,12 @@ impl BuildGraph {
     }
 
     fn push_action(&mut self, action: ActionNode) -> Result<ActionId> {
+        if (action.kind == ActionKind::Coverage) != action.coverage.is_some() {
+            bail!(
+                "action {:?} must carry coverage metadata exactly when its kind is coverage",
+                action.id
+            );
+        }
         let id = self.actions.len();
         for &out in &action.outputs {
             if let Some(other) = self.files[out].producer {
@@ -1464,7 +1695,54 @@ struct TestShard {
     id: String,
     desc: String,
     stamp: String,
+    /// Where this shard's `.gcda` counters go. Per shard, not per target: it is
+    /// reset before every execution, so two shards sharing one would each empty
+    /// the other's data as they started.
+    gcda: String,
+    /// Content-sensitive graph edge for the otherwise dynamically named files
+    /// in `gcda`.
+    coverage_stamp: String,
     env: BTreeMap<String, String>,
+}
+
+/// The name of the object file compiled from `src`, without its directory.
+///
+/// Coverage flattens the source path into it — `src/a/util.c` becomes
+/// `src@a@util.c` — for a reason that is entirely gcc's: a `.gcda` is named
+/// after the object's *base* name once `GCOV_PREFIX_STRIP` has removed the
+/// directories, so `a/util.c` and `b/util.c` in one target would both write
+/// `util.c.gcda`. gcc notices ("overwriting an existing profile data with a
+/// different checksum") and one of the two is lost, which is a silently
+/// incomplete report rather than a failure.
+///
+/// Only coverage builds pay for it: an ordinary build keeps the readable
+/// mirrored tree, and the two live in different output trees anyway. The
+/// target is part of the digest because `GCOV_PREFIX_STRIP` also removes the
+/// target directory: two linked targets compiling the same source must not
+/// write one flattened counter file. A source basename remains in front so a
+/// report directory is still inspectable by a person.
+fn object_key(target: &str, src: &str, coverage: bool) -> String {
+    match coverage {
+        true => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(target.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(src.as_bytes());
+            let digest = hasher.finalize().to_hex();
+            let basename = src.rsplit('/').next().unwrap_or(src);
+            format!("{basename}-{}", &digest[..16])
+        }
+        false => src.to_string(),
+    }
+}
+
+/// The `.gcno` gcc writes for `obj`.
+///
+/// It replaces the object's extension rather than appending to it, so
+/// `x/main.c.o` yields `x/main.c.gcno`. Taken from what gcc does, not from what
+/// its documentation says about it.
+fn notes_path(obj: &str) -> String {
+    format!("{}.gcno", obj.strip_suffix(".o").unwrap_or(obj))
 }
 
 /// Split a test target into `total` shards.
@@ -1485,6 +1763,8 @@ fn test_shards(tree: &str, name: &str, total: u32) -> Vec<TestShard> {
             id: format!("test:{name}"),
             desc: format!("TEST {name}"),
             stamp: format!(".frost/test/{tree}/{key}/passed"),
+            gcda: format!("{COVERAGE_DIR}/{tree}/{key}/gcda"),
+            coverage_stamp: format!("{TREE_STAMP_DIR}/{tree}/coverage/{key}/contents"),
             env: BTreeMap::new(),
         }];
     }
@@ -1496,6 +1776,10 @@ fn test_shards(tree: &str, name: &str, total: u32) -> Vec<TestShard> {
                 id: format!("test:{name}#{index}/{total}"),
                 desc: format!("TEST {name} (shard {}/{total})", index + 1),
                 stamp: format!("{dir}/passed"),
+                gcda: format!("{COVERAGE_DIR}/{tree}/{key}/shard-{index}-of-{total}/gcda"),
+                coverage_stamp: format!(
+                    "{TREE_STAMP_DIR}/{tree}/coverage/{key}/shard-{index}-of-{total}/contents"
+                ),
                 env: BTreeMap::from([
                     ("TEST_SHARD_INDEX".to_string(), index.to_string()),
                     ("TEST_TOTAL_SHARDS".to_string(), total.to_string()),
@@ -1939,6 +2223,92 @@ mod tests {
         assert!(ids.contains(&"archive:util"));
         assert!(ids.contains(&"compile:app:src/main.c"));
         assert!(ids.contains(&"link:app"));
+    }
+
+    #[test]
+    fn coverage_is_a_content_keyed_configuration_with_one_merge_per_test() {
+        // Deliberately compile the same source in a library and the test that
+        // links it. GCOV_PREFIX_STRIP flattens both object directories, so the
+        // object basenames must carry the target identity or their counters
+        // collide at runtime.
+        let manifest = Manifest::parse_str(
+            r#"
+            [target.lib]
+            kind = "cc_library"
+            srcs = ["shared.c"]
+
+            [target.unit]
+            kind = "cc_test"
+            srcs = ["shared.c"]
+            deps = ["lib"]
+            "#,
+        )
+        .unwrap();
+        let ordinary = BuildGraph::from_manifest(&manifest).unwrap();
+        assert!(!ordinary.coverage);
+        assert!(ordinary
+            .actions
+            .iter()
+            .all(|action| action.kind != ActionKind::Coverage));
+
+        let graph = BuildGraph::from_manifest_instrumented(
+            &manifest,
+            "debug",
+            crate::manifest::HOST_PLATFORM,
+            true,
+        )
+        .unwrap();
+        assert!(graph.coverage);
+
+        let compiles = graph
+            .actions
+            .iter()
+            .filter(|action| action.kind == ActionKind::Compile)
+            .collect::<Vec<_>>();
+        assert_eq!(compiles.len(), 2);
+        assert!(compiles
+            .iter()
+            .all(|action| action.argv.iter().any(|arg| arg == COVERAGE_FLAG)));
+        let note_names = compiles
+            .iter()
+            .flat_map(|action| action.outputs.iter())
+            .map(|&file| &graph.files[file].path)
+            .filter(|path| path.ends_with(".gcno"))
+            .filter_map(|path| Path::new(path).file_name())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            note_names.len(),
+            2,
+            "linked targets must write distinct flattened counter names"
+        );
+
+        let test = graph
+            .actions
+            .iter()
+            .find(|action| action.id == "test:unit")
+            .unwrap();
+        assert_eq!(test.clean_dirs, test.output_dirs);
+        assert_eq!(test.clean_dirs.len(), 1);
+        let counter_stamp = test
+            .outputs
+            .iter()
+            .copied()
+            .find(|&file| graph.files[file].path.starts_with(TREE_STAMP_DIR))
+            .expect("the raw counter tree needs a content stamp");
+
+        let merge = graph
+            .actions
+            .iter()
+            .find(|action| action.id == "coverage:unit")
+            .unwrap();
+        assert!(merge.inputs.contains(&counter_stamp));
+        let spec = merge.coverage.as_ref().unwrap();
+        assert_eq!(spec.notes.len(), 2);
+        assert_eq!(spec.output, ".frost/coverage/debug+coverage/unit.lcov");
+        assert_eq!(
+            graph.targets["unit"].actions.last(),
+            Some(&(graph.actions.len() - 1))
+        );
     }
 
     #[test]
