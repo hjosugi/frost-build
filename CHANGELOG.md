@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-25
+
 ### Changed
 
 - Failure messages answer the next question, not just the current one. A
