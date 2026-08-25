@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-25
+
 ### Added
 
 - Resource-aware local scheduling. Targets may declare
