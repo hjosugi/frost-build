@@ -81,6 +81,13 @@ pub struct BuildStats {
     /// Estimated total work, before execution.
     pub estimated_work_ms: u64,
     pub executed: usize,
+    pub local_cpu_resources: usize,
+    pub local_ram_resources_mb: u64,
+    pub local_test_jobs: usize,
+    pub peak_cpu: usize,
+    pub peak_ram_mb: u64,
+    pub peak_tests: usize,
+    pub resource_constrained: bool,
 }
 
 impl BuildStats {

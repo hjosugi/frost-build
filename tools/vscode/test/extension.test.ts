@@ -81,6 +81,7 @@ test('activate registers exactly the commands package.json declares', () => {
       'frost.buildFileOwners',
       'frost.buildTarget',
       'frost.debugTarget',
+      'frost.refreshDaemonStatus',
       'frost.refreshTargets',
       'frost.test',
       'frost.testTarget',
@@ -88,6 +89,23 @@ test('activate registers exactly the commands package.json declares', () => {
   );
   assert.ok(recorded.taskProviders.has('frost'), 'a frost task provider is registered');
   assert.ok(recorded.status.shown, 'the status item is visible from activation');
+});
+
+test('the status bar reports daemon state without replacing the build result', async (t) => {
+  if (!haveFrost) {
+    t.skip('needs target/release/frost and sample_multi');
+    return;
+  }
+  useWorkspace();
+  activate();
+  const refresh = recorded.commands.get('frost.refreshDaemonStatus');
+  assert.ok(refresh);
+  await refresh();
+  assert.match(recorded.status.text, /frostd/);
+  // The checked-in extension can be tested beside an older release binary;
+  // that is intentionally the quiet unavailable state, not a parse of prose.
+  assert.match(recorded.status.tooltip, /Daemon:/);
+  assert.ok(recorded.status.text.includes('tools'), recorded.status.text);
 });
 
 test('the editor menu is gated on a context key activation actually sets', () => {

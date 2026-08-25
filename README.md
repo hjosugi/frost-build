@@ -192,7 +192,8 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   scanned after execution, recorded and published like any output, restored
   exactly on a hit, and represented in the graph by a content stamp, so
   dependents get real edges and early cutoff
-- parallel critical-path scheduler, captured diagnostics and `--keep-going`
+- parallel critical-path scheduler with CPU/RAM/exclusive admission,
+  test-specific concurrency, captured diagnostics and `--keep-going`
 - interactive TTY progress with job slots, cache/timing state, critical path,
   scrollable logs, automatic plain CI/pipe output and `--no-tui`
 - stat cache, parallel BLAKE3 hashing and toolchain closure fingerprinting
@@ -227,8 +228,8 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   Nushell; dynamic completion resolves workspace targets, profiles and platforms
 - `pick` provides multi-target fuzzy selection when `fzf` is installed
 - `query deps/rdeps/somepath` over the target graph with JSON output
-- `simulate`: deterministic scheduler comparison from journal durations, and
-  `build --stats` to calibrate it against a real run
+- `simulate`: deterministic scheduler and declared-resource comparison from
+  journal durations, and `build --stats` to calibrate it against a real run
 - per-workspace daemon (Unix socket or Windows loopback endpoint) with an
   in-process verified no-op path; a daemon build applies the invoking client's
   environment, so `--daemon` produces the same bytes as the same command

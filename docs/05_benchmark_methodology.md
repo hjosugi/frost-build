@@ -523,6 +523,31 @@ gates on the recorded host. It is not evidence that Frost wins a changed leaf;
 the same report shows the opposite, and no claim should omit that result or the
 recorded load.
 
+## Resource-aware scheduling calibration
+
+The #155 fixture contains four independent 120 ms Python actions, each
+declaring one CPU token and 600 MiB. Four workers and CPU tokens are available,
+but the 1,200 MiB RAM budget admits exactly two actions at once. The harness
+changes a declared salt before every run so the actions execute instead of
+being restored from cache, reads real `build --stats` makespan, then asks
+`simulate --json` for the critical-path/journal point over the durations that
+run recorded:
+
+```bash
+python3 scripts/bench_resource_scheduling.py \
+  --frost /absolute/path/to/cargo-target/release/frost --iterations 7 \
+  --out bench/baselines/<date>-issue-155-resource-scheduling.json
+```
+
+The checked
+[`2026-08-25-issue-155-resource-scheduling.json`](../bench/baselines/2026-08-25-issue-155-resource-scheduling.json)
+records every raw sample, host/load and tool versions. On its 8-CPU host the
+real median was 289 ms and the resource-aware simulation was 287 ms (ratio
+1.007). Both recorded peaks are the expected two CPU tokens and 1,200 MiB, with
+two admission waits. This calibrates the declared-resource model for this
+controlled sleep fixture; it does not model or claim memory-bandwidth, I/O or
+CPU-frequency contention for real compilers.
+
 ## How to make the benchmark real
 
 Replace simulated `.fb` sources with actual adapters:

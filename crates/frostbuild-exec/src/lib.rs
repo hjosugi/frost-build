@@ -36,12 +36,13 @@ mod process;
 mod progress;
 mod remote;
 mod report;
+mod resources;
 mod sandbox;
 mod schedule;
 mod toolchain;
 pub use fast_noop::{FastNoopDaemonHit, FastNoopHit, FastNoopWatchProof};
 use keys::{action_key_argv, path_is_inside, streamed_action_key, StreamedActionDescriptor};
-pub use options::{BuildOptions, Estimator, Scheduler, DEFAULT_TEST_TIMEOUT};
+pub use options::{BuildOptions, Estimator, ResourceLimits, Scheduler, DEFAULT_TEST_TIMEOUT};
 pub use process::{install_signal_handler, request_cancellation, resolve_timeout, was_cancelled};
 pub use progress::{progress_channel, ProgressEvent, ProgressSender, ProgressState};
 pub use report::{ActionResult, BuildReport, BuildStats, Outcome};
@@ -137,6 +138,9 @@ struct Shared {
     outcomes: Vec<Option<Outcome>>,
     pending: usize,
     abort: bool,
+    resources: resources::ResourceAdmission,
+    resource_constrained: bool,
+    resource_waiting: bool,
 }
 
 struct CommandBatch {
@@ -202,6 +206,7 @@ impl<'a> Engine<'a> {
         });
         let n = closure.len();
         let cas_max_bytes = opts.cas_max_bytes;
+        let resource_limits = opts.resources;
         let key_env = key_environment_snapshot();
         let command_env = ENV_PASSTHROUGH
             .iter()
@@ -233,6 +238,9 @@ impl<'a> Engine<'a> {
                 outcomes: vec![None; n],
                 pending: n,
                 abort: false,
+                resources: resources::ResourceAdmission::new(resource_limits),
+                resource_constrained: false,
+                resource_waiting: false,
             }),
             cv: Condvar::new(),
             cas: LocalCas::new(root, cas_max_bytes),
@@ -332,6 +340,13 @@ impl<'a> Engine<'a> {
             critical_path_ms: self.critical_path_ms,
             estimated_work_ms: self.estimated_work_ms,
             executed,
+            local_cpu_resources: self.opts.resources.cpu.max(1),
+            local_ram_resources_mb: self.opts.resources.ram_mb.max(1),
+            local_test_jobs: self.opts.resources.test_jobs.max(1),
+            peak_cpu: shared.resources.peak_cpu(),
+            peak_ram_mb: shared.resources.peak_ram_mb(),
+            peak_tests: shared.resources.peak_tests(),
+            resource_constrained: shared.resource_constrained,
         };
         let report = BuildReport {
             results,
@@ -582,7 +597,7 @@ impl<'a> Engine<'a> {
                     if s.abort && s.ready.is_empty() {
                         return;
                     }
-                    if let Some((_, Reverse(i))) = s.ready.pop() {
+                    if let Some(i) = self.claim_ready(&mut s) {
                         break i;
                     }
                     if s.pending == 0 {
@@ -637,6 +652,7 @@ impl<'a> Engine<'a> {
             });
 
             let mut s = self.shared.lock().unwrap();
+            self.release_resources(&mut s, local);
             let failed = matches!(outcome, Outcome::Failed { .. });
             s.outcomes[local] = Some(outcome);
             s.pending -= 1;
@@ -662,9 +678,11 @@ impl<'a> Engine<'a> {
             // scheduler lock. On a dependency chain this avoids 10k kernel
             // wakeups and ready-heap push/pop handoffs between workers.
             if !finished {
-                continuation = s.ready.pop().map(|(_, Reverse(local))| local);
+                continuation = self.claim_ready(&mut s);
             }
             let claimed = usize::from(continuation.is_some());
+            let wake_resource_waiters = s.resource_waiting;
+            s.resource_waiting = false;
             drop(s);
             if let (Some(progress), Some((state, duration_ms, detail))) =
                 (&self.opts.progress, progress_result)
@@ -681,7 +699,7 @@ impl<'a> Engine<'a> {
                     critical,
                 });
             }
-            if finished {
+            if finished || wake_resource_waiters {
                 // Everyone must wake to observe the end and return.
                 self.cv.notify_all();
             } else {
@@ -695,6 +713,43 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+    }
+
+    fn resources_fit(&self, s: &Shared, local: usize) -> bool {
+        let action = &self.graph.actions[self.closure[local]];
+        s.resources
+            .fits(action.resources, action.kind == ActionKind::Test)
+    }
+
+    fn claim_ready(&self, s: &mut Shared) -> Option<usize> {
+        let had_ready = !s.ready.is_empty();
+        let mut deferred = Vec::new();
+        let mut claimed = None;
+        while let Some(entry @ (_, Reverse(local))) = s.ready.pop() {
+            if self.resources_fit(s, local) {
+                claimed = Some(local);
+                break;
+            }
+            deferred.push(entry);
+        }
+        s.ready.extend(deferred);
+        let Some(local) = claimed else {
+            if had_ready {
+                s.resource_constrained = true;
+                s.resource_waiting = true;
+            }
+            return None;
+        };
+        let action = &self.graph.actions[self.closure[local]];
+        s.resources
+            .reserve(action.resources, action.kind == ActionKind::Test);
+        Some(local)
+    }
+
+    fn release_resources(&self, s: &mut Shared, local: usize) {
+        let action = &self.graph.actions[self.closure[local]];
+        s.resources
+            .release(action.resources, action.kind == ActionKind::Test);
     }
 
     fn process(&self, local: usize) -> Outcome {
@@ -1311,6 +1366,7 @@ mod tests {
                 depfile: None,
                 depfile_format: frostbuild_core::depfile::Format::Make,
                 flaky_retries: 0,
+                resources: Default::default(),
                 stable_stamps: stable.iter().map(|key| key.to_string()).collect(),
                 volatile_stamps: volatile.iter().map(|key| key.to_string()).collect(),
                 coverage: None,
@@ -1376,6 +1432,7 @@ mod tests {
                 depfile: None,
                 depfile_format: frostbuild_core::depfile::Format::Make,
                 flaky_retries: 0,
+                resources: Default::default(),
                 stable_stamps: Vec::new(),
                 volatile_stamps: Vec::new(),
                 coverage: None,
@@ -1402,6 +1459,18 @@ mod tests {
             action_key_argv(&primary_only, None),
             Cow::Borrowed(_)
         ));
+        let primary_key = digest(&primary_only);
+        let mut differently_scheduled = action(Vec::new(), Vec::new(), false);
+        differently_scheduled.resources = frostbuild_core::manifest::ActionResources {
+            cpu: 4,
+            ram_mb: 8_192,
+            exclusive: true,
+        };
+        assert_eq!(
+            primary_key,
+            digest(&differently_scheduled),
+            "resource admission policy must stay out of the action key"
+        );
         let jar = action(
             vec![vec!["jar".into(), "classes".into()]],
             vec![".frost/tmp/debug/java".into()],

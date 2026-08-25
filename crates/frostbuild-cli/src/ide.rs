@@ -147,6 +147,9 @@ pub(crate) fn run_ide(
         BuildRequest {
             targets: vec![target.clone()],
             jobs,
+            local_cpu_resources: None,
+            local_ram_resources: None,
+            local_test_jobs: None,
             keep_going: false,
             explain: false,
             verbose: false,

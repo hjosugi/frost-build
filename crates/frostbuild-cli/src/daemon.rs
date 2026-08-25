@@ -162,13 +162,33 @@ pub(crate) fn daemon_command(root: &std::path::Path, command: DaemonCmd) -> Resu
             }
             bail!("frostd did not become ready");
         }
-        DaemonCmd::Status => {
+        DaemonCmd::Status { json } => {
             let response = frostbuild_daemon::request(
                 root,
                 &Request::Status {
                     version: PROTOCOL_VERSION,
                 },
-            )?;
+            );
+            if json {
+                let (state, protocol) = match response {
+                    Ok(response) if is_protocol_mismatch(&response) => {
+                        ("protocol_mismatch", Some(response.version))
+                    }
+                    Ok(response) => ("running", Some(response.version)),
+                    Err(_) => ("stopped", None),
+                };
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "schema": "frost-daemon-status-v1",
+                        "state": state,
+                        "protocol": protocol,
+                        "expected_protocol": PROTOCOL_VERSION,
+                    })
+                );
+                return Ok(0);
+            }
+            let response = response?;
             if is_protocol_mismatch(&response) {
                 println!(
                     "frostd: running, but speaks protocol {} rather than {PROTOCOL_VERSION}",

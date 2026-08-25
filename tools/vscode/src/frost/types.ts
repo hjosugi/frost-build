@@ -23,6 +23,14 @@ export interface FrostInfo {
   [key: string]: string;
 }
 
+/** `frost daemon status --json`. */
+export interface FrostDaemonStatus {
+  schema: 'frost-daemon-status-v1';
+  state: 'running' | 'stopped' | 'protocol_mismatch';
+  protocol: number | null;
+  expected_protocol: number;
+}
+
 /** `frost query <fn> --json`. `paths`/`truncated` appear for `allpaths` only. */
 export interface QueryResult {
   query: string;

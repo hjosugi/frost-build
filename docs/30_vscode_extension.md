@@ -31,7 +31,13 @@ editor.
 Listed in [28_compatibility_contract.md](28_compatibility_contract.md). The
 short version: `frost info --json` for paths, `frost query targets` for the
 tree and the pickers, `frost query owners` for "build what owns this file", and
-`--no-tui` build output for diagnostics.
+`--no-tui` build output for diagnostics. `frost daemon status --json` is polled
+every five seconds for the status bar; stopped, running, and protocol-mismatch
+are data states, while an unavailable binary stays a quiet unknown indicator.
+
+The status bar keeps two independent pieces of state: daemon health and the
+last build/test/debug result. Refreshing daemon health therefore cannot erase a
+failure, and a successful build cannot make a stopped daemon look healthy.
 
 Diagnostics keep the target frost attributed them to (`frost (//core:core)`),
 which is the part a declarative problem matcher cannot do — a matcher sees the

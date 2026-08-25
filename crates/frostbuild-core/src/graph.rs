@@ -5,7 +5,9 @@ use std::rc::Rc;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::{Manifest, TargetKind, Toolchain, DEFAULT_PROFILE, HOST_PLATFORM};
+use crate::manifest::{
+    ActionResources, Manifest, TargetKind, Toolchain, DEFAULT_PROFILE, HOST_PLATFORM,
+};
 
 pub type FileId = usize;
 pub type ActionId = usize;
@@ -146,6 +148,10 @@ pub struct ActionNode {
     /// that failed does not deserve another try.
     #[serde(default)]
     pub flaky_retries: u32,
+    /// Admission tokens reserved while this action runs. Scheduling metadata,
+    /// intentionally excluded from the action key.
+    #[serde(default)]
+    pub resources: ActionResources,
     /// Stamp keys this action references whose values *are* action-key
     /// material. A new commit rebuilding the binary that embeds its SHA is the
     /// correct answer, not cache thrash.
@@ -477,6 +483,7 @@ impl BuildGraph {
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
                         flaky_retries: 0,
+                        resources: target.resources,
                         stable_stamps: Vec::new(),
                         volatile_stamps: Vec::new(),
                         coverage: None,
@@ -591,6 +598,7 @@ impl BuildGraph {
                             depfile: None,
                             depfile_format: crate::depfile::Format::Make,
                             flaky_retries: target.flaky_retries,
+                            resources: target.resources,
                             stable_stamps: Vec::new(),
                             volatile_stamps: Vec::new(),
                             coverage: None,
@@ -764,6 +772,7 @@ impl BuildGraph {
                         depfile,
                         depfile_format: target.depfile_format,
                         flaky_retries: 0,
+                        resources: target.resources,
                         stable_stamps,
                         volatile_stamps,
                         coverage: None,
@@ -829,6 +838,7 @@ impl BuildGraph {
                         depfile: None,
                         depfile_format: crate::depfile::Format::Make,
                         flaky_retries: 0,
+                        resources: target.resources,
                         stable_stamps: Vec::new(),
                         volatile_stamps: Vec::new(),
                         coverage: None,
@@ -921,6 +931,7 @@ impl BuildGraph {
                             depfile: Some(depfile),
                             depfile_format: crate::depfile::Format::Make,
                             flaky_retries: 0,
+                            resources: target.resources,
                             stable_stamps: Vec::new(),
                             volatile_stamps: Vec::new(),
                             coverage: None,
@@ -971,6 +982,7 @@ impl BuildGraph {
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
                                 flaky_retries: 0,
+                                resources: target.resources,
                                 stable_stamps: Vec::new(),
                                 volatile_stamps: Vec::new(),
                                 coverage: None,
@@ -1027,6 +1039,7 @@ impl BuildGraph {
                                 depfile: None,
                                 depfile_format: crate::depfile::Format::Make,
                                 flaky_retries: 0,
+                                resources: target.resources,
                                 stable_stamps: Vec::new(),
                                 volatile_stamps: Vec::new(),
                                 coverage: None,
@@ -1110,6 +1123,7 @@ impl BuildGraph {
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
                                         flaky_retries: target.flaky_retries,
+                                        resources: target.resources,
                                         stable_stamps: Vec::new(),
                                         volatile_stamps: Vec::new(),
                                         coverage: None,
@@ -1158,6 +1172,7 @@ impl BuildGraph {
                                         depfile: None,
                                         depfile_format: crate::depfile::Format::Make,
                                         flaky_retries: 0,
+                                        resources: target.resources,
                                         stable_stamps: Vec::new(),
                                         volatile_stamps: Vec::new(),
                                         coverage: Some(CoverageSpec {
@@ -2223,6 +2238,27 @@ mod tests {
         assert!(ids.contains(&"archive:util"));
         assert!(ids.contains(&"compile:app:src/main.c"));
         assert!(ids.contains(&"link:app"));
+    }
+
+    #[test]
+    fn target_resources_reach_every_action_without_changing_graph_shape() {
+        let manifest = Manifest::parse_str(
+            r#"
+            [target.heavy]
+            kind = "cc_binary"
+            srcs = ["a.c", "b.c"]
+            resources = { cpu = 2, ram_mb = 2048, exclusive = true }
+            "#,
+        )
+        .unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+        assert_eq!(graph.actions.len(), 3, "two compiles and one link");
+        assert!(graph.actions.iter().all(|action| action.resources
+            == crate::manifest::ActionResources {
+                cpu: 2,
+                ram_mb: 2048,
+                exclusive: true,
+            }));
     }
 
     #[test]

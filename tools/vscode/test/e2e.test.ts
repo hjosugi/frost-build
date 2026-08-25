@@ -77,6 +77,7 @@ test('activation registers every surface the manifest promises', () => {
       'frost.buildFileOwners',
       'frost.buildTarget',
       'frost.debugTarget',
+      'frost.refreshDaemonStatus',
       'frost.refreshTargets',
       'frost.test',
       'frost.testTarget',

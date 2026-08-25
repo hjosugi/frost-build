@@ -11,12 +11,13 @@
 //! uses, so a sweep describes the schedulers that would actually run. Results
 //! are deterministic, which is what makes them usable as a CI regression gate.
 //!
-//! What simulation does *not* model: I/O contention, memory bandwidth, CPU
-//! frequency scaling, and process startup. It measures the quality of the
-//! ordering, not absolute time. Calibrate against one real run before reading
+//! Declared CPU/RAM/exclusive/test admission can be modelled explicitly. What
+//! simulation does *not* model is I/O contention, memory bandwidth, CPU
+//! frequency scaling, and process startup. It measures ordering and declared
+//! admission, not absolute time. Calibrate against one real run before reading
 //! absolute numbers ([`Sweep::calibrate`]).
 
-use frostbuild_exec::{Estimator, Schedule, Scheduler, Simulation};
+use frostbuild_exec::{Estimator, ResourceLimits, Schedule, Scheduler, Simulation};
 
 pub use frostbuild_exec::{Estimator as SweepEstimator, Scheduler as SweepScheduler};
 
@@ -65,7 +66,26 @@ impl Sweep {
         jobs: &[usize],
         schedulers: &[Scheduler],
         estimators: &[Estimator],
+        plan_for: impl FnMut(Scheduler, Estimator) -> Schedule,
+    ) -> Self {
+        Self::run_with_resources(
+            jobs,
+            schedulers,
+            estimators,
+            plan_for,
+            ResourceLimits::for_jobs,
+        )
+    }
+
+    /// Resource-aware form used by `frost simulate`. Keeping it beside `run`
+    /// makes old callers explicit list-scheduling simulations while the CLI
+    /// models the same admission budgets as a real build.
+    pub fn run_with_resources(
+        jobs: &[usize],
+        schedulers: &[Scheduler],
+        estimators: &[Estimator],
         mut plan_for: impl FnMut(Scheduler, Estimator) -> Schedule,
+        mut limits_for: impl FnMut(usize) -> ResourceLimits,
     ) -> Self {
         let reference = plan_for(Scheduler::CriticalPath, Estimator::Journal);
         let durations = reference.duration_ms.clone();
@@ -87,7 +107,11 @@ impl Sweep {
                     points.push(Point {
                         scheduler,
                         estimator,
-                        simulation: plan.simulate_against(j, &durations),
+                        simulation: plan.simulate_against_with_resources(
+                            j,
+                            &durations,
+                            limits_for(j),
+                        ),
                     });
                 }
             }

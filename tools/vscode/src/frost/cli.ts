@@ -4,7 +4,7 @@
 
 import { spawn } from 'node:child_process';
 
-import type { FrostInfo, QueryResult } from './types';
+import type { FrostDaemonStatus, FrostInfo, QueryResult } from './types';
 
 export interface FrostRun {
   code: number;
@@ -70,6 +70,43 @@ export async function readInfo(options: FrostCliOptions): Promise<FrostInfo> {
     throw new Error(`frost info failed (${run.code}): ${run.output.trim()}`);
   }
   return JSON.parse(run.stdout) as FrostInfo;
+}
+
+/** `frost daemon status --json`. A stopped daemon is a successful result. */
+export async function readDaemonStatus(
+  options: FrostCliOptions,
+): Promise<FrostDaemonStatus> {
+  const run = await runFrost(['daemon', 'status', '--json'], options);
+  if (run.code !== 0) {
+    throw new Error(
+      `frost daemon status failed (${run.code}): ${run.output.trim()}`,
+    );
+  }
+  return parseDaemonStatus(run.stdout);
+}
+
+/** Validate the small contract before editor code trusts an arbitrary binary. */
+export function parseDaemonStatus(text: string): FrostDaemonStatus {
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== 'object') {
+    throw new Error('frost daemon status returned a non-object');
+  }
+  const candidate = value as Partial<FrostDaemonStatus>;
+  const states: FrostDaemonStatus['state'][] = [
+    'running',
+    'stopped',
+    'protocol_mismatch',
+  ];
+  if (
+    candidate.schema !== 'frost-daemon-status-v1' ||
+    !candidate.state ||
+    !states.includes(candidate.state) ||
+    (candidate.protocol !== null && typeof candidate.protocol !== 'number') ||
+    typeof candidate.expected_protocol !== 'number'
+  ) {
+    throw new Error('frost daemon status returned an unsupported payload');
+  }
+  return candidate as FrostDaemonStatus;
 }
 
 /**

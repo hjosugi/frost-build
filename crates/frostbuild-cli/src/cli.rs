@@ -80,6 +80,15 @@ pub(crate) enum Cmd {
         /// Number of parallel jobs (default: number of CPUs)
         #[arg(short = 'j', long)]
         jobs: Option<usize>,
+        /// CPU admission tokens available to local actions (default: host CPUs)
+        #[arg(long, value_name = "N")]
+        local_cpu_resources: Option<usize>,
+        /// RAM admission budget in MiB (default: physical host RAM)
+        #[arg(long, value_name = "MIB")]
+        local_ram_resources: Option<u64>,
+        /// Maximum concurrently running test actions (default: -j)
+        #[arg(long, value_name = "N")]
+        local_test_jobs: Option<usize>,
         /// Keep building independent actions after a failure
         #[arg(short = 'k', long)]
         keep_going: bool,
@@ -335,6 +344,15 @@ pub(crate) enum Cmd {
         targets: Vec<String>,
         #[arg(short = 'j', long)]
         jobs: Option<usize>,
+        /// CPU admission tokens available to local actions (default: host CPUs)
+        #[arg(long, value_name = "N")]
+        local_cpu_resources: Option<usize>,
+        /// RAM admission budget in MiB (default: physical host RAM)
+        #[arg(long, value_name = "MIB")]
+        local_ram_resources: Option<u64>,
+        /// Maximum concurrently running test actions (default: -j)
+        #[arg(long, value_name = "N")]
+        local_test_jobs: Option<usize>,
         #[arg(short = 'k', long)]
         keep_going: bool,
         #[arg(long)]
@@ -572,6 +590,15 @@ pub(crate) enum Cmd {
         /// Worker counts to sweep (default: 1,2,4,8,16 capped at this host)
         #[arg(long, value_delimiter = ',')]
         jobs: Option<Vec<usize>>,
+        /// CPU admission tokens available to local actions (default: host CPUs)
+        #[arg(long, value_name = "N")]
+        local_cpu_resources: Option<usize>,
+        /// RAM admission budget in MiB (default: physical host RAM)
+        #[arg(long, value_name = "MIB")]
+        local_ram_resources: Option<u64>,
+        /// Maximum concurrently simulated test actions (default: point's -j)
+        #[arg(long, value_name = "N")]
+        local_test_jobs: Option<usize>,
         #[arg(
             long,
             default_value = "debug",
@@ -855,7 +882,12 @@ const DEFAULT_ALLPATHS_LIMIT: usize = 4096;
 #[derive(Subcommand)]
 pub(crate) enum DaemonCmd {
     Start,
-    Status,
+    Status {
+        /// Emit one machine-readable JSON object. A stopped daemon is a state,
+        /// not a command failure, when this form is requested.
+        #[arg(long)]
+        json: bool,
+    },
     Stop,
     Restart,
     #[command(hide = true)]

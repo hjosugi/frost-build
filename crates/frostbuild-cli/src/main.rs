@@ -59,7 +59,7 @@ use crate::journal::{run_journal_diff, run_journal_export};
 use crate::launch::{run_debug, run_target};
 use crate::ninja::import_ninja;
 use crate::query::run_query;
-use crate::simulate::run_simulate;
+use crate::simulate::{run_simulate, SimulateRequest};
 use crate::style::{run_fmt, run_lint};
 use crate::watch::{run_dev, run_watch, WatchRequest};
 
@@ -210,6 +210,9 @@ fn run(cli: Cli) -> Result<i32> {
         Cmd::Build {
             targets,
             jobs,
+            local_cpu_resources,
+            local_ram_resources,
+            local_test_jobs,
             keep_going,
             explain,
             verbose,
@@ -237,6 +240,9 @@ fn run(cli: Cli) -> Result<i32> {
             BuildRequest {
                 targets,
                 jobs,
+                local_cpu_resources,
+                local_ram_resources,
+                local_test_jobs,
                 keep_going,
                 explain,
                 verbose,
@@ -368,6 +374,9 @@ fn run(cli: Cli) -> Result<i32> {
         Cmd::Test {
             targets,
             jobs,
+            local_cpu_resources,
+            local_ram_resources,
+            local_test_jobs,
             keep_going,
             timeout,
             affected,
@@ -400,6 +409,9 @@ fn run(cli: Cli) -> Result<i32> {
             BuildRequest {
                 targets,
                 jobs,
+                local_cpu_resources,
+                local_ram_resources,
+                local_test_jobs,
                 keep_going,
                 explain,
                 verbose: false,
@@ -473,10 +485,25 @@ fn run(cli: Cli) -> Result<i32> {
         Cmd::Simulate {
             targets,
             jobs,
+            local_cpu_resources,
+            local_ram_resources,
+            local_test_jobs,
             profile,
             platform,
             json,
-        } => run_simulate(&root, targets, jobs, &profile, &platform, json),
+        } => run_simulate(
+            &root,
+            SimulateRequest {
+                targets,
+                jobs,
+                local_cpu_resources,
+                local_ram_resources,
+                local_test_jobs,
+                profile,
+                platform,
+                json,
+            },
+        ),
         Cmd::Query { function } => run_query(&root, &function),
         Cmd::Fmt { check } => run_fmt(&root, check),
         Cmd::Lint { json } => run_lint(&root, json),

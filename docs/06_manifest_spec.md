@@ -202,6 +202,43 @@ caching, failure cleanup, `test --affected` and `test --no-cache` behave
 identically. Test targets do not declare `outputs`, steps, clean directories or
 depfiles.
 
+## Resource-aware scheduling
+
+Any target may declare scheduler admission requirements. The declaration is
+copied to each action produced for that target; it changes when an action may
+start, never what the action builds:
+
+```toml
+[target.lto_link]
+kind = "command"
+tool = "linker"
+args = ["--output", "${out_dir}/app"]
+inputs = ["objects/**"]
+outputs = [".frost/out/${config}/lto_link/app"]
+resources = { cpu = 4, ram_mb = 8192 }
+
+[target.hardware_test]
+kind = "test"
+tool = "runner"
+args = ["tests/hardware.py"]
+inputs = ["tests/hardware.py"]
+resources = { exclusive = true }
+```
+
+`cpu` is an integer token count (default 1), `ram_mb` is MiB (default 0,
+meaning no declared RAM reservation), and `exclusive = true` requires the
+action to run alone. Frost admits ready actions only while their combined
+requirements fit `--local-cpu-resources` and `--local-ram-resources`; defaults
+are the host's available CPU count and physical RAM. `-j` remains a separate
+upper bound on process count. An action declaring more than the configured
+host budget is admitted alone while consuming that whole budget, rather than
+deadlocking.
+
+`--local-test-jobs` independently caps running test actions without lowering
+compile/link parallelism. `frost simulate` accepts the same three flags and
+uses the same deterministic admission rules; `build --stats` reports limits,
+observed peaks, and whether admission constrained the run.
+
 A test or `cc_test` target may declare `shard_count = N`, which makes it N
 independently keyed, cached and scheduled actions instead of one. Frost does not
 divide the cases — it cannot know them — it tells the runner which slice is its

@@ -5,6 +5,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Resource-aware local scheduling. Targets may declare
+  `resources = { cpu, ram_mb, exclusive }`; the executor reserves those tokens
+  under host-derived or explicitly configured CPU/RAM budgets while `-j`
+  remains the process ceiling. `--local-test-jobs` caps only test actions,
+  `simulate` uses the same admission model, and `build --stats` reports the
+  configured limits, observed peaks, and whether resources constrained the
+  run. Resource policy is deliberately excluded from action keys.
+
+- A machine-readable `frost daemon status --json` surface and daemon health in
+  the in-repository VS Code status bar. The bar retains the last build result
+  independently, distinguishes running/stopped/protocol-mismatch states, polls
+  every five seconds, and can be refreshed manually without parsing human log
+  text.
+
 ## [0.10.0] - 2026-08-25
 
 ### Changed

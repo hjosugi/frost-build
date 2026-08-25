@@ -20,7 +20,7 @@ end of this document.
 | `frost.toml` grammar and keys | A manifest that loads keeps loading. Keys are added, not repurposed; a key's meaning does not change under the same name | [06_manifest_spec.md](06_manifest_spec.md) plus the parser's own test suite |
 | CLI subcommand names, long options, positionals | A command line that works keeps working. Options are added, not renamed | `cli_surface_tests::the_command_surface_matches_the_checked_in_contract`, against `crates/frostbuild-cli/tests/cli-surface.txt` |
 | Exit codes | The three outcomes below stay distinguishable | `cli_surface_tests::exit_codes_keep_their_documented_meanings` |
-| `--json` output of `doctor`, `info`, `query`, `cache stats`, `lint` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
+| `--json` output of `doctor`, `info`, `query`, `cache stats`, `daemon status`, `lint` | Fields are added, never removed or retyped. A consumer that reads a field by name keeps working | the E2E tests that parse each one |
 | `frost lint` rule identifiers | A rule keeps its name and keeps meaning the same thing, so a `lint_allow` written into a manifest keeps silencing what it was written to silence. A retired rule stops being reported and stays accepted where it is named. The rules themselves are in [06_manifest_spec.md](06_manifest_spec.md#frost-lint) | `this_repository_and_its_samples_pass_their_own_lint` |
 | `frost info` keys | A key keeps naming the same thing. New keys are added | `info_answers_path_questions_without_a_graph` |
 | `.frost-version` format | One `X.Y.Z` line, optional `#` comments, whitespace insignificant. A file `frostw` reads today keeps being read the same way, by the wrapper and by frost itself | `wrapper::tests::a_version_is_read_the_way_the_wrapper_scripts_read_it`, `this_repository_checks_in_the_wrapper_frost_writes` |
@@ -79,6 +79,7 @@ by a row above; this says which ones an editor would notice first.
 | Surface | Used for |
 |---|---|
 | `frost info --json` | workspace root, `config`, and the output/bin directories a launch configuration needs |
+| `frost daemon status --json` | the status-bar daemon state and protocol compatibility indicator |
 | `frost query targets --output label-kind` | the sidebar tree and every target picker |
 | `frost query owners <path> --output label-kind` | "build the target that owns this file" |
 | `frost query <fn> --json` | the `targets` array, for pickers that do not need kinds |

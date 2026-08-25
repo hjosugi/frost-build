@@ -7,24 +7,46 @@ use frostbuild_core::journal::Journal;
 use crate::build::default_jobs;
 use crate::graph::{load_graph, resolve_targets};
 
+pub(crate) struct SimulateRequest {
+    pub(crate) targets: Vec<String>,
+    pub(crate) jobs: Option<Vec<usize>>,
+    pub(crate) local_cpu_resources: Option<usize>,
+    pub(crate) local_ram_resources: Option<u64>,
+    pub(crate) local_test_jobs: Option<usize>,
+    pub(crate) profile: String,
+    pub(crate) platform: String,
+    pub(crate) json: bool,
+}
+
 /// Compare scheduling strategies by planning them, not by running them.
 ///
 /// Every strategy is scored against the durations recorded in the journal, so
 /// the numbers are deterministic and no cache is touched. Simulation models
-/// ordering, not contention: treat it as "which strategy orders this graph
-/// best", and calibrate absolute times against a real `build --stats` run.
-pub(crate) fn run_simulate(
-    root: &std::path::Path,
-    targets: Vec<String>,
-    jobs: Option<Vec<usize>>,
-    profile: &str,
-    platform: &str,
-    json: bool,
-) -> Result<i32> {
+/// queue ordering and declared resource admission, but not unmodelled I/O or
+/// CPU contention; calibrate absolute times against a real `build --stats` run.
+pub(crate) fn run_simulate(root: &std::path::Path, request: SimulateRequest) -> Result<i32> {
     use frostbuild_bench::{render_table, Sweep, ESTIMATORS, SCHEDULERS};
     use frostbuild_exec::Schedule;
 
-    let graph = load_graph(root, profile, platform)?;
+    let SimulateRequest {
+        targets,
+        jobs,
+        local_cpu_resources,
+        local_ram_resources,
+        local_test_jobs,
+        profile,
+        platform,
+        json,
+    } = request;
+
+    if local_cpu_resources == Some(0) || local_test_jobs == Some(0) {
+        bail!("local CPU resources and local test jobs must be at least 1");
+    }
+    if local_ram_resources == Some(0) {
+        bail!("local RAM resources must be at least 1 MiB");
+    }
+
+    let graph = load_graph(root, &profile, &platform)?;
     let requested = resolve_targets(&graph, targets)?;
     let closure = graph.action_closure(&requested)?;
     if closure.is_empty() {
@@ -40,9 +62,21 @@ pub(crate) fn run_simulate(
     });
     let jobs = if jobs.is_empty() { vec![1] } else { jobs };
 
-    let sweep = Sweep::run(&jobs, &SCHEDULERS, &ESTIMATORS, |scheduler, estimator| {
-        Schedule::plan(&graph, closure.clone(), &journal, scheduler, estimator)
-    });
+    let sweep = Sweep::run_with_resources(
+        &jobs,
+        &SCHEDULERS,
+        &ESTIMATORS,
+        |scheduler, estimator| {
+            Schedule::plan(&graph, closure.clone(), &journal, scheduler, estimator)
+        },
+        |jobs| {
+            let mut limits = frostbuild_exec::ResourceLimits::host(jobs);
+            limits.cpu = local_cpu_resources.unwrap_or(limits.cpu);
+            limits.ram_mb = local_ram_resources.unwrap_or(limits.ram_mb);
+            limits.test_jobs = local_test_jobs.unwrap_or(jobs.max(1));
+            limits
+        },
+    );
 
     let recorded = graph
         .actions
@@ -67,6 +101,10 @@ pub(crate) fn run_simulate(
                     "makespan_ms": p.simulation.makespan_ms,
                     "utilization_pct": p.simulation.utilization_pct(),
                     "over_critical_path_pct": p.simulation.over_critical_path_pct(),
+                    "peak_cpu": p.simulation.peak_cpu,
+                    "peak_ram_mb": p.simulation.peak_ram_mb,
+                    "peak_test_jobs": p.simulation.peak_tests,
+                    "resource_waits": p.simulation.resource_waits,
                 })
             })
             .collect();
@@ -77,6 +115,11 @@ pub(crate) fn run_simulate(
                 "actions_with_recorded_duration": recorded,
                 "critical_path_ms": sweep.critical_path_ms,
                 "work_ms": sweep.work_ms,
+                "resource_limits": {
+                    "cpu": local_cpu_resources.unwrap_or_else(default_jobs),
+                    "ram_mb": local_ram_resources.unwrap_or_else(|| frostbuild_exec::ResourceLimits::host(host).ram_mb),
+                    "test_jobs": local_test_jobs,
+                },
                 "points": points,
             }))?
         );
@@ -86,6 +129,12 @@ pub(crate) fn run_simulate(
     println!(
         "frost: simulating {} actions from the journal (no build, no cache writes)",
         sweep.actions
+    );
+    println!(
+        "  resources: cpu {}, ram {} MiB, test jobs {}",
+        local_cpu_resources.unwrap_or_else(default_jobs),
+        local_ram_resources.unwrap_or_else(|| frostbuild_exec::ResourceLimits::host(host).ram_mb),
+        local_test_jobs.map_or_else(|| "per -j point".to_string(), |n| n.to_string())
     );
     if recorded < sweep.actions {
         println!(

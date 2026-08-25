@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 
 import { pickTarget, registerCommands } from './commands';
+import { DaemonStatusMonitor } from './daemon-status';
 import { DEBUG_TYPE, FrostDebugConfigurationProvider } from './debug';
 import { isTestKind } from './frost/targets';
 import { FrostRunner } from './runner';
@@ -25,7 +26,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('FrostBuild');
   const diagnostics = vscode.languages.createDiagnosticCollection('frost');
   const status = createStatusReporter();
-  context.subscriptions.push(output, diagnostics, status);
+  const daemonStatus = new DaemonStatusMonitor(status);
+  context.subscriptions.push(output, diagnostics, status, daemonStatus);
 
   const targets = new TargetIndex();
   const runner = new FrostRunner(output, diagnostics, status);
@@ -41,6 +43,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('frostTargets', tree),
+    vscode.commands.registerCommand('frost.refreshDaemonStatus', () =>
+      daemonStatus.refresh(),
+    ),
     vscode.tasks.registerTaskProvider(
       TASK_TYPE,
       new FrostTaskProvider(async (folder) => {
@@ -64,6 +69,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (event.affectsConfiguration('frostbuild')) {
         targets.clear();
         refreshViews();
+        void daemonStatus.refresh();
       }
     }),
     vscode.workspace.onDidSaveTextDocument((document) => {
@@ -76,6 +82,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   status.idle();
+  void daemonStatus.refresh();
 }
 
 export function deactivate(): void {

@@ -1,6 +1,6 @@
 frost --build-event-json=VALUE --config=VALUE --no-frostrc -C/--workspace=VALUE
 frost bazel-dev <target> <args...> --bazel-arg=VALUE --bazel=VALUE --debounce-ms=VALUE
-frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --sandbox --scheduler=VALUE --stamp-optional --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
+frost build <targets...> --all-platforms --check-determinism=VALUE --daemon --estimator=VALUE --explain --local-cpu-resources=VALUE --local-ram-resources=VALUE --local-test-jobs=VALUE --no-cache --no-stamp --no-tui --platform=VALUE --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --sandbox --scheduler=VALUE --stamp-optional --stats --timeout=VALUE --trace=VALUE -j/--jobs=VALUE -k/--keep-going -v/--verbose
 frost cache
 frost cache stats --json
 frost clean --cache --platform=VALUE --profile=VALUE
@@ -11,7 +11,7 @@ frost daemon
 frost daemon restart
 frost daemon serve
 frost daemon start
-frost daemon status
+frost daemon status --json
 frost daemon stop
 frost debug <target> <program_args...> --debugger=VALUE --platform=VALUE --print --profile=VALUE -j/--jobs=VALUE
 frost dev <target> <program_args...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --runner=VALUE -j/--jobs=VALUE
@@ -42,6 +42,6 @@ frost query rdeps <target> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost query somepath <from> <to> --attr=VALUE --json --kind=VALUE --output=VALUE
 frost query targets --attr=VALUE --json --kind=VALUE --output=VALUE
 frost run <target> <program_args...> --platform=VALUE --print --profile=VALUE --runner=VALUE -j/--jobs=VALUE
-frost simulate <targets...> --jobs=VALUE --json --platform=VALUE --profile=VALUE
-frost test <targets...> --affected --all --all-platforms --coverage --daemon --estimator=VALUE --explain --no-cache --no-stamp --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --runs-per-test=VALUE --sandbox --scheduler=VALUE --stamp-optional --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --test-output=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
+frost simulate <targets...> --jobs=VALUE --json --local-cpu-resources=VALUE --local-ram-resources=VALUE --local-test-jobs=VALUE --platform=VALUE --profile=VALUE
+frost test <targets...> --affected --all --all-platforms --coverage --daemon --estimator=VALUE --explain --local-cpu-resources=VALUE --local-ram-resources=VALUE --local-test-jobs=VALUE --no-cache --no-stamp --no-tui --platform=VALUE --predictive --profile=VALUE --remote-cache=VALUE --remote-timeout=VALUE --remote-upload --report=VALUE --runs-per-test=VALUE --sandbox --scheduler=VALUE --stamp-optional --test-arg=VALUE --test-env=VALUE --test-filter=VALUE --test-output=VALUE --timeout=VALUE -j/--jobs=VALUE -k/--keep-going
 frost watch <targets...> --debounce-ms=VALUE --platform=VALUE --profile=VALUE --run=VALUE -j/--jobs=VALUE
