@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-25
+
 ### Added
 
 - Resolver-free pinned external archives. Root `[fetch.NAME]` declarations
