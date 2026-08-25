@@ -112,6 +112,47 @@ one compact status tree. Platform runs are intentionally serialized because
 the journal and content cache are shared; actions inside each run remain
 parallel.
 
+## Pinned external archives
+
+The root manifest may pin a small, resolver-free external dependency. Package
+manifests may reference it but may not declare it:
+
+```toml
+[fetch.zlib]
+url = "https://example.invalid/zlib-1.3.1.tar.gz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000" # replace
+strip_prefix = "zlib-1.3.1" # optional archive directory
+vendor_dir = "vendor/zlib"
+
+[target.codec]
+kind = "cc_library"
+srcs = ["src/codec.c"]
+fetches = ["zlib"]
+```
+
+`url` must be absolute HTTP(S), `sha256` is exactly 64 hexadecimal characters,
+and `strip_prefix`/`vendor_dir` are safe relative paths. Vendor directories may
+not overlap. Archives are `.tar.gz`/`.tgz` or ZIP and may contain only regular
+files and directories; absolute paths, `..`, links, special files, non-UTF-8
+paths and the reserved `.frost-fetch.json` state file are rejected.
+
+`frost fetch [NAME ...]` downloads explicitly, verifies SHA-256 before
+publication, stores the verified archive in the local CAS, extracts into a
+sibling staging directory, and renames the complete tree into `vendor_dir`.
+A mismatch or extraction failure leaves an existing vendor tree unchanged.
+The command is a no-op when the declaration, state and current tree agree;
+`--force` downloads again. `--offline` never accesses the network and fails if
+the requested materialization is missing or stale. Frost refuses to replace a
+directory without matching ownership state.
+
+Build, test, query and graph commands never fetch. A target naming a missing or
+stale materialization fails with `run frost fetch NAME`. Every regular file in
+the fetched tree plus its state file is a declared input of every action for
+that target, so file content and executable-mode changes enter the existing
+action key. Tree entry additions/removals invalidate the stored graph and are
+enumerated on reload. Changing a fetched tree therefore rebuilds dependents by
+content; it never turns a build into a network operation.
+
 ## C/C++ targets
 
 ```toml

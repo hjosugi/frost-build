@@ -15,7 +15,7 @@ use clap::ValueHint;
 use clap_complete::ArgValueCompleter;
 
 use crate::completions::{
-    complete_attr_filter, complete_config, complete_info_key, complete_npm_script,
+    complete_attr_filter, complete_config, complete_fetch, complete_info_key, complete_npm_script,
     complete_platform, complete_profile, complete_remote_cache, complete_target,
     complete_target_kind, complete_test_target,
 };
@@ -73,6 +73,18 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Cmd {
+    /// Download and materialize manifest-pinned archives
+    Fetch {
+        /// Fetch names (default: every [fetch.*] declaration)
+        #[arg(add = ArgValueCompleter::new(complete_fetch))]
+        names: Vec<String>,
+        /// Download again even when the current materialization is valid
+        #[arg(long, conflicts_with = "offline")]
+        force: bool,
+        /// Never access the network; fail if a requested fetch is missing
+        #[arg(long)]
+        offline: bool,
+    },
     /// Build targets (default: workspace default_targets)
     Build {
         #[arg(add = ArgValueCompleter::new(complete_target))]

@@ -15,19 +15,20 @@ const MAGIC: &[u8; 8] = b"FRSTGR01";
 // Version 9 adds `[stamp]` and per-action stamp references, which a warm
 // invocation reads without parsing a manifest. Version 10 adds coverage
 // configuration and per-action coverage metadata. Version 11 adds scheduler-
-// only action resource requirements.
-const VERSION: u32 = 11;
+// only action resource requirements. Version 12 adds materialized fetch-tree
+// files to target action inputs.
+const VERSION: u32 = 12;
 
-/// Evidence that the manifest inputs which produced a cached graph are
+/// Evidence that the definition inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
-/// contributing manifest file plus a stat stamp of every workspace directory.
+/// contributing manifest/fetch-state file plus a stat stamp of every workspace directory.
 /// Directory mtimes change whenever entries are added/removed/renamed, so an
 /// equal stamp implies identical package discovery and glob expansion; file
 /// content edits cannot alter either. This makes the warm path sound while
 /// skipping TOML parsing entirely.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SourcesStamp {
-    /// (workspace-relative path, BLAKE3 of bytes) per contributing manifest.
+    /// (workspace-relative path, BLAKE3 of bytes) per definition file.
     manifests: Vec<(String, String)>,
     /// Identity of every non-ignored directory and its immediate entries.
     dirs: Vec<DirStamp>,
@@ -172,8 +173,8 @@ fn manifest_fingerprint_instrumented(
 fn sources_stamp(root: &Path, manifest_paths: &[String]) -> Result<SourcesStamp> {
     let mut manifests = Vec::with_capacity(manifest_paths.len() + 2);
     for rel in manifest_paths {
-        let bytes =
-            std::fs::read(root.join(rel)).with_context(|| format!("missing manifest {rel}"))?;
+        let bytes = std::fs::read(root.join(rel))
+            .with_context(|| format!("missing graph definition input {rel}"))?;
         manifests.push((rel.clone(), blake3::hash(&bytes).to_hex().to_string()));
     }
     // Root ignore files gate glob expansion, so their content (or absence)

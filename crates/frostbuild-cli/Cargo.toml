@@ -21,6 +21,7 @@ frostbuild-core.workspace = true
 frostbuild-exec.workspace = true
 frostbuild-bench.workspace = true
 frostbuild-daemon.workspace = true
+flate2.workspace = true
 glob.workspace = true
 notify.workspace = true
 libc.workspace = true
@@ -28,6 +29,7 @@ quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tar.workspace = true
 # Two readers of TOML that are not the manifest loader: `frost lsp` needs the
 # span from a parse failure itself, rather than from a second scan of the
 # document, to put a squiggle where the syntax error is; and `.frostrc` is a

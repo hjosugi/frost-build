@@ -2,6 +2,7 @@ pub mod cas;
 pub mod coverage;
 pub mod depfile;
 pub mod fastcdc;
+pub mod fetch;
 pub mod fmt;
 pub mod graph;
 pub mod graph_store;

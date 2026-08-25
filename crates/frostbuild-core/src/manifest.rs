@@ -260,6 +260,7 @@ pub const TARGET_KEYS: &[&str] = &[
     "kind",
     "srcs",
     "deps",
+    "fetches",
     "includes",
     "cflags",
     "ldflags",
@@ -294,6 +295,10 @@ struct RawTarget {
     srcs: Vec<String>,
     #[serde(default)]
     deps: Vec<String>,
+    /// Workspace-level `[fetch.*]` entries whose materialized trees this
+    /// target reads.
+    #[serde(default)]
+    fetches: Vec<String>,
     #[serde(default)]
     includes: Vec<String>,
     #[serde(default)]
@@ -406,6 +411,15 @@ struct RawStamp {
     stable_prefix: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFetch {
+    url: String,
+    sha256: String,
+    strip_prefix: Option<String>,
+    vendor_dir: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
@@ -419,6 +433,8 @@ struct RawManifest {
     profile: BTreeMap<String, RawProfile>,
     #[serde(default)]
     target: BTreeMap<String, RawTarget>,
+    #[serde(default)]
+    fetch: BTreeMap<String, RawFetch>,
     stamp: Option<RawStamp>,
     #[serde(default)]
     visibility: BTreeMap<String, RawVisibilityGroup>,
@@ -444,6 +460,15 @@ pub struct Stamp {
     pub command: Vec<String>,
     /// Keys beginning with this participate in action keys; the rest do not.
     pub stable_prefix: String,
+}
+
+/// One immutable archive fetched explicitly into a workspace-owned directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FetchSpec {
+    pub url: String,
+    pub sha256: String,
+    pub strip_prefix: Option<String>,
+    pub vendor_dir: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -517,6 +542,11 @@ pub struct Target {
     pub kind: TargetKind,
     pub srcs: Vec<String>,
     pub deps: Vec<String>,
+    /// Names of workspace-level pinned fetch declarations this target reads.
+    pub fetches: Vec<String>,
+    /// Materialized regular files, resolved during workspace loading and
+    /// appended to every action belonging to this target.
+    pub fetch_inputs: Vec<String>,
     /// Exported include directories, visible to this target and dependents.
     pub includes: Vec<String>,
     pub cflags: Vec<String>,
@@ -595,13 +625,16 @@ pub struct Manifest {
     pub platforms: BTreeMap<String, Platform>,
     pub profiles: BTreeMap<String, Profile>,
     pub targets: BTreeMap<String, Target>,
+    /// Pinned archives, materialized only by the explicit `frost fetch` command.
+    #[serde(default)]
+    pub fetches: BTreeMap<String, FetchSpec>,
     /// Workspace-level, so it is declared in the root manifest only.
     #[serde(default)]
     pub stamp: Option<Stamp>,
     /// Named visibility lists, workspace-level for the same reason.
     #[serde(default)]
     pub visibility_groups: BTreeMap<String, Vec<String>>,
-    /// Manifests which contributed to this workspace, used by graph caching.
+    /// Manifest and fetched-state definition files used by graph caching.
     pub manifest_paths: Vec<String>,
 }
 
@@ -789,11 +822,13 @@ impl Manifest {
                 manifest: None,
                 error: Some(error),
             },
-            Ok(manifest) => {
+            Ok(mut manifest) => {
                 let error = validate_dependencies(&manifest.targets)
                     .and_then(|()| validate_default_targets(&manifest))
                     .and_then(|()| validate_visibility(&manifest))
                     .and_then(|()| validate_platform_overlays(&manifest))
+                    .and_then(|()| validate_fetch_references(&manifest))
+                    .and_then(|()| resolve_fetch_inputs(workspace_root, &mut manifest))
                     .err();
                 Load {
                     manifest: Some(manifest),
@@ -801,6 +836,20 @@ impl Manifest {
                 }
             }
         }
+    }
+
+    /// Load declarations for the explicit `frost fetch` command.
+    ///
+    /// Unlike [`Self::load`], this intentionally does not require fetched
+    /// trees to exist yet; creating those trees is the command's whole job.
+    pub fn load_for_fetch(workspace_root: &Path) -> Result<Self> {
+        let manifest = Self::assemble(workspace_root)?;
+        validate_dependencies(&manifest.targets)?;
+        validate_default_targets(&manifest)?;
+        validate_visibility(&manifest)?;
+        validate_platform_overlays(&manifest)?;
+        validate_fetch_references(&manifest)?;
+        Ok(manifest)
     }
 
     /// Every manifest in the workspace, merged. Cross-file checks are the
@@ -838,10 +887,15 @@ impl Manifest {
             .map(|name| name.strip_prefix("//:").unwrap_or(name).to_string())
             .collect();
         manifest.manifest_paths.push(MANIFEST_FILE.to_string());
-        expand_manifest_paths(&mut manifest, workspace_root, "")?;
+        let fetch_roots: Vec<String> = manifest
+            .fetches
+            .values()
+            .map(|fetch| fetch.vendor_dir.clone())
+            .collect();
+        expand_manifest_paths(&mut manifest, workspace_root, "", &fetch_roots)?;
 
         if root_has_workspace {
-            let mut packages = discover_package_manifests(workspace_root)?;
+            let mut packages = discover_package_manifests(workspace_root, &fetch_roots)?;
             packages.sort();
             for rel in packages {
                 let package = rel
@@ -875,7 +929,13 @@ impl Manifest {
                         rel.display()
                     );
                 }
-                expand_manifest_paths(&mut child, workspace_root, &package)?;
+                if !child.fetches.is_empty() {
+                    bail!(
+                        "[fetch.*] entries in {} are workspace-level and belong in the root {MANIFEST_FILE}",
+                        rel.display()
+                    );
+                }
+                expand_manifest_paths(&mut child, workspace_root, &package, &fetch_roots)?;
                 for (local, mut target) in child.targets {
                     let canonical = format!("//{package}:{local}");
                     target.name = canonical.clone();
@@ -982,10 +1042,23 @@ impl Manifest {
         validate_default_targets(&manifest)?;
         validate_visibility(&manifest)?;
         validate_platform_overlays(&manifest)?;
+        validate_fetch_references(&manifest)?;
         Ok(manifest)
     }
 
     fn from_raw_unvalidated(raw: RawManifest) -> Result<Self> {
+        let mut fetches = BTreeMap::new();
+        for (name, spec) in raw.fetch {
+            if !valid_target_name(&name) {
+                bail!("fetch name must match [A-Za-z0-9_-]+, got {name:?}");
+            }
+            fetches.insert(
+                name.clone(),
+                build_fetch(spec).with_context(|| format!("invalid fetch {name:?}"))?,
+            );
+        }
+        validate_fetch_vendor_dirs(&fetches)?;
+
         let mut targets = BTreeMap::new();
         for (name, spec) in raw.target {
             let target =
@@ -1070,6 +1143,7 @@ impl Manifest {
                 })
                 .collect(),
             targets,
+            fetches,
             stamp: raw.stamp.map(build_stamp).transpose()?,
             visibility_groups: raw
                 .visibility
@@ -1091,6 +1165,44 @@ fn build_stamp(raw: RawStamp) -> Result<Stamp> {
     Ok(Stamp {
         command: raw.command,
         stable_prefix,
+    })
+}
+
+fn build_fetch(raw: RawFetch) -> Result<FetchSpec> {
+    let url = raw.url.trim();
+    if url != raw.url
+        || url.chars().any(char::is_whitespace)
+        || !(url.starts_with("https://") || url.starts_with("http://"))
+        || url
+            .split_once("://")
+            .is_none_or(|(_, rest)| rest.is_empty())
+    {
+        bail!("url must be an absolute http:// or https:// URL");
+    }
+    if raw.sha256.len() != 64 || !raw.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("sha256 must contain exactly 64 hexadecimal characters");
+    }
+    let strip_prefix = raw
+        .strip_prefix
+        .as_deref()
+        .map(validate_rel_path)
+        .transpose()
+        .context("strip_prefix")?;
+    let vendor_dir = validate_rel_path(&raw.vendor_dir).context("vendor_dir")?;
+    if vendor_dir == ".frost"
+        || vendor_dir.starts_with(".frost/")
+        || vendor_dir == ".git"
+        || vendor_dir.starts_with(".git/")
+        || vendor_dir == "target"
+        || vendor_dir.starts_with("target/")
+    {
+        bail!("vendor_dir {vendor_dir:?} uses a Frost-, Git-, or Cargo-owned directory");
+    }
+    Ok(FetchSpec {
+        url: raw.url,
+        sha256: raw.sha256.to_ascii_lowercase(),
+        strip_prefix,
+        vendor_dir,
     })
 }
 
@@ -1410,6 +1522,8 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         kind: spec.kind,
         srcs,
         deps: spec.deps,
+        fetches: spec.fetches,
+        fetch_inputs: Vec::new(),
         includes,
         cflags: spec.cflags,
         ldflags: spec.ldflags,
@@ -1469,13 +1583,24 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
 pub fn package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     let text = std::fs::read_to_string(root.join(MANIFEST_FILE))
         .with_context(|| format!("failed to read {}", root.join(MANIFEST_FILE).display()))?;
-    let declares_workspace = toml::from_str::<toml::Value>(&text)
-        .map(|value| value.get("workspace").is_some())
-        .unwrap_or(false);
+    let value = toml::from_str::<toml::Value>(&text).ok();
+    let declares_workspace = value
+        .as_ref()
+        .is_some_and(|value| value.get("workspace").is_some());
     if !declares_workspace {
         return Ok(Vec::new());
     }
-    let mut found = discover_package_manifests(root)?;
+    let fetch_roots: Vec<String> = value
+        .as_ref()
+        .and_then(|value| value.get("fetch"))
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|fetches| fetches.values())
+        .filter_map(|fetch| fetch.get("vendor_dir"))
+        .filter_map(toml::Value::as_str)
+        .filter_map(|path| validate_rel_path(path).ok())
+        .collect();
+    let mut found = discover_package_manifests(root, &fetch_roots)?;
     found.sort();
     Ok(found
         .into_iter()
@@ -1484,8 +1609,13 @@ pub fn package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
-    fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+fn discover_package_manifests(root: &Path, excluded_roots: &[String]) -> Result<Vec<PathBuf>> {
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        excluded_roots: &[String],
+        out: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -1494,6 +1624,15 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
             }
             let ty = entry.file_type()?;
             if ty.is_dir() && !ty.is_symlink() {
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if excluded_roots.contains(&relative) {
+                    continue;
+                }
                 // A subdirectory whose own manifest declares `[workspace]` is
                 // the root of a separate workspace: a vendored dependency, a
                 // sample, an unrelated project that happens to live in this
@@ -1504,7 +1643,7 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
                 if declares_workspace(&entry.path().join(MANIFEST_FILE)) {
                     continue;
                 }
-                walk(root, &entry.path(), out)?;
+                walk(root, &entry.path(), excluded_roots, out)?;
             } else if ty.is_file() && name == MANIFEST_FILE {
                 out.push(entry.path().strip_prefix(root).unwrap().to_path_buf());
             }
@@ -1512,7 +1651,7 @@ fn discover_package_manifests(root: &Path) -> Result<Vec<PathBuf>> {
         Ok(())
     }
     let mut out = Vec::new();
-    walk(root, root, &mut out)?;
+    walk(root, root, excluded_roots, &mut out)?;
     Ok(out)
 }
 
@@ -1549,11 +1688,23 @@ fn prefix_path(package: &str, path: &str) -> String {
     }
 }
 
+fn path_is_in_tree(path: &str, tree: &str) -> bool {
+    path == tree
+        || path
+            .strip_prefix(tree)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
 fn has_glob(path: &str) -> bool {
     path.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
 }
 
-fn expand_paths(root: &Path, package: &str, paths: &[String]) -> Result<Vec<String>> {
+fn expand_paths(
+    root: &Path,
+    package: &str,
+    paths: &[String],
+    excluded_roots: &[String],
+) -> Result<Vec<String>> {
     let mut expanded = Vec::new();
     let mut ignore_builder = ignore::gitignore::GitignoreBuilder::new(root);
     for file in [".gitignore", ".frostignore"] {
@@ -1585,6 +1736,9 @@ fn expand_paths(root: &Path, package: &str, paths: &[String]) -> Result<Vec<Stri
                 .replace('\\', "/");
             if !relative.starts_with(".frost/")
                 && !relative.starts_with(".git/")
+                && !excluded_roots
+                    .iter()
+                    .any(|excluded| path_is_in_tree(&relative, excluded))
                 && !ignored
                     .matched_path_or_any_parents(&item, false)
                     .is_ignore()
@@ -1606,16 +1760,21 @@ fn expand_paths(root: &Path, package: &str, paths: &[String]) -> Result<Vec<Stri
     Ok(expanded)
 }
 
-fn expand_manifest_paths(manifest: &mut Manifest, root: &Path, package: &str) -> Result<()> {
+fn expand_manifest_paths(
+    manifest: &mut Manifest,
+    root: &Path,
+    package: &str,
+    excluded_roots: &[String],
+) -> Result<()> {
     for (name, target) in manifest.targets.iter_mut() {
         target.package = package.to_string();
-        target.srcs = expand_paths(root, package, &target.srcs)
+        target.srcs = expand_paths(root, package, &target.srcs, excluded_roots)
             .with_context(|| format!("target {name:?} srcs"))?;
         if target.kind == TargetKind::KofunBinary {
             validate_kofun_binary_sources(&target.srcs)
                 .with_context(|| format!("target {name:?} expanded srcs"))?;
         }
-        target.inputs = expand_paths(root, package, &target.inputs)
+        target.inputs = expand_paths(root, package, &target.inputs, excluded_roots)
             .with_context(|| format!("target {name:?} inputs"))?;
         target.includes = target
             .includes
@@ -1671,6 +1830,115 @@ fn validate_dependencies(targets: &BTreeMap<String, Target>) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_fetch_vendor_dirs(fetches: &BTreeMap<String, FetchSpec>) -> Result<()> {
+    let entries: Vec<_> = fetches.iter().collect();
+    for (index, (name, spec)) in entries.iter().enumerate() {
+        for (other_name, other) in entries.iter().skip(index + 1) {
+            let left = format!("{}/", spec.vendor_dir);
+            let right = format!("{}/", other.vendor_dir);
+            if spec.vendor_dir == other.vendor_dir
+                || spec.vendor_dir.starts_with(&right)
+                || other.vendor_dir.starts_with(&left)
+            {
+                bail!(
+                    "fetches {name:?} and {other_name:?} have overlapping vendor_dir values {:?} and {:?}",
+                    spec.vendor_dir,
+                    other.vendor_dir
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_fetch_references(manifest: &Manifest) -> Result<()> {
+    for (target_name, target) in &manifest.targets {
+        let mut seen = std::collections::BTreeSet::new();
+        for name in &target.fetches {
+            if !seen.insert(name) {
+                bail!("target {target_name:?} lists fetch {name:?} more than once");
+            }
+            if !manifest.fetches.contains_key(name) {
+                let known: Vec<&str> = manifest.fetches.keys().map(String::as_str).collect();
+                if let Some(hint) = closest(name, known.iter().copied()) {
+                    bail!(
+                        "target {target_name:?} names unknown fetch {name:?}. did you mean {hint:?}?"
+                    );
+                }
+                bail!("target {target_name:?} names unknown fetch {name:?}");
+            }
+        }
+    }
+    for (fetch_name, fetch) in &manifest.fetches {
+        for (target_name, target) in &manifest.targets {
+            let written_paths = target
+                .outputs
+                .iter()
+                .chain(&target.output_dirs)
+                .chain(&target.clean_dirs)
+                .chain(target.depfile.iter());
+            for path in written_paths {
+                if path_is_in_tree(path, &fetch.vendor_dir)
+                    || path_is_in_tree(&fetch.vendor_dir, path)
+                {
+                    bail!(
+                        "fetch {fetch_name:?} vendor_dir {:?} overlaps path {path:?} written by target {target_name:?}",
+                        fetch.vendor_dir
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_fetch_inputs(workspace_root: &Path, manifest: &mut Manifest) -> Result<()> {
+    let fetches = manifest.fetches.clone();
+    for (target_name, target) in manifest.targets.iter_mut() {
+        let mut inputs = Vec::new();
+        for name in &target.fetches {
+            let spec = &fetches[name];
+            let vendor_root = workspace_root.join(&spec.vendor_dir);
+            crate::fetch::reject_symlink_components(workspace_root, &spec.vendor_dir)?;
+            let state = crate::fetch::FetchState::read(&vendor_root).map_err(|error| {
+                anyhow::anyhow!(
+                    "target {target_name:?} needs fetch {name:?}, which is missing or invalid at {:?}; run `frost fetch {name}` ({error:#})",
+                    spec.vendor_dir,
+                )
+            })?;
+            if state.schema != crate::fetch::STATE_SCHEMA
+                || state.name != *name
+                || state.url != spec.url
+                || state.sha256 != spec.sha256
+                || state.strip_prefix != spec.strip_prefix
+                || state.vendor_dir != spec.vendor_dir
+            {
+                bail!(
+                    "target {target_name:?} needs fetch {name:?}, but {:?} is stale for the current declaration; run `frost fetch {name}`",
+                    spec.vendor_dir
+                );
+            }
+            let snapshot = crate::fetch::snapshot_tree(&vendor_root)
+                .with_context(|| format!("invalid materialized fetch {name:?}"))?;
+            inputs.extend(
+                snapshot
+                    .files
+                    .into_iter()
+                    .map(|path| format!("{}/{path}", spec.vendor_dir)),
+            );
+            let state_path = format!("{}/{}", spec.vendor_dir, crate::fetch::STATE_FILE);
+            inputs.push(state_path.clone());
+            manifest.manifest_paths.push(state_path);
+        }
+        inputs.sort();
+        inputs.dedup();
+        target.fetch_inputs = inputs;
+    }
+    manifest.manifest_paths.sort();
+    manifest.manifest_paths.dedup();
     Ok(())
 }
 
@@ -3712,5 +3980,112 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pinned_fetch_declarations_are_closed_and_referenced_by_name() {
+        let hash = "A".repeat(64);
+        let manifest = Manifest::parse_str(&format!(
+            "[fetch.dep]\nurl = \"https://example.invalid/dep.tar.gz\"\n\
+             sha256 = \"{hash}\"\nstrip_prefix = \"dep-1\"\nvendor_dir = \"vendor/dep\"\n\
+             \n[target.app]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\nfetches = [\"dep\"]\n"
+        ))
+        .unwrap();
+        assert_eq!(manifest.targets["app"].fetches, ["dep"]);
+        assert_eq!(manifest.fetches["dep"].sha256, "a".repeat(64));
+
+        let unknown = Manifest::parse_str(
+            "[target.app]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\nfetches = [\"missing\"]\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(unknown.contains("unknown fetch \"missing\""), "{unknown}");
+
+        let overlap = Manifest::parse_str(&format!(
+            "[fetch.a]\nurl = \"https://example.invalid/a.zip\"\nsha256 = \"{}\"\nvendor_dir = \"vendor\"\n\
+             [fetch.b]\nurl = \"https://example.invalid/b.zip\"\nsha256 = \"{}\"\nvendor_dir = \"vendor/b\"\n\
+             [target.app]\nkind = \"cc_library\"\nsrcs = [\"a.c\"]\n",
+            "1".repeat(64),
+            "2".repeat(64)
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(overlap.contains("overlapping vendor_dir"), "{overlap}");
+
+        let written = Manifest::parse_str(&format!(
+            "[fetch.dep]\nurl = \"https://example.invalid/dep.zip\"\nsha256 = \"{}\"\nvendor_dir = \"vendor/dep\"\n\
+             [target.generate]\nkind = \"genrule\"\ncmd = \"generate\"\ninputs = [\"a\"]\noutputs = [\"vendor/dep/generated\"]\n",
+            "4".repeat(64)
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(written.contains("overlaps path"), "{written}");
+    }
+
+    #[test]
+    fn fetch_loading_is_network_free_and_resolves_materialized_files() {
+        let root =
+            std::env::temp_dir().join(format!("frost-core-fetch-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.c"), "int a(void) { return 1; }\n").unwrap();
+        let sha256 = "3".repeat(64);
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            format!(
+                "[workspace]\ndefault_targets = [\"app\"]\n\
+                 [fetch.dep]\nurl = \"https://example.invalid/dep.zip\"\nsha256 = \"{sha256}\"\nvendor_dir = \"vendor/dep\"\n\
+                 [target.app]\nkind = \"cc_library\"\nsrcs = [\"**/*.c\"]\nfetches = [\"dep\"]\n"
+            ),
+        )
+        .unwrap();
+
+        Manifest::load_for_fetch(&root).unwrap();
+        let missing = Manifest::load(&root).unwrap_err().to_string();
+        assert!(missing.contains("run `frost fetch dep`"), "{missing}");
+
+        let vendor = root.join("vendor/dep");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join("data.txt"), "pinned\n").unwrap();
+        std::fs::write(
+            vendor.join("foreign.c"),
+            "int foreign(void) { return 2; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vendor.join(MANIFEST_FILE),
+            "[target.foreign]\nkind = \"cc_library\"\nsrcs = [\"foreign.c\"]\n",
+        )
+        .unwrap();
+        let tree = crate::fetch::snapshot_tree(&vendor).unwrap();
+        crate::fetch::FetchState {
+            schema: crate::fetch::STATE_SCHEMA.to_string(),
+            name: "dep".to_string(),
+            url: "https://example.invalid/dep.zip".to_string(),
+            sha256,
+            strip_prefix: None,
+            vendor_dir: "vendor/dep".to_string(),
+            tree_digest: tree.digest,
+            cas_digest: "archive".to_string(),
+        }
+        .write(&vendor)
+        .unwrap();
+
+        let manifest = Manifest::load(&root).unwrap();
+        assert_eq!(manifest.targets.keys().collect::<Vec<_>>(), [&"app"]);
+        assert_eq!(manifest.targets["app"].srcs, ["a.c"]);
+        assert_eq!(
+            manifest.targets["app"].fetch_inputs,
+            [
+                "vendor/dep/.frost-fetch.json",
+                "vendor/dep/data.txt",
+                "vendor/dep/foreign.c",
+                "vendor/dep/frost.toml"
+            ]
+        );
+        assert!(manifest
+            .manifest_paths
+            .contains(&"vendor/dep/.frost-fetch.json".to_string()));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

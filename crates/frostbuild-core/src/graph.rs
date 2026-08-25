@@ -417,6 +417,11 @@ impl BuildGraph {
             let applied_platform =
                 matches!(resolved, std::borrow::Cow::Owned(_)).then(|| platform.to_string());
             let target = resolved.as_ref();
+            let fetch_inputs: Vec<FileId> = target
+                .fetch_inputs
+                .iter()
+                .map(|path| graph.file(path))
+                .collect();
 
             let dep_sets = |map: &HashMap<String, Rc<SharedSet>>| -> Vec<Rc<SharedSet>> {
                 target.deps.iter().map(|dep| map[dep].clone()).collect()
@@ -1197,6 +1202,19 @@ impl BuildGraph {
 
                     exported_includes.insert(name.clone(), include_set);
                     genrule_outputs.insert(name.clone(), SharedSet::join(Vec::new(), gen_parents));
+                }
+            }
+
+            // A target that declares a pinned fetch reads that materialized
+            // tree in every one of its actions. Treat the files exactly like
+            // ordinary declared inputs so content changes participate in the
+            // existing action-key machinery and never trigger network access.
+            for &action_id in &target_node.actions {
+                let inputs = &mut graph.actions[action_id].inputs;
+                for &input in &fetch_inputs {
+                    if !inputs.contains(&input) {
+                        inputs.push(input);
+                    }
                 }
             }
 

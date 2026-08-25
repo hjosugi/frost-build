@@ -5,6 +5,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Resolver-free pinned external archives. Root `[fetch.NAME]` declarations
+  bind an HTTP(S) tar.gz/ZIP to SHA-256 and a vendor directory; targets opt in
+  with `fetches`. `frost fetch` verifies before CAS publication and staged
+  materialization, is a network-free no-op when current, and exposes explicit
+  `--force` and `--offline` modes. Builds never fetch: missing state names the
+  command to run, while every fetched file participates in dependent action
+  keys. Archive path traversal, links/special files, symlinked vendor paths,
+  overlapping ownership and partial replacement are rejected.
+
 ## [0.11.0] - 2026-08-25
 
 ### Added

@@ -106,6 +106,10 @@ frost -C myrepo test --timeout 120
 frost -C myrepo build --sandbox
 frost -C myrepo build --check-determinism
 
+# Materialize root [fetch.NAME] pins explicitly; builds never use the network
+frost -C myrepo fetch
+frost -C myrepo fetch zlib --offline
+
 # Which scheduling strategy suits this graph? (plans, never builds)
 frost -C myrepo simulate --jobs 1,4,16
 frost -C myrepo build --stats -j 16          # then calibrate against a real run

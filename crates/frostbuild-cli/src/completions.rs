@@ -68,7 +68,16 @@ pub(crate) fn candidates(
 }
 
 fn completion_manifest() -> Option<Manifest> {
-    Manifest::load(&completion_workspace()).ok()
+    Manifest::load_reporting(&completion_workspace()).manifest
+}
+
+pub(crate) fn complete_fetch(current: &OsStr) -> Vec<CompletionCandidate> {
+    candidates(
+        current,
+        Manifest::load_for_fetch(&completion_workspace())
+            .into_iter()
+            .flat_map(|manifest| manifest.fetches.into_keys()),
+    )
 }
 
 pub(crate) fn complete_target(current: &OsStr) -> Vec<CompletionCandidate> {

@@ -5432,6 +5432,202 @@ impl ReleaseServer {
     }
 }
 
+fn fetch_prerequisites_present() -> bool {
+    let has = |tool: &str| {
+        Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    (has("curl") || has("wget")) && has("tar")
+}
+
+fn fetch_archive(scratch: &Path, value: &str) -> Vec<u8> {
+    let stage = scratch.join("fetch-stage");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(stage.join("package")).expect("create fetch archive tree");
+    std::fs::write(stage.join("package/value.txt"), value).expect("write fetched value");
+    let archive = scratch.join(if cfg!(windows) {
+        "dependency.zip"
+    } else {
+        "dependency.tar.gz"
+    });
+    let mut tar = Command::new("tar");
+    if cfg!(windows) {
+        tar.args(["-c", "--format=zip", "-f"]);
+    } else {
+        tar.args(["-c", "-z", "-f"]);
+    }
+    let packed = tar
+        .arg(&archive)
+        .arg("-C")
+        .arg(&stage)
+        .arg("package")
+        .output()
+        .expect("spawn tar for fetch archive");
+    assert!(
+        packed.status.success(),
+        "packing the fetch archive failed: {}",
+        normalized_output(&packed.stderr)
+    );
+    std::fs::read(archive).expect("read fetch archive")
+}
+
+fn write_fetch_manifest(workspace: &Workspace, url: &str, sha256: &str) {
+    let frost = serde_json::to_string(frost_bin()).unwrap();
+    let url = serde_json::to_string(url).unwrap();
+    std::fs::write(
+        workspace.dir.join("frost.toml"),
+        format!(
+            "[toolchain.tools]\nfrost = {frost}\n\
+             \n[fetch.dep]\nurl = {url}\nsha256 = \"{sha256}\"\n\
+             strip_prefix = \"package\"\nvendor_dir = \"vendor/dep\"\n\
+             \n[target.bundle]\nkind = \"command\"\ntool = \"frost\"\n\
+             args = [\"pack-jar\", \"--input\", \"vendor/dep\", \"--output\", \".frost/out/${{config}}/dep.jar\"]\n\
+             fetches = [\"dep\"]\noutputs = [\".frost/out/${{config}}/dep.jar\"]\n"
+        ),
+    )
+    .expect("write fetch manifest");
+}
+
+fn run_fetch(workspace: &Workspace, args: &[&str]) -> (bool, String) {
+    // Loopback test traffic must not be handed to a host/CI proxy.
+    workspace.frost_env(args, &[("NO_PROXY", "*"), ("no_proxy", "*")])
+}
+
+#[test]
+fn fetch_is_a_noop_until_force_redownloads() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping fetch E2E: curl/wget and tar are required");
+        return;
+    }
+    let workspace = Workspace::empty("fetch-noop-force");
+    let archive = fetch_archive(&workspace.dir, "one\n");
+    let sha256 = sha256_hex(&archive);
+    let server = ReleaseServer::start(vec![("/dependency".into(), archive)]);
+    write_fetch_manifest(
+        &workspace,
+        &format!("{}/dependency", server.base_url),
+        &sha256,
+    );
+
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep"]);
+    assert!(ok, "first fetch failed:\n{out}");
+    assert_eq!(server.requests(), 1);
+    let state: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(workspace.dir.join("vendor/dep/.frost-fetch.json")).unwrap(),
+    )
+    .unwrap();
+    let cas_digest = state["cas_digest"].as_str().unwrap();
+    assert!(workspace
+        .dir
+        .join(".frost/cas/objects")
+        .join(&cas_digest[..2])
+        .join(cas_digest)
+        .is_file());
+
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep"]);
+    assert!(ok, "no-op fetch failed:\n{out}");
+    assert!(out.contains("is up to date"), "{out}");
+    assert_eq!(server.requests(), 1, "a no-op fetch accessed the network");
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep", "--force"]);
+    assert!(ok, "forced fetch failed:\n{out}");
+    assert_eq!(server.requests(), 2, "--force did not redownload");
+}
+
+#[test]
+fn fetch_hash_mismatch_never_dirties_the_vendor_tree() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping fetch E2E: curl/wget and tar are required");
+        return;
+    }
+    let workspace = Workspace::empty("fetch-mismatch-atomic");
+    let archive = fetch_archive(&workspace.dir, "trusted\n");
+    let sha256 = sha256_hex(&archive);
+    let server = ReleaseServer::start(vec![("/dependency".into(), archive)]);
+    let url = format!("{}/dependency", server.base_url);
+    write_fetch_manifest(&workspace, &url, &sha256);
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep"]);
+    assert!(ok, "initial fetch failed:\n{out}");
+    let vendor = workspace.dir.join("vendor/dep/value.txt");
+    let before = std::fs::read(&vendor).unwrap();
+    let state = std::fs::read(workspace.dir.join("vendor/dep/.frost-fetch.json")).unwrap();
+
+    write_fetch_manifest(&workspace, &url, &"0".repeat(64));
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep", "--force"]);
+    assert!(!ok, "a mismatched archive was accepted:\n{out}");
+    assert!(out.contains("SHA-256 mismatch"), "{out}");
+    assert_eq!(std::fs::read(&vendor).unwrap(), before);
+    assert_eq!(
+        std::fs::read(workspace.dir.join("vendor/dep/.frost-fetch.json")).unwrap(),
+        state
+    );
+}
+
+#[test]
+fn fetch_offline_fails_without_network_and_build_explains_the_missing_input() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping fetch E2E: curl/wget and tar are required");
+        return;
+    }
+    let workspace = Workspace::empty("fetch-offline");
+    let archive = fetch_archive(&workspace.dir, "offline\n");
+    let sha256 = sha256_hex(&archive);
+    let server = ReleaseServer::start(vec![("/dependency".into(), archive)]);
+    write_fetch_manifest(
+        &workspace,
+        &format!("{}/dependency", server.base_url),
+        &sha256,
+    );
+
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep", "--offline"]);
+    assert!(!ok, "offline fetch unexpectedly succeeded:\n{out}");
+    assert!(out.contains("--offline forbids downloading"), "{out}");
+    assert_eq!(server.requests(), 0, "--offline accessed the network");
+
+    let (ok, out) = workspace.frost(&["build", "bundle"]);
+    assert!(!ok, "build accepted a missing fetched input:\n{out}");
+    assert!(out.contains("run `frost fetch dep`"), "{out}");
+    assert_eq!(server.requests(), 0, "build accessed the network");
+}
+
+#[test]
+fn fetched_tree_content_participates_in_the_dependent_action_key() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping fetch E2E: curl/wget and tar are required");
+        return;
+    }
+    let workspace = Workspace::empty("fetch-action-key");
+    let archive = fetch_archive(&workspace.dir, "one\n");
+    let sha256 = sha256_hex(&archive);
+    let server = ReleaseServer::start(vec![("/dependency".into(), archive)]);
+    write_fetch_manifest(
+        &workspace,
+        &format!("{}/dependency", server.base_url),
+        &sha256,
+    );
+    let (ok, out) = run_fetch(&workspace, &["fetch", "dep"]);
+    assert!(ok, "fetch failed:\n{out}");
+    let (ok, out) = workspace.frost(&["build", "bundle", "--no-tui"]);
+    assert!(ok, "first dependent build failed:\n{out}");
+    let output = workspace.dir.join(".frost/out/debug/dep.jar");
+    let before = std::fs::read(&output).unwrap();
+
+    std::fs::write(workspace.dir.join("vendor/dep/value.txt"), "two\n").unwrap();
+    let (ok, out) = workspace.frost(&["build", "bundle", "--no-tui"]);
+    assert!(ok, "dependent rebuild failed:\n{out}");
+    let after = std::fs::read(&output).unwrap();
+    assert_ne!(
+        after, before,
+        "vendor content change did not rebuild output"
+    );
+    assert_eq!(
+        server.requests(),
+        1,
+        "build or rebuild accessed the network"
+    );
+}
+
 /// Pack the real `frost` binary into the archive layout release.yml publishes,
 /// and return `(asset name, bytes)`.
 fn release_archive(scratch: &Path, version: &str, triple: &str) -> (String, Vec<u8>) {

@@ -29,6 +29,7 @@ mod daemon;
 mod doctor;
 mod events;
 mod explain;
+mod fetch;
 mod frostrc;
 mod graph;
 mod ide;
@@ -207,6 +208,11 @@ fn run(cli: Cli) -> Result<i32> {
     wrapper::warn_on_version_mismatch(&root);
 
     match cli.command {
+        Cmd::Fetch {
+            names,
+            force,
+            offline,
+        } => fetch::run_fetch(&root, names, force, offline),
         Cmd::Build {
             targets,
             jobs,
