@@ -181,8 +181,8 @@ sandbox = false
 ```
 
 Genrule substitutions are `${in}`, `${out}`, `${outs}`, `${pathsep}`,
-`${dep:LABEL}` and `${deps:LABEL}`. The
-last expands to the host path separator, so an extension-neutral launcher such
+`${dep:LABEL}` and `${deps:LABEL}`. `${pathsep}` expands to the host path
+separator, so an extension-neutral launcher such
 as `tools${pathsep}generate` can select `tools/generate` on POSIX and
 `tools\generate.cmd` through `PATHEXT` on Windows. Genrules execute through the
 host command shell (`/bin/sh -c` on Unix, `cmd.exe /C` on Windows) at the
@@ -490,6 +490,38 @@ so package managers that traverse a module cache normally use `sandbox = false`.
 
 ## Coverage
 
+For native `cc_test` targets, `frost test --coverage` owns the complete gcc
+pipeline:
+
+```sh
+frost test --coverage --explain
+# one deterministic tracefile per test target:
+# .frost/coverage/debug+coverage/<target>.lcov
+```
+
+Coverage is a configuration axis, not a profile. Compile and link actions get
+`--coverage`; objects, the graph store, journal entries, raw counters and final
+tracefiles use the collision-free `<profile>+coverage` configuration. Switching
+back to an ordinary test therefore reuses its ordinary cache instead of being
+invalidated by the instrumented run. `--explain` names the `coverage:<target>`
+action and every compile/link/test action it depended on.
+
+Each test shard owns a separate `.gcda` directory. Frost resets it before every
+execution (including retries and forced reruns), records its files in CAS, and
+writes a content stamp used by the merge action. A test-success stamp is empty
+and is deliberately not used as the counter content: changing `--test-env`, a
+filter, or a test argument may execute different lines while still passing.
+One merge action per test target keeps invalidation local; changing one
+independent test does not re-merge the others.
+
+The automatic path supports C/C++ compiled with GCC and reported by gcov. Set
+`gcov = "..."` beside `cc` in `[toolchain]`, or in a `[platform.NAME]` overlay,
+when the reporter is not the default `gcov`; a cross compiler normally needs
+its matching reporter such as `aarch64-linux-gnu-gcov`. Clang/`llvm-cov`, HTML
+rendering and automatic collection from `kind = "test"` or `kind = "command"`
+are not provided. Such adapters may declare their raw outputs and invoke the
+manual lcov command below when they produce gcov-compatible data.
+
 `frost coverage-lcov` merges one run's gcov data into an lcov tracefile:
 
 ```sh
@@ -523,10 +555,8 @@ tracefile: 0% is a number someone would act on, and "not measured" is a
 different statement from "nothing covered".
 
 **gcc only.** clang writes a different format that `llvm-cov` reads; the
-toolchain, not the host, is what decides, and the test skips when `cc` is not
-gcc. `frost test --coverage` — the flag that would build an instrumented
-configuration and wire this in automatically — is not implemented yet
-(issue #143); this is the piece frost has to own either way.
+toolchain, not the host, is what decides, and the real-tool tests skip when
+`cc` is not gcc.
 
 ## Visibility
 

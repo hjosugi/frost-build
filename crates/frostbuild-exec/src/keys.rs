@@ -75,6 +75,7 @@ pub(crate) fn action_key_argv<'a>(
         && action.clean_dirs.is_empty()
         && !action.preserve_outputs
         && action.stable_stamps.is_empty()
+        && action.coverage.is_none()
     {
         return Cow::Borrowed(&action.argv);
     }
@@ -105,6 +106,22 @@ pub(crate) fn action_key_argv<'a>(
     for command in &action.followup_argv {
         argv.push("\0frost-next-command".into());
         argv.extend(command.iter().cloned());
+    }
+    if let Some(coverage) = &action.coverage {
+        // Coverage actions execute in-process, so their complete command is
+        // larger than `action.argv`. Keep the structured paths in the same
+        // unambiguous canonical stream used for follow-up commands and clean
+        // directories; changing what is merged must change the action key.
+        for directory in &coverage.gcda_dirs {
+            argv.push("\0frost-coverage-gcda".into());
+            argv.push(directory.clone());
+        }
+        for note in &coverage.notes {
+            argv.push("\0frost-coverage-note".into());
+            argv.push(note.clone());
+        }
+        argv.push("\0frost-coverage-output".into());
+        argv.push(coverage.output.clone());
     }
     Cow::Owned(argv)
 }

@@ -95,6 +95,8 @@ frost -C myrepo build --all-platforms --profile release
 # Build and cache test targets; select only affected tests
 frost -C myrepo test --affected --explain
 frost -C myrepo test --all --no-cache
+# GCC C/C++: isolated instrumented tree and one lcov file per cc_test
+frost -C myrepo test --coverage --explain
 
 # Stop anything that hangs: tests carry a default limit, builds opt in
 frost -C myrepo build --timeout 600
@@ -207,7 +209,9 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   reuses compiles whose real inputs it has never read. Every response is digest
   verified, executable mode is recovered from the digest, and any miss,
   corruption or transport failure falls back to building locally
-- early cutoff, affected test selection and opt-in determinism checking
+- early cutoff, affected test selection and opt-in determinism checking;
+  `frost test --coverage` adds a separate GCC/gcov configuration with
+  content-keyed raw counters and deterministic per-test lcov output
 - mmap/versioned graph cache, `plan`, `explain`, Chrome trace and compdb
 - `init` safely auto-detects native C/C++ or plain Java; Java becomes one
   direct `javac` batch followed by a deterministic runnable/library JAR. Mixed

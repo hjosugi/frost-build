@@ -46,7 +46,10 @@ pub use process::{install_signal_handler, request_cancellation, resolve_timeout,
 pub use progress::{progress_channel, ProgressEvent, ProgressSender, ProgressState};
 pub use report::{ActionResult, BuildReport, BuildStats, Outcome};
 pub use schedule::{Schedule, Simulation};
-pub use toolchain::{toolchain_closure_fingerprint_cached, toolchain_fingerprint};
+pub use toolchain::{
+    toolchain_closure_fingerprint_cached, toolchain_closure_fingerprint_cached_instrumented,
+    toolchain_fingerprint,
+};
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static RUNNING_PROCESS_GROUPS: OnceLock<Mutex<BTreeSet<u32>>> = OnceLock::new();
@@ -1110,10 +1113,11 @@ pub fn resolve_action_program(root: &Path, program: &str) -> PathBuf {
 /// `id@profile` form; platform builds add the platform segment so each
 /// (platform, profile) pair has an independent cache identity.
 pub fn journal_id(graph: &BuildGraph, action: &frostbuild_core::graph::ActionNode) -> String {
+    let profile = frostbuild_core::paths::instrumented_profile(&graph.profile, graph.coverage);
     if graph.platform == frostbuild_core::manifest::HOST_PLATFORM {
-        format!("{}@{}", action.id, graph.profile)
+        format!("{}@{profile}", action.id)
     } else {
-        format!("{}@{}@{}", action.id, graph.platform, graph.profile)
+        format!("{}@{}@{profile}", action.id, graph.platform)
     }
 }
 
@@ -1309,6 +1313,7 @@ mod tests {
                 flaky_retries: 0,
                 stable_stamps: stable.iter().map(|key| key.to_string()).collect(),
                 volatile_stamps: volatile.iter().map(|key| key.to_string()).collect(),
+                coverage: None,
             }
         }
         let key = |action: &frostbuild_core::graph::ActionNode,
@@ -1346,7 +1351,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_step_commands_and_clean_dirs_are_unambiguous_key_material() {
+    fn non_argv_action_metadata_is_unambiguous_key_material() {
         fn action(
             followup_argv: Vec<Vec<String>>,
             clean_dirs: Vec<String>,
@@ -1373,6 +1378,7 @@ mod tests {
                 flaky_retries: 0,
                 stable_stamps: Vec::new(),
                 volatile_stamps: Vec::new(),
+                coverage: None,
             }
         }
         let digest = |action: &frostbuild_core::graph::ActionNode| {
@@ -1412,11 +1418,27 @@ mod tests {
             false,
         );
         let preserving = action(Vec::new(), Vec::new(), true);
+        let mut coverage_a = action(Vec::new(), Vec::new(), false);
+        coverage_a.kind = ActionKind::Coverage;
+        coverage_a.coverage = Some(frostbuild_core::graph::CoverageSpec {
+            gcda_dirs: vec![".frost/coverage/a".into()],
+            notes: vec![".frost/obj/a.gcno".into()],
+            output: ".frost/coverage/a.lcov".into(),
+        });
+        let mut coverage_b = action(Vec::new(), Vec::new(), false);
+        coverage_b.kind = ActionKind::Coverage;
+        coverage_b.coverage = Some(frostbuild_core::graph::CoverageSpec {
+            gcda_dirs: vec![".frost/coverage/b".into()],
+            notes: vec![".frost/obj/a.gcno".into()],
+            output: ".frost/coverage/a.lcov".into(),
+        });
 
         assert_ne!(digest(&primary_only), digest(&jar));
         assert_ne!(digest(&jar), digest(&differently_segmented));
         assert_ne!(digest(&jar), digest(&different_clean_dir));
         assert_ne!(digest(&primary_only), digest(&preserving));
+        assert_ne!(digest(&primary_only), digest(&coverage_a));
+        assert_ne!(digest(&coverage_a), digest(&coverage_b));
     }
 
     #[test]
@@ -1428,6 +1450,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("tools")).unwrap();
         std::fs::write(dir.join("tools/kofun"), b"kofun compiler v1\n").unwrap();
+        std::fs::write(dir.join("tools/gcov"), b"gcov v1\n").unwrap();
         std::fs::write(dir.join("tools/language"), b"language adapter v1\n").unwrap();
         let mut named_tools = BTreeMap::new();
         named_tools.insert("language".into(), "tools/language".into());
@@ -1435,6 +1458,7 @@ mod tests {
             cc: frostbuild_core::graph::SHELL.into(),
             cxx: frostbuild_core::graph::SHELL.into(),
             ar: frostbuild_core::graph::SHELL.into(),
+            gcov: "tools/gcov".into(),
             kofunc: Some("tools/kofun".into()),
             tools: named_tools,
             arflags: vec!["rcsD".into()],
@@ -1473,6 +1497,19 @@ mod tests {
                 .any(|(path, ..)| path.ends_with("tools/kofun")),
             "the configured Kofun compiler must be hashed: {:?}",
             stamp.tools
+        );
+        let coverage_first =
+            toolchain_closure_fingerprint_cached_instrumented(&dir, &toolchain, true).unwrap();
+        std::fs::write(dir.join("tools/gcov"), b"gcov v2 changed\n").unwrap();
+        assert_eq!(
+            toolchain_closure_fingerprint_cached(&dir, &toolchain).unwrap(),
+            first,
+            "an unused gcov must not invalidate an ordinary build"
+        );
+        assert_ne!(
+            toolchain_closure_fingerprint_cached_instrumented(&dir, &toolchain, true).unwrap(),
+            coverage_first,
+            "changing gcov must invalidate a coverage merge"
         );
         std::fs::write(dir.join("tools/kofun"), b"kofun compiler v2 changed\n").unwrap();
         assert_ne!(

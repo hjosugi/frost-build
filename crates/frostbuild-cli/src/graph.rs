@@ -20,11 +20,21 @@ pub(crate) fn load_graph(
     profile: &str,
     platform: &str,
 ) -> Result<BuildGraph> {
-    if let Some(graph) = GraphStore::load_cached(root, profile, platform) {
+    load_graph_instrumented(root, profile, platform, false)
+}
+
+/// As [`load_graph`], for a graph that may be instrumented for coverage.
+pub(crate) fn load_graph_instrumented(
+    root: &std::path::Path,
+    profile: &str,
+    platform: &str,
+    coverage: bool,
+) -> Result<BuildGraph> {
+    if let Some(graph) = GraphStore::load_cached_instrumented(root, profile, platform, coverage) {
         return Ok(graph);
     }
     let manifest = Manifest::load(root)?;
-    GraphStore::load_or_compile_configured(root, &manifest, profile, platform)
+    GraphStore::load_or_compile_instrumented(root, &manifest, profile, platform, coverage)
 }
 
 /// Name the targets that need a tool frost could not find.

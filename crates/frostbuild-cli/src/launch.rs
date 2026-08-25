@@ -385,6 +385,7 @@ pub(crate) fn run_target(
             all: false,
             scheduler: SchedulerArg::CriticalPath,
             estimator: EstimatorArg::Journal,
+            coverage: false,
         },
     )?;
     if build_code != 0 {
@@ -487,6 +488,7 @@ pub(crate) fn run_debug(
             all: false,
             scheduler: SchedulerArg::CriticalPath,
             estimator: EstimatorArg::Journal,
+            coverage: false,
         },
     )?;
     if build_code != 0 {

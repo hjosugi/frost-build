@@ -556,6 +556,7 @@ fn kind_name(kind: ActionKind) -> &'static str {
         ActionKind::Test => "test",
         ActionKind::KofunCompile => "kofun",
         ActionKind::Command => "command",
+        ActionKind::Coverage => "coverage",
     }
 }
 

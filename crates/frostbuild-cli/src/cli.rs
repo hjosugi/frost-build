@@ -431,6 +431,13 @@ pub(crate) enum Cmd {
         /// Test host and every declared [platform.*] configuration
         #[arg(long)]
         all_platforms: bool,
+        /// Build instrumented for coverage and write an lcov tracefile per test
+        /// target under .frost/coverage. A separate configuration: its own
+        /// output tree, journal identity and cache, so an ordinary build is
+        /// neither disturbed by it nor able to satisfy it from cache. C/C++
+        /// only, with gcc's gcov
+        #[arg(long)]
+        coverage: bool,
         #[arg(long)]
         sandbox: bool,
         /// Disable the interactive terminal UI and print plain progress lines

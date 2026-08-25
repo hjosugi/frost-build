@@ -155,7 +155,9 @@ about.
 The honest limitation: `${deps}` produces one argv item per output, which is
 what `-cp` wants for **one** dependency and not for several. A classpath
 joining two dependency jars into a single path-separated argument is not
-expressible yet; that is the other half of #158.
+expressible yet. That would require a general join operation, deliberately
+outside #158's label-reference scope; `env` values and genrule `cmd` strings do
+support the issue's `${dep:LABEL}` form.
 
 Two details that are about Java rather than about Frost:
 

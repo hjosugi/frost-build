@@ -13,8 +13,9 @@ use crate::manifest::{Manifest, HOST_PLATFORM};
 const MAGIC: &[u8; 8] = b"FRSTGR01";
 // Version 7 adds the host executable suffix to native binary graph paths.
 // Version 9 adds `[stamp]` and per-action stamp references, which a warm
-// invocation reads without parsing a manifest.
-const VERSION: u32 = 9;
+// invocation reads without parsing a manifest. Version 10 adds coverage
+// configuration and per-action coverage metadata.
+const VERSION: u32 = 10;
 
 /// Evidence that the manifest inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
@@ -54,8 +55,25 @@ impl GraphStore {
         profile: &str,
         platform: &str,
     ) -> Result<BuildGraph> {
-        let fingerprint = manifest_fingerprint(manifest, profile, platform)?;
-        let path = store_path(root, profile, platform);
+        Self::load_or_compile_instrumented(root, manifest, profile, platform, false)
+    }
+
+    /// As [`Self::load_or_compile_configured`], for a graph that may be
+    /// instrumented for coverage.
+    ///
+    /// Coverage is part of the cache identity, not a detail inside the payload:
+    /// an instrumented graph has different argv, extra outputs and a different
+    /// output tree, so serving one where the other was asked for would build
+    /// the wrong thing from a warm cache.
+    pub fn load_or_compile_instrumented(
+        root: &Path,
+        manifest: &Manifest,
+        profile: &str,
+        platform: &str,
+        coverage: bool,
+    ) -> Result<BuildGraph> {
+        let fingerprint = manifest_fingerprint_instrumented(manifest, profile, platform, coverage)?;
+        let path = store_path_instrumented(root, profile, platform, coverage);
         if let Ok(graph) = load_graph(&path, Some(&fingerprint), None) {
             // Keep the warm path viable for workspaces whose builds write
             // outputs into the source tree: a stale sources stamp would
@@ -65,7 +83,7 @@ impl GraphStore {
             }
             return Ok(graph);
         }
-        let graph = BuildGraph::from_manifest_configured(manifest, profile, platform)?;
+        let graph = BuildGraph::from_manifest_instrumented(manifest, profile, platform, coverage)?;
         save_graph(root, &path, &fingerprint, &manifest.manifest_paths, &graph)?;
         Ok(graph)
     }
@@ -75,7 +93,17 @@ impl GraphStore {
     /// all. `None` means the caller must fall back to `Manifest::load` +
     /// [`GraphStore::load_or_compile_configured`].
     pub fn load_cached(root: &Path, profile: &str, platform: &str) -> Option<BuildGraph> {
-        let path = store_path(root, profile, platform);
+        Self::load_cached_instrumented(root, profile, platform, false)
+    }
+
+    /// As [`Self::load_cached`], for the coverage configuration.
+    pub fn load_cached_instrumented(
+        root: &Path,
+        profile: &str,
+        platform: &str,
+        coverage: bool,
+    ) -> Option<BuildGraph> {
+        let path = store_path_instrumented(root, profile, platform, coverage);
         load_graph(&path, None, Some(root)).ok()
     }
 
@@ -108,6 +136,21 @@ impl GraphStore {
 /// `frost info` answers "which file is this configuration's graph cache?" for
 /// wrappers and editors that would otherwise hardcode the naming rule.
 pub fn store_path(root: &Path, profile: &str, platform: &str) -> PathBuf {
+    store_path_instrumented(root, profile, platform, false)
+}
+
+/// As [`store_path`], distinguishing the coverage configuration.
+///
+/// The suffix is the same `+coverage` the output tree uses, and for the same
+/// reason: a profile name cannot contain `+`, so this cannot collide with a
+/// declared profile. See [`crate::paths::configured`].
+pub fn store_path_instrumented(
+    root: &Path,
+    profile: &str,
+    platform: &str,
+    coverage: bool,
+) -> PathBuf {
+    let profile = crate::paths::instrumented_profile(profile, coverage);
     if platform == HOST_PLATFORM {
         root.join(format!(".frost/graph-{profile}.bin"))
     } else {
@@ -115,8 +158,13 @@ pub fn store_path(root: &Path, profile: &str, platform: &str) -> PathBuf {
     }
 }
 
-fn manifest_fingerprint(manifest: &Manifest, profile: &str, platform: &str) -> Result<[u8; 32]> {
-    let bytes = postcard::to_allocvec(&(manifest, profile, platform))?;
+fn manifest_fingerprint_instrumented(
+    manifest: &Manifest,
+    profile: &str,
+    platform: &str,
+    coverage: bool,
+) -> Result<[u8; 32]> {
+    let bytes = postcard::to_allocvec(&(manifest, profile, platform, coverage))?;
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
@@ -387,8 +435,12 @@ mod tests {
             "debug",
             HOST_PLATFORM
         ));
-        let cached =
-            GraphStore::load_cached(&root, "debug", HOST_PLATFORM).expect("warm hit after save");
+        let cached = load_graph(
+            &store_path(&root, "debug", HOST_PLATFORM),
+            None,
+            Some(&root),
+        )
+        .expect("warm hit after save");
         assert_eq!(cached.actions.len(), 2);
         // The manifest declares no driver, so this is the host default.
         assert_eq!(cached.toolchain.cc, crate::manifest::default_cc());

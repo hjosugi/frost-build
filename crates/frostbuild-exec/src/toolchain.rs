@@ -53,6 +53,20 @@ pub fn toolchain_closure_fingerprint_cached(
     root: &Path,
     toolchain: &frostbuild_core::manifest::Toolchain,
 ) -> Result<String> {
+    toolchain_closure_fingerprint_cached_instrumented(root, toolchain, false)
+}
+
+/// As [`toolchain_closure_fingerprint_cached`], including `gcov` when an
+/// instrumented graph will execute a coverage merge.
+///
+/// Ordinary builds deliberately leave it out: a C compiler installation need
+/// not provide gcov unless coverage was requested, and replacing an unused
+/// reporter must not invalidate normal build actions.
+pub fn toolchain_closure_fingerprint_cached_instrumented(
+    root: &Path,
+    toolchain: &frostbuild_core::manifest::Toolchain,
+    coverage: bool,
+) -> Result<String> {
     let shell = frostbuild_core::graph::SHELL.to_string();
     // The shell is in here because frost picks it, the same reason the C
     // drivers are: every genrule and shell test runs through it, and a
@@ -64,6 +78,9 @@ pub fn toolchain_closure_fingerprint_cached(
         ("[toolchain].cxx".into(), &toolchain.cxx),
         ("[toolchain].ar".into(), &toolchain.ar),
     ];
+    if coverage {
+        all.push(("[toolchain].gcov".into(), &toolchain.gcov));
+    }
     if let Some(kofunc) = &toolchain.kofunc {
         all.push(("[toolchain].kofunc".into(), kofunc));
     }

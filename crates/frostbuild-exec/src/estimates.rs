@@ -23,6 +23,10 @@ fn default_duration(kind: ActionKind) -> u64 {
         ActionKind::Test => 50,
         ActionKind::KofunCompile => 30,
         ActionKind::Command => 40,
+        // One `gcov` per object plus a merge, and it runs after the test it
+        // reports on, so it sits at the end of a chain where a low guess would
+        // schedule it late.
+        ActionKind::Coverage => 60,
     }
 }
 
@@ -101,5 +105,8 @@ fn kind_code(kind: ActionKind) -> u8 {
         ActionKind::Test => 4,
         ActionKind::KofunCompile => 5,
         ActionKind::Command => 6,
+        // Appended, never renumbered: these codes key learned durations in a
+        // journal written by earlier versions.
+        ActionKind::Coverage => 7,
     }
 }

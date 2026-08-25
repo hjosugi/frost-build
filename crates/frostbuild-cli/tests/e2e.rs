@@ -7462,6 +7462,124 @@ fn gcov_available() -> bool {
         })
 }
 
+#[cfg(target_os = "linux")]
+fn automatic_coverage_workspace(name: &str) -> Workspace {
+    let ws = Workspace::empty(name);
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write(
+        "frost.toml",
+        r#"[target.one]
+kind = "cc_test"
+srcs = ["src/one.c"]
+
+[target.two]
+kind = "cc_test"
+srcs = ["src/two.c"]
+"#,
+    );
+    ws.write(
+        "src/one.c",
+        "#include <stdlib.h>\n\
+         static int hot(void) { volatile int n = 1; return n == 1 ? 0 : 1; }\n\
+         static int cold(void) { volatile int n = 2; return n == 2 ? 0 : 1; }\n\
+         int main(void) { return getenv(\"COVERAGE_BRANCH\") ? hot() : cold(); }\n",
+    );
+    ws.write(
+        "src/two.c",
+        "int main(void) { volatile int n = 2; return n == 2 ? 0 : 1; }\n",
+    );
+    ws
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn test_coverage_is_deterministic_and_isolated_from_an_ordinary_test() {
+    if !gcov_available() {
+        eprintln!("skipping automatic coverage E2E: gcc and gcov are required");
+        return;
+    }
+    let ws = automatic_coverage_workspace("test-coverage-isolation");
+
+    let (ok, out) = ws.frost(&["test", "one", "--no-tui", "--explain"]);
+    assert!(ok, "ordinary test failed:\n{out}");
+    assert!(out.contains("ran test:one"), "{out}");
+
+    let coverage_args = [
+        "test",
+        "one",
+        "--coverage",
+        "--no-tui",
+        "--explain",
+        "--test-env",
+        "COVERAGE_BRANCH=1",
+    ];
+    let (ok, out) = ws.frost(&coverage_args);
+    assert!(ok, "coverage test failed:\n{out}");
+    assert!(out.contains("ran coverage:one"), "{out}");
+    let tracefile = ws.dir.join(".frost/coverage/debug+coverage/one.lcov");
+    let hot = std::fs::read(&tracefile).expect("coverage tracefile");
+    assert!(ws.dir.join(".frost/graph-debug.bin").is_file());
+    assert!(ws.dir.join(".frost/graph-debug+coverage.bin").is_file());
+    assert!(ws.dir.join(".frost/obj/debug").is_dir());
+    assert!(ws.dir.join(".frost/obj/debug+coverage").is_dir());
+
+    // Changing only the test invocation changes the raw counter tree. The
+    // merge must see that content, not the empty test-success stamp, and
+    // produce the other branch's report.
+    let (ok, out) = ws.frost(&["test", "one", "--coverage", "--no-tui", "--explain"]);
+    assert!(ok, "coverage branch change failed:\n{out}");
+    assert!(out.contains("ran test:one"), "{out}");
+    assert!(out.contains("ran coverage:one"), "{out}");
+    let cold = std::fs::read(&tracefile).unwrap();
+    assert_ne!(
+        hot, cold,
+        "different executed lines need a different report"
+    );
+
+    // Force a real second execution of identical inputs: `.gcda` counters
+    // accumulate unless Frost resets the owned tree before every test run.
+    let (ok, out) = ws.frost(&["test", "one", "--coverage", "--no-cache", "--no-tui"]);
+    assert!(ok, "forced coverage rerun failed:\n{out}");
+    assert_eq!(
+        cold,
+        std::fs::read(&tracefile).unwrap(),
+        "identical coverage inputs must produce byte-identical lcov"
+    );
+
+    // Coverage uses a separate graph, output tree and journal namespace. It
+    // must not evict the normal test result when switching back.
+    let (ok, out) = ws.frost(&["test", "one", "--no-tui", "--explain"]);
+    assert!(ok, "ordinary test after coverage failed:\n{out}");
+    assert!(out.contains("cached test:one"), "{out}");
+    assert!(!out.contains("ran test:one"), "{out}");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_source_change_reruns_only_its_tests_coverage_merge() {
+    if !gcov_available() {
+        eprintln!("skipping automatic coverage E2E: gcc and gcov are required");
+        return;
+    }
+    let ws = automatic_coverage_workspace("test-coverage-pruning");
+    let (ok, out) = ws.frost(&["test", "--coverage", "--no-tui"]);
+    assert!(ok, "initial coverage run failed:\n{out}");
+
+    ws.write(
+        "src/one.c",
+        "#include <stdlib.h>\n\
+         static int hot(void) { volatile int n = 3; return n == 3 ? 0 : 1; }\n\
+         static int cold(void) { volatile int n = 4; return n == 4 ? 0 : 1; }\n\
+         int main(void) { return getenv(\"COVERAGE_BRANCH\") ? hot() : cold(); }\n",
+    );
+    let (ok, out) = ws.frost(&["test", "--coverage", "--no-tui", "--explain"]);
+    assert!(ok, "incremental coverage run failed:\n{out}");
+    assert!(out.contains("ran coverage:one"), "{out}");
+    assert!(out.contains("cached coverage:two"), "{out}");
+    assert!(out.contains("cached test:two"), "{out}");
+    assert!(!out.contains("ran coverage:two"), "{out}");
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn coverage_lcov_merges_gcov_data_and_repeats_byte_for_byte() {
