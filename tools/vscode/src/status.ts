@@ -6,26 +6,53 @@
 
 import * as vscode from 'vscode';
 
+import type { FrostDaemonStatus } from './frost/types';
+
+export type DaemonIndicator = FrostDaemonStatus | undefined;
+
 export interface StatusReporter {
   idle(): void;
   running(what: string): void;
   succeeded(detail: string): void;
   failed(detail: string): void;
+  daemon(status: DaemonIndicator): void;
 }
 
 export function createStatusReporter(): StatusReporter & vscode.Disposable {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
-  item.command = 'frost.build';
-  const set = (text: string, tooltip: string): void => {
-    item.text = text;
-    item.tooltip = tooltip;
+  item.command = 'frost.refreshDaemonStatus';
+  let activity = { icon: '$(tools)', detail: 'FrostBuild: ready' };
+  let daemon: DaemonIndicator;
+  const render = (): void => {
+    let daemonText = '$(question) frostd';
+    let daemonTooltip = 'Daemon: status unavailable';
+    if (daemon?.state === 'running') {
+      daemonText = '$(vm-active) frostd';
+      daemonTooltip = `Daemon: running (protocol ${daemon.protocol})`;
+    } else if (daemon?.state === 'stopped') {
+      daemonText = '$(circle-slash) frostd';
+      daemonTooltip = 'Daemon: stopped';
+    } else if (daemon?.state === 'protocol_mismatch') {
+      daemonText = '$(warning) frostd';
+      daemonTooltip = `Daemon: protocol ${daemon.protocol}; frost expects ${daemon.expected_protocol}`;
+    }
+    item.text = `${activity.icon} frost · ${daemonText}`;
+    item.tooltip = `${activity.detail}\n${daemonTooltip}`;
     item.show();
   };
+  const setActivity = (icon: string, detail: string): void => {
+    activity = { icon, detail };
+    render();
+  };
   return {
-    idle: () => set('$(tools) frost', 'FrostBuild: ready'),
-    running: (what) => set('$(sync~spin) frost', what),
-    succeeded: (detail) => set('$(check) frost', detail),
-    failed: (detail) => set('$(error) frost', detail),
+    idle: () => setActivity('$(tools)', 'FrostBuild: ready'),
+    running: (what) => setActivity('$(sync~spin)', what),
+    succeeded: (detail) => setActivity('$(check)', detail),
+    failed: (detail) => setActivity('$(error)', detail),
+    daemon: (status) => {
+      daemon = status;
+      render();
+    },
     dispose: () => item.dispose(),
   };
 }

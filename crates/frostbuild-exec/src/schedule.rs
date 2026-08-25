@@ -9,12 +9,13 @@ use std::collections::BTreeSet;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
 
-use frostbuild_core::graph::ActionId;
-use frostbuild_core::graph::BuildGraph;
+use frostbuild_core::graph::{ActionId, ActionKind, BuildGraph};
 use frostbuild_core::journal::Journal;
+use frostbuild_core::manifest::ActionResources;
 
 use crate::estimates::Estimates;
-use crate::options::{Estimator, Scheduler};
+use crate::options::{Estimator, ResourceLimits, Scheduler};
+use crate::resources::ResourceAdmission;
 
 /// The scheduling decision, separated from execution.
 ///
@@ -33,6 +34,9 @@ pub struct Schedule {
     pub waiting: Vec<usize>,
     /// Estimated duration of each action.
     pub duration_ms: Vec<u64>,
+    /// Admission requirements and test classification in closure-local order.
+    pub resources: Vec<ActionResources>,
+    pub is_test: Vec<bool>,
     /// Ready-queue key: estimated longest remaining chain, or zero for FIFO.
     pub priority: Vec<u64>,
     /// Longest chain by estimated duration: the makespan no scheduler can beat.
@@ -93,6 +97,14 @@ impl Schedule {
         }
         let critical_path_ms = priority.iter().copied().max().unwrap_or(0);
         let work_ms = duration_ms.iter().sum();
+        let resources = closure
+            .iter()
+            .map(|&action| graph.actions[action].resources)
+            .collect();
+        let is_test = closure
+            .iter()
+            .map(|&action| graph.actions[action].kind == ActionKind::Test)
+            .collect();
 
         // Walk the chain that realizes the longest path, so a report can name
         // the actions that actually bound the build.
@@ -119,6 +131,8 @@ impl Schedule {
             dependents,
             waiting,
             duration_ms,
+            resources,
+            is_test,
             priority,
             critical_path_ms,
             critical_path,
@@ -142,6 +156,18 @@ impl Schedule {
     /// sweep. Pass the best available durations (the journal's recorded ones)
     /// as the reference and the comparison measures ordering quality alone.
     pub fn simulate_against(&self, jobs: usize, durations: &[u64]) -> Simulation {
+        self.simulate_against_with_resources(jobs, durations, ResourceLimits::for_jobs(jobs))
+    }
+
+    /// Simulate the real scheduler's resource admission as well as its queue
+    /// ordering. Oversized actions consume the whole corresponding budget so
+    /// one can still run instead of deadlocking forever.
+    pub fn simulate_against_with_resources(
+        &self,
+        jobs: usize,
+        durations: &[u64],
+        limits: ResourceLimits,
+    ) -> Simulation {
         let jobs = jobs.max(1);
         let n = self.closure.len();
         assert_eq!(
@@ -159,12 +185,29 @@ impl Schedule {
         let mut now = 0u64;
         let mut busy = 0u64;
         let mut done = 0usize;
+        let mut admission = ResourceAdmission::new(limits);
+        let mut resource_waits = 0usize;
 
         while done < n {
             while running.len() < jobs {
-                let Some((_, Reverse(local))) = ready.pop() else {
+                let had_ready = !ready.is_empty();
+                let mut deferred = Vec::new();
+                let mut claimed = None;
+                while let Some(entry @ (_, Reverse(local))) = ready.pop() {
+                    if admission.fits(self.resources[local], self.is_test[local]) {
+                        claimed = Some((entry, local));
+                        break;
+                    }
+                    deferred.push(entry);
+                }
+                ready.extend(deferred);
+                let Some((_, local)) = claimed else {
+                    if had_ready && !running.is_empty() {
+                        resource_waits += 1;
+                    }
                     break;
                 };
+                admission.reserve(self.resources[local], self.is_test[local]);
                 running.push((Reverse(now + durations[local]), Reverse(local)));
                 busy += durations[local];
             }
@@ -174,6 +217,7 @@ impl Schedule {
                 break;
             };
             now = finish;
+            admission.release(self.resources[local], self.is_test[local]);
             done += 1;
             for &dependent in &self.dependents[local] {
                 waiting[dependent] -= 1;
@@ -190,6 +234,10 @@ impl Schedule {
             critical_path_ms: self.critical_path_ms,
             work_ms: self.work_ms,
             actions: n,
+            peak_cpu: admission.peak_cpu(),
+            peak_ram_mb: admission.peak_ram_mb(),
+            peak_tests: admission.peak_tests(),
+            resource_waits,
         }
     }
 }
@@ -203,6 +251,10 @@ pub struct Simulation {
     pub critical_path_ms: u64,
     pub work_ms: u64,
     pub actions: usize,
+    pub peak_cpu: usize,
+    pub peak_ram_mb: u64,
+    pub peak_tests: usize,
+    pub resource_waits: usize,
 }
 
 impl Simulation {
@@ -220,5 +272,139 @@ impl Simulation {
             100.0 * (self.makespan_ms as f64 - self.critical_path_ms as f64)
                 / self.critical_path_ms as f64
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use frostbuild_core::manifest::Manifest;
+
+    fn plan(text: &str, targets: &[&str]) -> Schedule {
+        let manifest = Manifest::parse_str(text).unwrap();
+        let graph = BuildGraph::from_manifest(&manifest).unwrap();
+        let closure = graph
+            .action_closure(
+                &targets
+                    .iter()
+                    .map(|target| target.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        Schedule::plan(
+            &graph,
+            closure,
+            &Journal::default(),
+            Scheduler::CriticalPath,
+            Estimator::Heuristic,
+        )
+    }
+
+    #[test]
+    fn ram_admission_serializes_heavy_actions_deterministically() {
+        let schedule = plan(
+            r#"
+            [target.a]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["a"]
+            resources = { ram_mb = 600 }
+
+            [target.b]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["b"]
+            resources = { ram_mb = 600 }
+            "#,
+            &["a", "b"],
+        );
+        let durations = vec![10; schedule.closure.len()];
+        let constrained = schedule.simulate_against_with_resources(
+            2,
+            &durations,
+            ResourceLimits {
+                cpu: 2,
+                ram_mb: 1_000,
+                test_jobs: 2,
+            },
+        );
+        assert_eq!(constrained.makespan_ms, 20);
+        assert_eq!(constrained.peak_ram_mb, 600);
+        assert!(constrained.resource_waits > 0);
+
+        let roomy = schedule.simulate_against_with_resources(
+            2,
+            &durations,
+            ResourceLimits {
+                cpu: 2,
+                ram_mb: 1_200,
+                test_jobs: 2,
+            },
+        );
+        assert_eq!(roomy.makespan_ms, 10);
+        assert_eq!(roomy.peak_ram_mb, 1_200);
+
+        let oversized = schedule.simulate_against_with_resources(
+            2,
+            &durations,
+            ResourceLimits {
+                cpu: 2,
+                ram_mb: 512,
+                test_jobs: 1,
+            },
+        );
+        assert_eq!(oversized.makespan_ms, 20);
+        assert_eq!(
+            oversized.peak_ram_mb, 512,
+            "an oversized action consumes the pool instead of deadlocking"
+        );
+    }
+
+    #[test]
+    fn exclusive_and_test_limits_use_the_same_admission_model() {
+        let exclusive = plan(
+            r#"
+            [target.a]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["a"]
+            resources = { exclusive = true }
+
+            [target.b]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["b"]
+            "#,
+            &["a", "b"],
+        );
+        let durations = vec![10; exclusive.closure.len()];
+        let result =
+            exclusive.simulate_against_with_resources(2, &durations, ResourceLimits::for_jobs(2));
+        assert_eq!(result.makespan_ms, 20, "exclusive work must run alone");
+
+        let tests = plan(
+            r#"
+            [target.a]
+            kind = "test"
+            cmd = "true"
+
+            [target.b]
+            kind = "test"
+            cmd = "true"
+            "#,
+            &["a", "b"],
+        );
+        let durations = vec![10; tests.closure.len()];
+        let result = tests.simulate_against_with_resources(
+            4,
+            &durations,
+            ResourceLimits {
+                cpu: 4,
+                ram_mb: u64::MAX,
+                test_jobs: 1,
+            },
+        );
+        assert_eq!(result.makespan_ms, 20);
+        assert_eq!(result.peak_tests, 1);
     }
 }

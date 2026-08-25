@@ -20,6 +20,7 @@ use frostbuild_exec::try_fast_noop;
 use frostbuild_exec::BuildOptions;
 use frostbuild_exec::Engine;
 use frostbuild_exec::Outcome;
+use frostbuild_exec::ResourceLimits;
 
 use crate::cli::{DaemonCmd, EstimatorArg, SchedulerArg, TestOutputArg};
 use crate::daemon::daemon_command;
@@ -31,6 +32,9 @@ use crate::{events, progress, report};
 pub(crate) struct BuildRequest {
     pub(crate) targets: Vec<String>,
     pub(crate) jobs: Option<usize>,
+    pub(crate) local_cpu_resources: Option<usize>,
+    pub(crate) local_ram_resources: Option<u64>,
+    pub(crate) local_test_jobs: Option<usize>,
     pub(crate) keep_going: bool,
     pub(crate) explain: bool,
     pub(crate) verbose: bool,
@@ -222,6 +226,9 @@ pub(crate) fn run_pick(
             no_stamp: false,
             stamp_optional: false,
             jobs: None,
+            local_cpu_resources: None,
+            local_ram_resources: None,
+            local_test_jobs: None,
             keep_going: false,
             explain: false,
             verbose: false,
@@ -266,6 +273,15 @@ fn run_build_via_daemon(
     args.extend(request.targets.iter().cloned());
     if let Some(jobs) = request.jobs {
         args.extend(["--jobs".into(), jobs.to_string()]);
+    }
+    if let Some(cpu) = request.local_cpu_resources {
+        args.extend(["--local-cpu-resources".into(), cpu.to_string()]);
+    }
+    if let Some(ram_mb) = request.local_ram_resources {
+        args.extend(["--local-ram-resources".into(), ram_mb.to_string()]);
+    }
+    if let Some(test_jobs) = request.local_test_jobs {
+        args.extend(["--local-test-jobs".into(), test_jobs.to_string()]);
     }
     if request.keep_going {
         args.push("--keep-going".into());
@@ -490,6 +506,17 @@ fn build_stamps(
 }
 
 pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
+    for (name, value) in [
+        ("--local-cpu-resources", request.local_cpu_resources),
+        ("--local-test-jobs", request.local_test_jobs),
+    ] {
+        if value == Some(0) {
+            bail!("{name} must be at least 1");
+        }
+    }
+    if request.local_ram_resources == Some(0) {
+        bail!("--local-ram-resources must be at least 1 MiB");
+    }
     let enable_fast_noop = !request.test_mode
         && request.targets.is_empty()
         && !request.keep_going
@@ -634,8 +661,20 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     )?;
     let (progress, renderer) =
         progress::start(request.no_tui, request.verbose, echo_success, events);
+    let jobs = request.jobs.unwrap_or_else(default_jobs).max(1);
+    let mut resources = ResourceLimits::host(jobs);
+    if let Some(cpu) = request.local_cpu_resources {
+        resources.cpu = cpu;
+    }
+    if let Some(ram_mb) = request.local_ram_resources {
+        resources.ram_mb = ram_mb;
+    }
+    if let Some(test_jobs) = request.local_test_jobs {
+        resources.test_jobs = test_jobs;
+    }
     let opts = BuildOptions {
-        jobs: request.jobs.unwrap_or_else(default_jobs),
+        jobs,
+        resources,
         keep_going: request.keep_going,
         dry_run: false,
         verbose: request.verbose,
@@ -733,6 +772,20 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         println!(
             "  strategy    {} / {}  (-j {})",
             st.scheduler, st.estimator, st.jobs
+        );
+        println!(
+            "  resources   cpu {}/{}  ram {}/{} MiB  tests {}/{}{}",
+            st.peak_cpu,
+            st.local_cpu_resources,
+            st.peak_ram_mb,
+            st.local_ram_resources_mb,
+            st.peak_tests,
+            st.local_test_jobs,
+            if st.resource_constrained {
+                "  (admission constrained)"
+            } else {
+                ""
+            }
         );
         // Scheduling statistics describe how work was spread across workers.
         // A run that executed nothing has none to describe, and printing

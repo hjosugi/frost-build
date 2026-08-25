@@ -1,0 +1,69 @@
+{
+  "schema": "frost-resource-scheduling-bench-v1",
+  "recorded_at_utc": "2026-08-25T13:48:51.392420+00:00",
+  "host": {
+    "platform": "Linux-7.2.0-1-cachyos-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu_count": 8,
+    "load_avg_before": [
+      2.67724609375,
+      3.21826171875,
+      3.6142578125
+    ],
+    "load_avg_after": [
+      2.67724609375,
+      3.21826171875,
+      3.6142578125
+    ]
+  },
+  "tools": {
+    "frost": "frost 0.10.0",
+    "python": "Python 3.14.7"
+  },
+  "source": {
+    "commit": "cf26c31aee45381b6655b34a528b12dd187ed13c",
+    "working_tree_dirty": true
+  },
+  "fixture": "bench/fixtures/resource-scheduling",
+  "reproduce": "python3 scripts/bench_resource_scheduling.py --frost /absolute/path/to/cargo-target/release/frost --iterations 7 --out bench/baselines/2026-08-25-issue-155-resource-scheduling.json",
+  "limits": {
+    "jobs": 4,
+    "cpu": 4,
+    "ram_mb": 1200,
+    "test_jobs": 4
+  },
+  "actions": 4,
+  "action_resources": {
+    "cpu": 1,
+    "ram_mb": 600,
+    "exclusive": false
+  },
+  "action_sleep_ms": 120,
+  "actual_makespan_ms": {
+    "samples": [
+      290,
+      289,
+      287,
+      289,
+      287,
+      291,
+      290
+    ],
+    "median": 289
+  },
+  "simulated_makespan_ms": 287,
+  "actual_over_simulated": 1.0069686411149825,
+  "within_25_percent": true,
+  "simulation_point": {
+    "estimator": "journal",
+    "jobs": 4,
+    "makespan_ms": 287,
+    "over_critical_path_pct": 99.30555555555556,
+    "peak_cpu": 2,
+    "peak_ram_mb": 1200,
+    "peak_test_jobs": 0,
+    "resource_waits": 2,
+    "scheduler": "critical-path",
+    "utilization_pct": 50.0
+  }
+}

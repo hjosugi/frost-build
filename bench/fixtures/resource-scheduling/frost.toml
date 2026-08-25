@@ -1,0 +1,37 @@
+[workspace]
+default_targets = ["one", "two", "three", "four"]
+
+[toolchain.tools]
+python = "python3"
+
+[target.four]
+kind = "command"
+tool = "python"
+args = ["work.py", "${out}", "120"]
+inputs = ["work.py", "salt.txt"]
+outputs = [".frost/out/${config}/four.txt"]
+resources = { cpu = 1, ram_mb = 600 }
+
+[target.one]
+kind = "command"
+tool = "python"
+args = ["work.py", "${out}", "120"]
+inputs = ["work.py", "salt.txt"]
+outputs = [".frost/out/${config}/one.txt"]
+resources = { cpu = 1, ram_mb = 600 }
+
+[target.three]
+kind = "command"
+tool = "python"
+args = ["work.py", "${out}", "120"]
+inputs = ["work.py", "salt.txt"]
+outputs = [".frost/out/${config}/three.txt"]
+resources = { cpu = 1, ram_mb = 600 }
+
+[target.two]
+kind = "command"
+tool = "python"
+args = ["work.py", "${out}", "120"]
+inputs = ["work.py", "salt.txt"]
+outputs = [".frost/out/${config}/two.txt"]
+resources = { cpu = 1, ram_mb = 600 }

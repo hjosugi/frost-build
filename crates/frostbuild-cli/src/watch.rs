@@ -51,6 +51,9 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
     BuildRequest {
         targets: request.targets.clone(),
         jobs: request.jobs,
+        local_cpu_resources: None,
+        local_ram_resources: None,
+        local_test_jobs: None,
         keep_going: true,
         explain: false,
         verbose: false,

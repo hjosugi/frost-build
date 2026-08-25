@@ -376,7 +376,7 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 32] = [
+    const FREE_TEXT: [&str; 41] = [
         // Seconds.
         "frost build::timeout",
         "frost test::timeout",
@@ -389,6 +389,9 @@ mod completion_contract_tests {
         "frost pack-wheel::version",
         // Numbers.
         "frost build::jobs",
+        "frost build::local_cpu_resources",
+        "frost build::local_ram_resources",
+        "frost build::local_test_jobs",
         "frost build::remote_timeout",
         "frost build::check_determinism",
         "frost run::jobs",
@@ -399,8 +402,14 @@ mod completion_contract_tests {
         "frost debug::jobs",
         "frost ide::jobs",
         "frost test::jobs",
+        "frost test::local_cpu_resources",
+        "frost test::local_ram_resources",
+        "frost test::local_test_jobs",
         "frost test::remote_timeout",
         "frost simulate::jobs",
+        "frost simulate::local_cpu_resources",
+        "frost simulate::local_ram_resources",
+        "frost simulate::local_test_jobs",
         "frost bazel-dev::debounce_ms",
         "frost query allpaths::limit",
         // Argv handed to another program, which owns its own grammar.

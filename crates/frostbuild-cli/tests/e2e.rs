@@ -3389,6 +3389,85 @@ fn test_all_selects_every_test_target() {
 }
 
 #[test]
+fn local_test_jobs_limits_tests_independently_of_build_workers() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping local_test_jobs_limits_tests_independently_of_build_workers: python3 not in PATH");
+        return;
+    }
+    let ws = Workspace::new("local-test-jobs");
+    ws.write(
+        "resource_probe.py",
+        r#"import os, pathlib, time
+root = pathlib.Path('.frost')
+lock = root / 'resource-probe.lock'
+current = root / 'resource-probe.current'
+peak = root / 'resource-probe.peak'
+
+def update(delta):
+    while True:
+        try:
+            os.mkdir(lock)
+            break
+        except FileExistsError:
+            time.sleep(0.005)
+    try:
+        count = int(current.read_text()) if current.exists() else 0
+        count += delta
+        current.write_text(str(count))
+        high = int(peak.read_text()) if peak.exists() else 0
+        peak.write_text(str(max(high, count)))
+    finally:
+        os.rmdir(lock)
+
+update(1)
+time.sleep(0.2)
+update(-1)
+"#,
+    );
+    ws.append(
+        "frost.toml",
+        r#"
+[toolchain.tools]
+python = "python3"
+
+[target.resource_probe_one]
+kind = "test"
+tool = "python"
+args = ["resource_probe.py"]
+inputs = ["resource_probe.py"]
+sandbox = false
+
+[target.resource_probe_two]
+kind = "test"
+tool = "python"
+args = ["resource_probe.py"]
+inputs = ["resource_probe.py"]
+sandbox = false
+"#,
+    );
+
+    let (ok, out) = ws.frost(&[
+        "test",
+        "resource_probe_one",
+        "resource_probe_two",
+        "--jobs",
+        "4",
+        "--local-cpu-resources",
+        "4",
+        "--local-test-jobs",
+        "1",
+        "--no-cache",
+        "--no-tui",
+    ]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(ws.dir.join(".frost/resource-probe.peak")).unwrap(),
+        "1",
+        "-j 4 must not override --local-test-jobs 1:\n{out}"
+    );
+}
+
+#[test]
 fn multi_package_labels_build_across_packages() {
     let ws = Workspace::new("packages");
     std::fs::create_dir_all(ws.dir.join("lib")).unwrap();
@@ -3521,8 +3600,23 @@ fn daemon_build_status_and_stop() {
     }
     let (ok, out) = ws.frost(&["daemon", "status"]);
     assert!(ok && out.contains("running"), "{out}");
+    let (ok, out) = ws.frost(&["daemon", "status", "--json"]);
+    assert!(ok, "{out}");
+    let status: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(status["schema"], "frost-daemon-status-v1");
+    assert_eq!(status["state"], "running");
+    assert_eq!(status["protocol"], frostbuild_daemon::PROTOCOL_VERSION);
+    assert_eq!(
+        status["expected_protocol"],
+        frostbuild_daemon::PROTOCOL_VERSION
+    );
     let (ok, out) = ws.frost(&["daemon", "stop"]);
     assert!(ok && out.contains("stopped"), "{out}");
+    let (ok, out) = ws.frost(&["daemon", "status", "--json"]);
+    assert!(ok, "a stopped daemon is a status result:\n{out}");
+    let status: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(status["state"], "stopped");
+    assert!(status["protocol"].is_null());
 }
 
 #[test]

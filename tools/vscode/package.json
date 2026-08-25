@@ -56,6 +56,11 @@
         "category": "FrostBuild"
       },
       {
+        "command": "frost.refreshDaemonStatus",
+        "title": "Refresh Daemon Status",
+        "category": "FrostBuild"
+      },
+      {
         "command": "frost.buildTarget",
         "title": "Build",
         "category": "FrostBuild",

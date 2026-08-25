@@ -9,6 +9,8 @@ use crate::{ProgressSender, DEFAULT_CAS_MAX_BYTES};
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     pub jobs: usize,
+    /// Admission budgets applied in addition to the worker-count ceiling.
+    pub resources: ResourceLimits,
     pub keep_going: bool,
     pub dry_run: bool,
     pub verbose: bool,
@@ -60,6 +62,69 @@ pub struct BuildOptions {
 /// nothing measurable and removes the most common way a build never returns.
 pub const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Host capacity the scheduler may reserve concurrently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceLimits {
+    pub cpu: usize,
+    pub ram_mb: u64,
+    pub test_jobs: usize,
+}
+
+impl ResourceLimits {
+    /// Host-derived production defaults. `jobs` remains a separate hard cap.
+    pub fn host(jobs: usize) -> Self {
+        Self {
+            cpu: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            ram_mb: physical_ram_mb(),
+            test_jobs: jobs.max(1),
+        }
+    }
+
+    /// Preserve ordinary list-scheduling semantics for a simulated `-j N`.
+    pub fn for_jobs(jobs: usize) -> Self {
+        let jobs = jobs.max(1);
+        Self {
+            cpu: jobs,
+            ram_mb: u64::MAX,
+            test_jobs: jobs,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn physical_ram_mb() -> u64 {
+    // SAFETY: sysconf reads process-independent host constants and has no
+    // pointer arguments. A negative return means the host cannot answer.
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if pages <= 0 || page_size <= 0 {
+        return u64::MAX;
+    }
+    (pages as u64)
+        .saturating_mul(page_size as u64)
+        .saturating_div(1024 * 1024)
+        .max(1)
+}
+
+#[cfg(windows)]
+fn physical_ram_mb() -> u64 {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+    // SAFETY: the structure is initialized to its documented length and the
+    // API writes only within it for the duration of the call.
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 {
+        return u64::MAX;
+    }
+    status.ullTotalPhys.saturating_div(1024 * 1024).max(1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn physical_ram_mb() -> u64 {
+    u64::MAX
+}
+
 /// Ready-queue ordering. Both schedulers run the same actions and produce the
 /// same outputs; they differ only in the order independent work is started,
 /// which shows up as makespan.
@@ -110,8 +175,10 @@ impl Estimator {
 
 impl Default for BuildOptions {
     fn default() -> Self {
+        let jobs = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self {
-            jobs: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            jobs,
+            resources: ResourceLimits::host(jobs),
             keep_going: false,
             dry_run: false,
             verbose: false,

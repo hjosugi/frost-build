@@ -740,6 +740,13 @@ mod tests {
                 busy_ms: 300,
                 critical_path_ms: 90,
                 estimated_work_ms: 310,
+                local_cpu_resources: 8,
+                local_ram_resources_mb: 16_384,
+                local_test_jobs: 8,
+                peak_cpu: 4,
+                peak_ram_mb: 1_024,
+                peak_tests: 2,
+                resource_constrained: false,
                 executed: results
                     .iter()
                     .filter(|r| matches!(r.outcome, Outcome::Executed { .. }))

@@ -14,8 +14,9 @@ const MAGIC: &[u8; 8] = b"FRSTGR01";
 // Version 7 adds the host executable suffix to native binary graph paths.
 // Version 9 adds `[stamp]` and per-action stamp references, which a warm
 // invocation reads without parsing a manifest. Version 10 adds coverage
-// configuration and per-action coverage metadata.
-const VERSION: u32 = 10;
+// configuration and per-action coverage metadata. Version 11 adds scheduler-
+// only action resource requirements.
+const VERSION: u32 = 11;
 
 /// Evidence that the manifest inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every

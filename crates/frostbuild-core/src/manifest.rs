@@ -272,6 +272,7 @@ pub const TARGET_KEYS: &[&str] = &[
     "clean_dirs",
     "preserve_outputs",
     "timeout",
+    "resources",
     "shard_count",
     "flaky_retries",
     "lint_allow",
@@ -320,6 +321,9 @@ struct RawTarget {
     /// Seconds this action may run before Frost stops it. Absent means the
     /// invocation decides; see `BuildOptions::timeout`.
     timeout: Option<u64>,
+    /// Scheduler admission requirements. They affect when an action starts,
+    /// never its output identity.
+    resources: Option<ActionResources>,
     /// Test targets only: split this test into N independently cached and
     /// scheduled actions. Absent or 1 leaves the target a single action.
     shard_count: Option<u32>,
@@ -485,6 +489,28 @@ pub struct Profile {
     pub ldflags: Vec<String>,
 }
 
+/// Scheduler-only requirements declared with `resources = { ... }`.
+///
+/// CPU is an integer token count rather than a percentage: it keeps admission
+/// deterministic and gives `--local-cpu-resources` the same unit. RAM is MiB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ActionResources {
+    pub cpu: u32,
+    pub ram_mb: u64,
+    pub exclusive: bool,
+}
+
+impl Default for ActionResources {
+    fn default() -> Self {
+        Self {
+            cpu: 1,
+            ram_mb: 0,
+            exclusive: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Target {
     pub name: String,
@@ -509,6 +535,9 @@ pub struct Target {
     /// environment, not the result, so it is deliberately not action-key
     /// material (docs/16_action_key_audit.md).
     pub timeout_secs: Option<u64>,
+    /// Resources reserved while each action belonging to this target runs.
+    /// Scheduling policy only: deliberately absent from action keys.
+    pub resources: ActionResources,
     /// How many independently cached and scheduled actions this test becomes.
     /// Always at least 1; only test kinds may declare more.
     pub shard_count: u32,
@@ -1121,6 +1150,9 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
     if !valid_target_name(name) {
         bail!("target name must match [A-Za-z0-9_-]+");
     }
+    if spec.resources.is_some_and(|resources| resources.cpu == 0) {
+        bail!("resources.cpu must be at least 1");
+    }
 
     // Sharding is a property of a test runner's protocol, so only test kinds
     // may declare it. On anything else the field would parse and do nothing,
@@ -1397,6 +1429,7 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         clean_dirs,
         preserve_outputs: spec.preserve_outputs,
         timeout_secs: spec.timeout,
+        resources: spec.resources.unwrap_or_default(),
         shard_count: spec.shard_count.unwrap_or(1),
         flaky_retries: spec.flaky_retries.unwrap_or(0),
         lint_allow: spec.lint_allow.clone(),
@@ -2777,6 +2810,44 @@ mod tests {
         assert_eq!(m.toolchain.cc, "gcc");
         assert_eq!(m.targets.len(), 3);
         assert_eq!(m.targets["app"].deps, vec!["util"]);
+    }
+
+    #[test]
+    fn parses_and_validates_scheduler_resources() {
+        let manifest = Manifest::parse_str(
+            r#"
+            [target.heavy]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["heavy.out"]
+            resources = { cpu = 3, ram_mb = 4096, exclusive = true }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.targets["heavy"].resources,
+            ActionResources {
+                cpu: 3,
+                ram_mb: 4096,
+                exclusive: true,
+            }
+        );
+
+        let error = Manifest::parse_str(
+            r#"
+            [target.impossible]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["out"]
+            resources = { cpu = 0 }
+            "#,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains("resources.cpu must be at least 1"),
+            "{error}"
+        );
     }
 
     #[test]

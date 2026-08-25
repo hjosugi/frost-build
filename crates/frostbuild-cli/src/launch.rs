@@ -356,6 +356,9 @@ pub(crate) fn run_target(
         BuildRequest {
             targets: vec![target.clone()],
             jobs,
+            local_cpu_resources: None,
+            local_ram_resources: None,
+            local_test_jobs: None,
             keep_going: false,
             explain: false,
             verbose: false,
@@ -459,6 +462,9 @@ pub(crate) fn run_debug(
         BuildRequest {
             targets: vec![target.clone()],
             jobs,
+            local_cpu_resources: None,
+            local_ram_resources: None,
+            local_test_jobs: None,
             keep_going: false,
             explain: false,
             verbose: false,
