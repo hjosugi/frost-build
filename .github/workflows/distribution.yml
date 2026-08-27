@@ -20,14 +20,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Resolve the expected latest stable version
         shell: bash
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 - <<'PY' >> "$GITHUB_ENV"
           import json
+          import os
           import urllib.request
 
           request = urllib.request.Request(
               "https://api.github.com/repos/hjosugi/frost-build/releases/latest",
-              headers={"Accept": "application/vnd.github+json", "User-Agent": "frostbuild-distribution-ci"},
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_API_TOKEN']}",
+                  "User-Agent": "frostbuild-distribution-ci",
+              },
           )
           with urllib.request.urlopen(request) as response:
               release = json.load(response)
@@ -36,12 +43,14 @@ jobs:
       - name: Install the latest release through the checked-in script
         shell: bash
         run: |
-          sh install.sh --prefix "$RUNNER_TEMP/frost-prefix"
+          sh install.sh --version "$EXPECTED_VERSION" --prefix "$RUNNER_TEMP/frost-prefix"
           test "$("$RUNNER_TEMP/frost-prefix/bin/frost" --version)" = "frost $EXPECTED_VERSION"
           test -x "$RUNNER_TEMP/frost-prefix/bin/frostd"
           test -f "$RUNNER_TEMP/frost-prefix/share/man/man1/frost.1"
       - name: Check for updates against the real release API
         shell: bash
+        env:
+          FROST_SELF_UPDATE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: "$RUNNER_TEMP/frost-prefix/bin/frost self-update --check"
       - name: Exercise verified replacement from the real release
         shell: bash
@@ -49,6 +58,7 @@ jobs:
           # Force the installed latest binary through the download, checksum,
           # candidate smoke-test and atomic replacement path.
           FROST_SELF_UPDATE_CURRENT_VERSION: 0.0.0
+          FROST_SELF_UPDATE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           "$RUNNER_TEMP/frost-prefix/bin/frost" self-update
           test "$("$RUNNER_TEMP/frost-prefix/bin/frost" --version)" = "frost $EXPECTED_VERSION"

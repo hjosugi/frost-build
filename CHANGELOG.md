@@ -5,6 +5,12 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- Authenticate the scheduled distribution smoke test's real GitHub API calls,
+  avoiding shared-runner unauthenticated rate limits while never forwarding a
+  token to a self-update API override or release asset URL.
+
 ## [0.13.0] - 2026-08-27
 
 ### Added

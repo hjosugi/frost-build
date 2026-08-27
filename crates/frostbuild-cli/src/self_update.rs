@@ -13,11 +13,12 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::acquire::{download, extract, sha256_file, Scratch};
+use crate::acquire::{download, download_with_bearer_token, extract, sha256_file, Scratch};
 
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/hjosugi/frost-build/releases/latest";
 const API_URL_ENV: &str = "FROST_SELF_UPDATE_API_URL";
 const CURRENT_VERSION_ENV: &str = "FROST_SELF_UPDATE_CURRENT_VERSION";
+const GITHUB_TOKEN_ENV: &str = "FROST_SELF_UPDATE_GITHUB_TOKEN";
 
 #[derive(Deserialize)]
 struct Release {
@@ -116,7 +117,14 @@ pub(crate) fn run_self_update(check: bool) -> Result<i32> {
     let scratch = Scratch::create(&std::env::temp_dir(), "frost-self-update")?;
     let release_path = scratch.path().join("latest.json");
     let api_url = std::env::var(API_URL_ENV).unwrap_or_else(|_| LATEST_RELEASE_API.to_string());
-    download(&api_url, &release_path).context("failed to query the latest FrostBuild release")?;
+    // An explicit CI token is sent only to the fixed official endpoint. Test
+    // overrides and mirrors must never receive a GitHub credential by accident.
+    let github_token = (api_url == LATEST_RELEASE_API)
+        .then(|| std::env::var(GITHUB_TOKEN_ENV).ok())
+        .flatten()
+        .filter(|token| !token.is_empty());
+    download_with_bearer_token(&api_url, &release_path, github_token.as_deref())
+        .context("failed to query the latest FrostBuild release")?;
     let release: Release = serde_json::from_slice(
         &std::fs::read(&release_path).context("failed to read the latest release response")?,
     )

@@ -18,31 +18,54 @@ use sha2::{Digest, Sha256};
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn download(url: &str, destination: &Path) -> Result<()> {
+    download_with_bearer_token(url, destination, None)
+}
+
+pub(crate) fn download_with_bearer_token(
+    url: &str,
+    destination: &Path,
+    bearer_token: Option<&str>,
+) -> Result<()> {
+    if bearer_token.is_some_and(|token| token.chars().any(char::is_control)) {
+        bail!("download bearer token contains a control character");
+    }
     let (program, args) = if let Some(curl) = crate::launch::find_on_path("curl") {
-        (
-            curl,
-            vec![
-                "--fail".to_string(),
-                "--location".to_string(),
-                "--silent".to_string(),
-                "--show-error".to_string(),
-                "--output".to_string(),
-                destination.to_string_lossy().into_owned(),
-                "--".to_string(),
-                url.to_string(),
-            ],
-        )
+        let mut args = vec![
+            "--fail".to_string(),
+            "--silent".to_string(),
+            "--show-error".to_string(),
+        ];
+        if let Some(token) = bearer_token {
+            args.extend([
+                "--header".to_string(),
+                format!("Authorization: Bearer {token}"),
+            ]);
+        } else {
+            args.push("--location".to_string());
+        }
+        args.extend([
+            "--output".to_string(),
+            destination.to_string_lossy().into_owned(),
+            "--".to_string(),
+            url.to_string(),
+        ]);
+        (curl, args)
     } else if let Some(wget) = crate::launch::find_on_path("wget") {
-        (
-            wget,
-            vec![
-                "--quiet".to_string(),
-                "--output-document".to_string(),
-                destination.to_string_lossy().into_owned(),
-                "--".to_string(),
-                url.to_string(),
-            ],
-        )
+        let mut args = vec!["--quiet".to_string()];
+        if let Some(token) = bearer_token {
+            args.extend([
+                "--max-redirect=0".to_string(),
+                "--header".to_string(),
+                format!("Authorization: Bearer {token}"),
+            ]);
+        }
+        args.extend([
+            "--output-document".to_string(),
+            destination.to_string_lossy().into_owned(),
+            "--".to_string(),
+            url.to_string(),
+        ]);
+        (wget, args)
     } else {
         bail!("downloading requires curl or wget in PATH");
     };
@@ -250,5 +273,16 @@ mod tests {
         assert!(validate_archive_path(Path::new("../escape")).is_err());
         assert!(validate_archive_path(Path::new("/absolute")).is_err());
         assert!(validate_archive_path(Path::new("safe/path")).is_ok());
+    }
+
+    #[test]
+    fn bearer_tokens_cannot_inject_a_second_header() {
+        let destination = scratch("token-injection");
+        assert!(download_with_bearer_token(
+            "http://127.0.0.1:1/never-reached",
+            &destination,
+            Some("safe\r\nInjected: value")
+        )
+        .is_err());
     }
 }
