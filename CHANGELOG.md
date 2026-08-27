@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-27
+
 ### Added
 
 - Verified distribution UX: a latest-or-pinned POSIX `install.sh`, release
