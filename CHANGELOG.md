@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-27
+
 ### Fixed
 
 - Authenticate the scheduled distribution smoke test's real GitHub API calls,
