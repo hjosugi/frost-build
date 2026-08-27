@@ -79,8 +79,39 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Releasing ${tag} from ${GITHUB_SHA}."
 
-  linux-musl:
+  release-assets:
     needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+      - name: Generate man pages and static completions
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          release_date="$(awk -v version="$RELEASE_VERSION" '$0 ~ "^## \\[" version "\\] - " { print $4; exit }' CHANGELOG.md)"
+          test -n "$release_date"
+          cargo run --locked -p frostbuild-cli --example release-assets \
+            --features release-assets -- dist/release-assets "$release_date"
+      - name: Render the installed manual
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y man-db
+          test "$(find dist/release-assets/share/man/man1 -name '*.1' | wc -l)" -gt 1
+          MANPATH="$PWD/dist/release-assets/share/man" man -w frost
+          MANPATH="$PWD/dist/release-assets/share/man" MANPAGER=cat man frost >/dev/null
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distribution-assets
+          path: dist/release-assets
+          if-no-files-found: error
+
+  linux-musl:
+    needs: [resolve, release-assets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,6 +121,10 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p frostbuild-cli -p frostbuild-daemon
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: distribution-assets
+          path: dist/release-assets
       - name: Package static Linux archive
         shell: bash
         env:
@@ -99,7 +134,8 @@ jobs:
           mkdir -p "dist/${archive}"
           cp target/x86_64-unknown-linux-musl/release/frost "dist/${archive}/"
           cp target/x86_64-unknown-linux-musl/release/frostd "dist/${archive}/"
-          cp README.md LICENSE "dist/${archive}/"
+          cp README.md LICENSE install.sh "dist/${archive}/"
+          cp -R dist/release-assets/share "dist/${archive}/"
           "dist/${archive}/frost" --version
           tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
           rm -rf "dist/${archive}"
@@ -110,7 +146,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    needs: resolve
+    needs: [resolve, release-assets]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,6 +154,10 @@ jobs:
         with:
           toolchain: 1.95.0
       - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: distribution-assets
+          path: dist/release-assets
       - name: Package macOS archive
         shell: bash
         env:
@@ -127,7 +167,8 @@ jobs:
           archive="frostbuild-${RELEASE_TAG}-${host}"
           mkdir -p "dist/${archive}"
           cp target/release/frost target/release/frostd "dist/${archive}/"
-          cp README.md LICENSE "dist/${archive}/"
+          cp README.md LICENSE install.sh "dist/${archive}/"
+          cp -R dist/release-assets/share "dist/${archive}/"
           "dist/${archive}/frost" --version
           tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
           rm -rf "dist/${archive}"
@@ -138,7 +179,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    needs: resolve
+    needs: [resolve, release-assets]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,6 +187,10 @@ jobs:
         with:
           toolchain: 1.95.0
       - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: distribution-assets
+          path: dist/release-assets
       - name: Package Windows archive
         shell: pwsh
         env:
@@ -155,7 +200,8 @@ jobs:
           $archive = "frostbuild-$env:RELEASE_TAG-$hostTriple"
           New-Item -ItemType Directory -Force -Path "dist/$archive" | Out-Null
           Copy-Item target/release/frost.exe,target/release/frostd.exe -Destination "dist/$archive/"
-          Copy-Item README.md,LICENSE -Destination "dist/$archive/"
+          Copy-Item README.md,LICENSE,install.sh -Destination "dist/$archive/"
+          Copy-Item -Recurse dist/release-assets/share -Destination "dist/$archive/share"
           & "dist/$archive/frost.exe" --version
           Compress-Archive -Path "dist/$archive" -DestinationPath "dist/$archive.zip"
           Remove-Item "dist/$archive" -Recurse
@@ -166,11 +212,12 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [resolve, linux-musl, macos, windows]
+    needs: [resolve, release-assets, linux-musl, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
@@ -178,7 +225,19 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         shell: bash
-        run: (cd dist && sha256sum frostbuild-* > SHA256SUMS)
+        run: (cd dist && sha256sum frostbuild-*.tar.gz frostbuild-*.zip > SHA256SUMS)
+      - name: Render package-manager manifests
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby
+          python3 scripts/render_distribution_manifests.py \
+            --version "$RELEASE_VERSION" --checksums dist/SHA256SUMS --output dist
+          ruby -c dist/frostbuild.rb
+          python3 -m json.tool dist/frostbuild.json >/dev/null
+          cp install.sh dist/install.sh
       # On the dispatch path the tag does not exist yet; the action creates it
       # at the commit this run checked out. On the tag-push path it already
       # points there and this is a no-op.

@@ -30,6 +30,7 @@ cite the existing file names.
 | [22_developer_loop.md](22_developer_loop.md) | the edit/build/run loop Frost is optimizing |
 | [28_compatibility_contract.md](28_compatibility_contract.md) | what a release promises not to break, and what it explicitly does not |
 | [29_sample_workspaces.md](29_sample_workspaces.md) | the five checked-in workspaces, and when to own the compiler versus wrap an ecosystem build |
+| [30_distribution.md](30_distribution.md) | verified installation, release archive layout, package-manager manifests and explicit self-update |
 
 ## Research and design studies
 

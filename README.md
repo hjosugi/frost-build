@@ -584,9 +584,33 @@ contract, not arbitrary PEP 517 backends, extensions or pytest. See
 ## Installation and versioning
 
 Before 1.0, FrostBuild follows SemVer with breaking changes allowed in minor
-versions. Build locally with Cargo, use `cargo install --path crates/frostbuild-cli`,
-or download a checksummed Linux, macOS or Windows archive from a tagged GitHub
-release. Each archive contains both `frost` and the optional `frostd` daemon.
+versions. The POSIX installer selects the latest release for the host, verifies
+its archive against that release's `SHA256SUMS`, smoke-tests it, and only then
+publishes it under `~/.local`:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/hjosugi/frost-build/main/install.sh | sh
+# Reproducible/pinned installation:
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/hjosugi/frost-build/main/install.sh | \
+  sh -s -- --version 0.12.0
+```
+
+Alternatively build locally with Cargo, use
+`cargo install --locked --path crates/frostbuild-cli`, or download a checksummed
+Linux, macOS or Windows archive from a tagged GitHub release. Each archive
+contains `frost`, the optional `frostd` daemon, all generated man pages and
+static completions for six shells. Every release also publishes a tap-ready
+Homebrew formula and Scoop manifest generated from the archive checksums.
+
+An archive/script installation can be updated only when explicitly requested:
+`frost self-update --check` performs a metadata-only check and
+`frost self-update` verifies and atomically replaces the executable. A binary
+under Cargo's install root is refused with the corresponding `cargo install`
+command; Frost never enables background updates or sends telemetry. Complete
+paths, package-manager commands, archive layout and Winget/AUR maintainer steps
+are in [docs/30_distribution.md](docs/30_distribution.md).
 
 That covers which frost is on a machine. Which frost a *repository* requires is
 the other half, and it is answered by committing `.frost-version` and `frostw`

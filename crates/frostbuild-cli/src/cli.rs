@@ -778,6 +778,12 @@ pub(crate) enum Cmd {
         #[arg(long, requires = "install")]
         dry_run: bool,
     },
+    /// Check for or install the latest verified GitHub release
+    SelfUpdate {
+        /// Report whether a newer release exists without replacing this binary
+        #[arg(long)]
+        check: bool,
+    },
     /// Select build or test targets interactively with fzf
     Pick {
         /// Select only test targets and run `frost test`

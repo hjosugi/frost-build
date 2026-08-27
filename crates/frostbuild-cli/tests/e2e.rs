@@ -5680,6 +5680,156 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+#[test]
+fn self_update_check_uses_the_latest_release_api_without_touching_the_binary() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping self-update check E2E: curl/wget is not present");
+        return;
+    }
+    let workspace = Workspace::empty("self-update-check");
+    let server = ReleaseServer::start(vec![(
+        "/latest".into(),
+        br#"{"tag_name":"v9.9.9","draft":false,"prerelease":false,"assets":[]}"#.to_vec(),
+    )]);
+    let before = std::fs::read(frost_bin()).expect("read frost before check");
+    let output = Command::new(frost_bin())
+        .args(["self-update", "--check"])
+        .current_dir(&workspace.dir)
+        .env(
+            "FROST_SELF_UPDATE_API_URL",
+            format!("{}/latest", server.base_url),
+        )
+        .env("FROST_SELF_UPDATE_CURRENT_VERSION", "0.0.0")
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*")
+        .output()
+        .expect("run self-update --check");
+    let text = normalized_output(&output.stdout) + &normalized_output(&output.stderr);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("update available 0.0.0 -> 9.9.9"), "{text}");
+    assert_eq!(
+        server.requests(),
+        1,
+        "--check must only query release metadata"
+    );
+    assert_eq!(std::fs::read(frost_bin()).unwrap(), before);
+}
+
+#[test]
+fn self_update_verifies_and_atomically_replaces_a_standalone_binary() {
+    let Some(triple) = release_triple() else {
+        eprintln!("skipping self-update replacement E2E: no release is published for this host");
+        return;
+    };
+    if !wrapper_prerequisites_present() {
+        eprintln!("skipping self-update replacement E2E: download/archive tools are missing");
+        return;
+    }
+
+    let version = env!("CARGO_PKG_VERSION");
+    let workspace = Workspace::empty("self-update-replace");
+    let standalone = executable_path(workspace.dir.join("bin/frost"));
+    std::fs::create_dir_all(standalone.parent().unwrap()).unwrap();
+    std::fs::copy(frost_bin(), &standalone).expect("copy standalone frost fixture");
+    let (asset, archive) = release_archive(&workspace.dir, version, triple);
+    let sums = format!("{}  {asset}\n", sha256_hex(&archive));
+    let server = ReleaseServer::start(vec![
+        (
+            "/latest".into(),
+            format!(
+                r#"{{"tag_name":"v{version}","draft":false,"prerelease":false,"assets":[{{"name":"SHA256SUMS","browser_download_url":"BASE/SHA256SUMS"}},{{"name":"{asset}","browser_download_url":"BASE/{asset}"}}]}}"#
+            )
+            .into_bytes(),
+        ),
+        ("/SHA256SUMS".into(), sums.into_bytes()),
+        (format!("/{asset}"), archive),
+    ]);
+
+    // ReleaseServer chooses its port after the response body is built. Patch
+    // the single metadata fixture through a tiny proxy response served from a
+    // second server so every asset URL is the exact loopback origin under test.
+    let metadata = format!(
+        r#"{{"tag_name":"v{version}","draft":false,"prerelease":false,"assets":[{{"name":"SHA256SUMS","browser_download_url":"{}/SHA256SUMS"}},{{"name":"{asset}","browser_download_url":"{}/{asset}"}}]}}"#,
+        server.base_url, server.base_url
+    );
+    let api = ReleaseServer::start(vec![("/latest".into(), metadata.into_bytes())]);
+    let output = Command::new(&standalone)
+        .arg("self-update")
+        .current_dir(&workspace.dir)
+        .env(
+            "FROST_SELF_UPDATE_API_URL",
+            format!("{}/latest", api.base_url),
+        )
+        .env("FROST_SELF_UPDATE_CURRENT_VERSION", "0.0.0")
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*")
+        .output()
+        .expect("run standalone self-update");
+    let text = normalized_output(&output.stdout) + &normalized_output(&output.stderr);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains(&format!("updated 0.0.0 -> {version}")),
+        "{text}"
+    );
+    assert_eq!(api.requests(), 1, "metadata must be fetched once");
+    assert_eq!(server.requests(), 2, "both verified assets must be fetched");
+
+    let version_output = Command::new(&standalone)
+        .arg("--version")
+        .output()
+        .expect("run replaced frost");
+    assert!(version_output.status.success());
+    assert_eq!(
+        normalized_output(&version_output.stdout).trim(),
+        format!("frost {version}")
+    );
+}
+
+#[test]
+fn self_update_refuses_a_cargo_managed_binary_and_names_the_owner() {
+    if !fetch_prerequisites_present() {
+        eprintln!("skipping cargo-managed self-update E2E: curl/wget is not present");
+        return;
+    }
+    let workspace = Workspace::empty("self-update-cargo");
+    let cargo_home = workspace.dir.join(".cargo");
+    let managed = executable_path(cargo_home.join("bin/frost"));
+    std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+    std::fs::copy(frost_bin(), &managed).expect("copy cargo-managed frost fixture");
+    let server = ReleaseServer::start(vec![(
+        "/latest".into(),
+        br#"{"tag_name":"v9.9.9","draft":false,"prerelease":false,"assets":[]}"#.to_vec(),
+    )]);
+    let output = Command::new(&managed)
+        .arg("self-update")
+        .current_dir(&workspace.dir)
+        .env("CARGO_HOME", &cargo_home)
+        .env(
+            "FROST_SELF_UPDATE_API_URL",
+            format!("{}/latest", server.base_url),
+        )
+        .env("FROST_SELF_UPDATE_CURRENT_VERSION", "0.0.0")
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*")
+        .output()
+        .expect("run cargo-managed frost");
+    let text = normalized_output(&output.stdout) + &normalized_output(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "cargo-managed frost replaced itself:\n{text}"
+    );
+    assert!(text.contains("managed by cargo"), "{text}");
+    assert!(
+        text.contains("cargo install --locked frostbuild-cli"),
+        "{text}"
+    );
+    assert_eq!(
+        server.requests(),
+        1,
+        "refusal must happen before asset downloads"
+    );
+}
+
 /// A workspace with the wrapper `frost init --wrapper` writes, pinned to
 /// `version`.
 fn wrapper_workspace(name: &str, version: &str) -> Workspace {

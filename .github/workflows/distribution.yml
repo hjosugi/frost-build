@@ -1,0 +1,57 @@
+name: Distribution smoke
+
+on:
+  schedule:
+    - cron: "19 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-release:
+    name: Latest release installs on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve the expected latest stable version
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import urllib.request
+
+          request = urllib.request.Request(
+              "https://api.github.com/repos/hjosugi/frost-build/releases/latest",
+              headers={"Accept": "application/vnd.github+json", "User-Agent": "frostbuild-distribution-ci"},
+          )
+          with urllib.request.urlopen(request) as response:
+              release = json.load(response)
+          print(f"EXPECTED_VERSION={release['tag_name'].removeprefix('v')}")
+          PY
+      - name: Install the latest release through the checked-in script
+        shell: bash
+        run: |
+          sh install.sh --prefix "$RUNNER_TEMP/frost-prefix"
+          test "$("$RUNNER_TEMP/frost-prefix/bin/frost" --version)" = "frost $EXPECTED_VERSION"
+          test -x "$RUNNER_TEMP/frost-prefix/bin/frostd"
+          test -f "$RUNNER_TEMP/frost-prefix/share/man/man1/frost.1"
+      - name: Check for updates against the real release API
+        shell: bash
+        run: "$RUNNER_TEMP/frost-prefix/bin/frost self-update --check"
+      - name: Exercise verified replacement from the real release
+        shell: bash
+        env:
+          # Force the installed latest binary through the download, checksum,
+          # candidate smoke-test and atomic replacement path.
+          FROST_SELF_UPDATE_CURRENT_VERSION: 0.0.0
+        run: |
+          "$RUNNER_TEMP/frost-prefix/bin/frost" self-update
+          test "$("$RUNNER_TEMP/frost-prefix/bin/frost" --version)" = "frost $EXPECTED_VERSION"
+      - name: Render the installed manual
+        shell: bash
+        run: MANPATH="$RUNNER_TEMP/frost-prefix/share/man" MANPAGER=cat man frost >/dev/null

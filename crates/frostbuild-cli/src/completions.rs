@@ -333,43 +333,35 @@ pub(crate) fn install_completions(shell: Option<CompletionShell>, dry_run: bool)
 }
 
 pub(crate) fn print_completions(shell: CompletionShell) {
+    write_completions(shell, &mut std::io::stdout());
+}
+
+pub(crate) fn write_completions(shell: CompletionShell, output: &mut dyn std::io::Write) {
     let mut command = Cli::command();
     match shell {
-        CompletionShell::Bash => clap_complete::generate(
-            clap_complete::Shell::Bash,
-            &mut command,
-            "frost",
-            &mut std::io::stdout(),
-        ),
-        CompletionShell::Zsh => clap_complete::generate(
-            clap_complete::Shell::Zsh,
-            &mut command,
-            "frost",
-            &mut std::io::stdout(),
-        ),
-        CompletionShell::Fish => clap_complete::generate(
-            clap_complete::Shell::Fish,
-            &mut command,
-            "frost",
-            &mut std::io::stdout(),
-        ),
+        CompletionShell::Bash => {
+            clap_complete::generate(clap_complete::Shell::Bash, &mut command, "frost", output)
+        }
+        CompletionShell::Zsh => {
+            clap_complete::generate(clap_complete::Shell::Zsh, &mut command, "frost", output)
+        }
+        CompletionShell::Fish => {
+            clap_complete::generate(clap_complete::Shell::Fish, &mut command, "frost", output)
+        }
         CompletionShell::Powershell => clap_complete::generate(
             clap_complete::Shell::PowerShell,
             &mut command,
             "frost",
-            &mut std::io::stdout(),
+            output,
         ),
-        CompletionShell::Elvish => clap_complete::generate(
-            clap_complete::Shell::Elvish,
-            &mut command,
-            "frost",
-            &mut std::io::stdout(),
-        ),
+        CompletionShell::Elvish => {
+            clap_complete::generate(clap_complete::Shell::Elvish, &mut command, "frost", output)
+        }
         CompletionShell::Nushell => clap_complete::generate(
             clap_complete_nushell::Nushell,
             &mut command,
             "frost",
-            &mut std::io::stdout(),
+            output,
         ),
     }
 }

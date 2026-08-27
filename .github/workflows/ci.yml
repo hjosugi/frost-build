@@ -28,6 +28,47 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo fmt --all -- --check
 
+  distribution-dry-run:
+    name: Distribution assets and manifests (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install format validators
+        run: sudo apt-get update && sudo apt-get install -y man-db ruby
+      - name: Generate and render release documentation
+        run: |
+          cargo run --locked -p frostbuild-cli --example release-assets \
+            --features release-assets -- dist/release-assets 1970-01-01
+          test "$(find dist/release-assets/share/man/man1 -name '*.1' | wc -l)" -gt 1
+          test "$(find dist/release-assets/share/completions -type f | wc -l)" -eq 6
+          MANPATH="$PWD/dist/release-assets/share/man" MANPAGER=cat man frost >/dev/null
+      - name: Render and validate package-manager manifests
+        shell: bash
+        run: |
+          version="$(awk '
+            /^\[workspace\.package\]/ { in_section = 1; next }
+            /^\[/                     { in_section = 0 }
+            in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.toml)"
+          mkdir -p dist/manifests
+          for asset in \
+            "frostbuild-v${version}-x86_64-unknown-linux-musl.tar.gz" \
+            "frostbuild-v${version}-aarch64-apple-darwin.tar.gz" \
+            "frostbuild-v${version}-x86_64-pc-windows-msvc.zip"; do
+            printf '%064d  %s\n' 0 "$asset"
+          done > dist/SHA256SUMS
+          python3 scripts/render_distribution_manifests.py \
+            --version "$version" --checksums dist/SHA256SUMS --output dist/manifests
+          ruby -c dist/manifests/frostbuild.rb
+          python3 -m json.tool dist/manifests/frostbuild.json >/dev/null
+      - run: sh -n install.sh
+
   # Releases ship a macOS archive, so macOS runs the whole suite rather than one
   # smoke test. Exclusions are declared in the tests themselves (`cfg(unix)`,
   # `cfg(target_os = "linux")`, the bubblewrap early return) and tabulated in

@@ -10,12 +10,21 @@ description = "FrostBuild command-line interface"
 name = "frost"
 path = "src/main.rs"
 
+[[example]]
+name = "release-assets"
+path = "examples/release-assets.rs"
+required-features = ["release-assets"]
+
+[features]
+release-assets = ["dep:clap_mangen"]
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_complete_nushell.workspace = true
+clap_mangen = { workspace = true, optional = true }
 crossterm.workspace = true
 frostbuild-core.workspace = true
 frostbuild-exec.workspace = true
@@ -28,6 +37,7 @@ libc.workspace = true
 quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+self-replace.workspace = true
 sha2.workspace = true
 tar.workspace = true
 # Two readers of TOML that are not the manifest loader: `frost lsp` needs the

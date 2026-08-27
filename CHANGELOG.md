@@ -5,6 +5,15 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Verified distribution UX: a latest-or-pinned POSIX `install.sh`, release
+  archives with generated man pages and six shell completions, release-derived
+  Homebrew/Scoop manifests, and explicit `frost self-update [--check]` with
+  Cargo-install refusal, candidate version validation and atomic replacement.
+  Loopback fixtures prove checksum failure leaves no installation behind; a
+  scheduled Linux/macOS job exercises the real latest release and manual.
+
 ## [0.12.0] - 2026-08-25
 
 ### Added
