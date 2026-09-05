@@ -21,7 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: nightly
-      - uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2
         with:
           tool: cargo-fuzz@0.13.2
       - run: cargo +nightly fuzz run "${{ matrix.target }}" --target x86_64-unknown-linux-gnu -- -max_total_time=60
