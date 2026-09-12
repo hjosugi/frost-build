@@ -28,7 +28,7 @@ toml = "1.1"
 toml_edit = { version = "0.25", default-features = false, features = ["display", "parse"] }
 tar = { version = "0.4", default-features = false }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-zstd = "0.13"
+zstd = "0.14"
 clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
 clap_complete_nushell = "4.6"
