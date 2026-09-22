@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-22
+
 ### Changed
 
 - Update dependencies: zstd 0.14, quick-xml 0.42, flate2 1.1.10, serde
