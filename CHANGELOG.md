@@ -5,6 +5,13 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- Update dependencies: zstd 0.14, quick-xml 0.42, flate2 1.1.10, serde
+  1.0.229 and blake3 1.8.7, plus the pinned `actions/deploy-pages`,
+  `softprops/action-gh-release` and `taiki-e/install-action` workflow
+  actions.
+
 ## [0.13.1] - 2026-08-27
 
 ### Fixed
