@@ -158,7 +158,9 @@ jobs:
           import hashlib, os, sys
           for path in sys.argv[1:]:
               with open(path, "rb") as handle:
-                  print(f"{hashlib.sha256(handle.read()).hexdigest()}  {os.path.basename(path)}")
+                  line = f"{hashlib.sha256(handle.read()).hexdigest()}  {os.path.basename(path)}\n"
+              # Bytes, so Windows does not turn the newline into CRLF.
+              sys.stdout.buffer.write(line.encode())
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
