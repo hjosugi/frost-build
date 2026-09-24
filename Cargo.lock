@@ -565,6 +565,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "clap",
+ "frostbuild-core",
  "frostbuild-exec",
  "notify",
  "serde",

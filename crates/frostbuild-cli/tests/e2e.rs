@@ -3254,6 +3254,74 @@ fn genrule_rerun_with_identical_output_cuts_off_downstream() {
     );
 }
 
+/// The cache preflight certifies what it can and leaves the rest to the
+/// scheduler (#152). A changed leaf rebuilds the leaf alone; a changed root
+/// must still reach every consumer of its new bytes, because an action whose
+/// producer is going to run cannot be certified; and early cutoff still
+/// stops a root whose bytes did not change. Checked standalone and through the
+/// daemon, whose child builds skip the certificate it just found stale.
+#[test]
+#[cfg(unix)]
+fn a_partially_cached_chain_rebuilds_exactly_what_changed() {
+    let ws = Workspace::empty("partial-preflight");
+    std::fs::create_dir_all(ws.dir.join("src")).unwrap();
+    ws.write("src/a.txt", "a1\n");
+    ws.write("src/b.txt", "b1\n");
+    ws.write("src/c.txt", "c1\n");
+    ws.write(
+        "frost.toml",
+        "[workspace]\ndefault_targets = [\"c\"]\n\n\
+         [target.a]\nkind = \"genrule\"\ncmd = \"head -c 2 src/a.txt > ${out}\"\n\
+         inputs = [\"src/a.txt\"]\noutputs = [\"gen/a.txt\"]\n\n\
+         [target.b]\nkind = \"genrule\"\ndeps = [\"a\"]\n\
+         cmd = \"cat gen/a.txt src/b.txt > ${out}\"\n\
+         inputs = [\"src/b.txt\"]\noutputs = [\"gen/b.txt\"]\n\n\
+         [target.c]\nkind = \"genrule\"\ndeps = [\"b\"]\n\
+         cmd = \"cat gen/b.txt src/c.txt > ${out}\"\n\
+         inputs = [\"src/c.txt\"]\noutputs = [\"gen/c.txt\"]\n",
+    );
+    let read = |path: &str| std::fs::read_to_string(ws.dir.join(path)).unwrap();
+
+    for daemon in [false, true] {
+        let build = |expect: &str| {
+            let mut args = vec!["build", "--no-tui"];
+            if daemon {
+                args.push("--daemon");
+            }
+            let (ok, out) = ws.frost(&args);
+            assert!(
+                ok && out.contains(expect),
+                "daemon={daemon}: expected {expect:?}:\n{out}"
+            );
+        };
+        let round = if daemon { "2" } else { "1" };
+        if !daemon {
+            build("3 built");
+        }
+        build("up to date");
+
+        // The leaf alone, twice in a row: the second time the certificate
+        // is already known to be stale.
+        for edit in ["x", "y"] {
+            ws.write("src/c.txt", &format!("c{round}{edit}\n"));
+            build("1 built, 2 cached");
+            assert!(read("gen/c.txt").ends_with(&format!("c{round}{edit}\n")));
+        }
+
+        // A root whose bytes change reaches the whole chain.
+        ws.write("src/a.txt", &format!("A{round}\n"));
+        build("3 built");
+        assert_eq!(read("gen/b.txt"), format!("A{round}b1\n"));
+        assert!(read("gen/c.txt").starts_with(&format!("A{round}b1\n")));
+
+        // A root that reruns to identical bytes stops there.
+        ws.write("src/a.txt", &format!("A{round}-same-prefix\n"));
+        build("1 built, 2 cached");
+        build("up to date");
+    }
+    let _ = ws.frost(&["daemon", "stop"]);
+}
+
 #[test]
 fn cflags_change_recompiles_translation_units() {
     let ws = Workspace::new("flags");

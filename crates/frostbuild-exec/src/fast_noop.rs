@@ -273,6 +273,44 @@ pub fn check_watch_proof(
     Ok(Some(proof.hit))
 }
 
+/// Digest of the certificate on disk, from its header alone, as lowercase
+/// hex. `None` when there is no readable certificate.
+pub fn certificate_digest(root: &Path, profile: &str, platform: &str) -> Option<String> {
+    certificate_stamp(root, profile, platform).map(|stamp| stamp.digest_hex())
+}
+
+/// Which certificate file is on disk: its header digest and the file's own
+/// stat identity. Certificates are replaced by rename, so any rewrite — even
+/// one with identical contents — changes the stamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateStamp {
+    digest: [u8; 32],
+    identity: FileIdentity,
+}
+
+impl CertificateStamp {
+    pub fn digest_hex(&self) -> String {
+        blake3::Hash::from(self.digest).to_hex().to_string()
+    }
+}
+
+pub fn certificate_stamp(root: &Path, profile: &str, platform: &str) -> Option<CertificateStamp> {
+    if !safe_component(profile) || !safe_component(platform) {
+        return None;
+    }
+    let mut file = std::fs::File::open(certificate_path(root, profile, platform)).ok()?;
+    let identity = metadata_identity(&file.metadata().ok()?);
+    let mut header = [0u8; 40];
+    file.read_exact(&mut header).ok()?;
+    if &header[..8] != MAGIC {
+        return None;
+    }
+    Some(CertificateStamp {
+        digest: header[8..40].try_into().ok()?,
+        identity,
+    })
+}
+
 fn watchable_file(root: &Path, path: &str) -> bool {
     let Ok(canonical_root) = std::fs::canonicalize(root) else {
         return false;

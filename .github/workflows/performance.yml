@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: "Optional commit to measure on the same runner before this one (daemon-graph job)."
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -28,3 +33,49 @@ jobs:
         with:
           name: benchmark-${{ github.sha }}
           path: bench-result.json
+
+  # #152: the 10k daemon graph against Ninja — no-op and one-leaf change,
+  # median of 31 with alternating order, the leaf change attributed by phase
+  # and checked to have run exactly one action. Too long for every PR, so it
+  # runs nightly and on demand. With `baseline_ref`, the older commit is built
+  # and measured first on the same runner, which is the only fair before/after
+  # on shared hardware.
+  daemon-graph:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Baseline report on this runner
+        if: inputs.baseline_ref != ''
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$BASELINE_REF"
+          (cd "$RUNNER_TEMP/baseline" && cargo build --release --locked -p frostbuild-cli -p frostbuild-bench)
+          "$RUNNER_TEMP/baseline/target/release/frost-bench-rs" daemon-graph \
+            --frost "$RUNNER_TEMP/baseline/target/release/frost" --ninja "$(command -v ninja)" \
+            --targets 10000 --iterations 31 --out daemon-graph-10k-baseline.json
+      - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-bench
+      - name: Daemon graph report
+        run: |
+          target/release/frost-bench-rs daemon-graph \
+            --frost "$PWD/target/release/frost" --ninja "$(command -v ninja)" \
+            --targets 10000 --iterations 31 --out daemon-graph-10k.json
+      # Phase fields, one executed action per sample, and the #25 no-op gate.
+      # The leaf-change ratio is recorded in the report rather than gated:
+      # a shared runner's noise should not turn a nightly red on its own.
+      - name: Check the report
+        run: target/release/frost-bench-rs check-daemon-graph daemon-graph-10k.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success() || failure()
+        with:
+          name: daemon-graph-${{ github.sha }}
+          path: daemon-graph-10k*.json

@@ -31,6 +31,11 @@ pub struct BuildOptions {
     /// Optional structured progress sink. The execution engine never renders
     /// terminal output itself; callers choose a TTY or plain-text renderer.
     pub progress: Option<ProgressSender>,
+    /// Whether `progress` wants one cache-hit event per action the cache
+    /// preflight certified. A live display counts them and an event log
+    /// records them; a plain renderer ignores them, and ten thousand ignored
+    /// events are still ten thousand events to build, send and drain.
+    pub report_cache_hits: bool,
     /// Optional shared cache consulted when the local journal misses. It can
     /// only make a build faster: every response is verified and any failure
     /// falls back to executing the action.
@@ -197,6 +202,7 @@ impl Default for BuildOptions {
             scheduler: Scheduler::CriticalPath,
             estimator: Estimator::Journal,
             progress: None,
+            report_cache_hits: true,
             timeout: None,
             remote: None,
             stamps: None,

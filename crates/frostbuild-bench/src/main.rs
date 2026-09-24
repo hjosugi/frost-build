@@ -12,7 +12,10 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use frostbuild_core::cas::{CasStats, LocalCas, CHUNKING_THRESHOLD};
 use frostbuild_core::hashcache::hash_file;
+use frostbuild_core::phases;
 use serde::Serialize;
+
+mod leaf;
 
 const MIB: u64 = 1024 * 1024;
 const GENERATOR_SEED: u64 = 0x4d59_5df4_d0f3_3173;
@@ -35,6 +38,27 @@ enum Command {
     DaemonNoop(DaemonNoopArgs),
     /// Compare a large Frost daemon graph with the equivalent Ninja graph.
     DaemonGraph(DaemonGraphArgs),
+    /// Check a daemon-graph report: phase fields, action counts, the no-op
+    /// gate and, optionally, the leaf-change ratio against Ninja.
+    CheckDaemonGraph(CheckDaemonGraphArgs),
+}
+
+#[derive(Debug, Args)]
+struct CheckDaemonGraphArgs {
+    /// A `frost-daemon-graph-v2` JSON report.
+    report: PathBuf,
+
+    /// Daemon CLI no-op median must stay below this many milliseconds.
+    #[arg(long, default_value_t = 5.0)]
+    noop_max_ms: f64,
+
+    /// Daemon CLI no-op must be more than this many times faster than Ninja.
+    #[arg(long, default_value_t = 2.0)]
+    noop_min_speedup: f64,
+
+    /// Fail when Frost leaf change / Ninja leaf change exceeds this ratio.
+    #[arg(long)]
+    leaf_max_ratio: Option<f64>,
 }
 
 #[derive(Debug, Args)]
@@ -227,6 +251,33 @@ struct DaemonGraphReport {
     greater_than_2x_ninja: bool,
     daemon_cli_incremental_leaf: LatencyMeasurement,
     ninja_incremental_leaf: LatencyMeasurement,
+    /// Frost leaf-change median over Ninja leaf-change median, same run.
+    leaf_change_vs_ninja: f64,
+    leaf_change: LeafChangeEvidence,
+}
+
+/// Where the leaf-change time went and what the build did, per sample.
+#[derive(Debug, Serialize)]
+struct LeafChangeEvidence {
+    /// Set on the client for every leaf sample; the daemon forwards it.
+    phase_timing_env: &'static str,
+    phases: Vec<leaf::PhaseSummary>,
+    details: Vec<leaf::DetailTiming>,
+    artifact: ArtifactEvidence,
+    samples: Vec<leaf::LeafSample>,
+}
+
+/// The changed leaf's output after the last sample, for both tools.
+#[derive(Debug, Serialize)]
+struct ArtifactEvidence {
+    frost_path: String,
+    frost_bytes: u64,
+    frost_digest: String,
+    ninja_path: String,
+    ninja_bytes: u64,
+    ninja_digest: String,
+    /// Both files hold exactly what the shared command writes.
+    content_verified: bool,
 }
 
 struct Scratch {
@@ -578,15 +629,40 @@ fn measure_ninja(ninja: &Path, root: &Path, expect_noop: bool) -> Result<f64> {
     Ok(elapsed)
 }
 
-fn measure_frost_build(frost: &Path, root: &Path, daemon: bool) -> Result<f64> {
-    let mut args = vec!["build"];
-    if daemon {
-        args.push("--daemon");
-    }
-    args.push("--no-tui");
+/// One daemon leaf-change build with phase timing enabled. Returns the
+/// harness-measured end-to-end time and the attributed sample.
+fn measure_frost_leaf(frost: &Path, root: &Path, phase_file: &Path) -> Result<leaf::LeafSample> {
+    let _ = std::fs::remove_file(phase_file);
     let started = Instant::now();
-    checked_frost(frost, root, &args)?;
-    Ok(elapsed_ms(started))
+    let output = ProcessCommand::new(frost)
+        .arg("-C")
+        .arg(root)
+        .args(["build", "--daemon", "--no-tui"])
+        .env(phases::ENV, phase_file)
+        .output()
+        .with_context(|| format!("failed to start {}", frost.display()))?;
+    let elapsed = elapsed_ms(started);
+    anyhow::ensure!(
+        output.status.success(),
+        "frost leaf build failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = phases::read_lines(phase_file)
+        .with_context(|| format!("no phase file at {}", phase_file.display()))?;
+    leaf::attribute(elapsed, &lines)
+}
+
+fn artifact(root: &Path, relative: &str) -> Result<(String, u64, String, String)> {
+    let path = root.join(relative);
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok((
+        relative.to_string(),
+        bytes.len() as u64,
+        hash_file(&path)?,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    ))
 }
 
 fn run_daemon_graph(args: DaemonGraphArgs) -> Result<DaemonGraphReport> {
@@ -644,19 +720,56 @@ fn run_daemon_graph(args: DaemonGraphArgs) -> Result<DaemonGraphReport> {
         }
     }
 
-    let leaf = root.join(format!("src/{}.txt", graph_target_name(args.targets - 1)));
+    let last = graph_target_name(args.targets - 1);
+    let leaf = root.join(format!("src/{last}.txt"));
+    let phase_file = scratch.path.join("leaf-phases.ndjson");
+    let frost_out = root.join(".frost/out");
+    let ninja_out = root.join("out");
     let mut frost_incremental = Vec::with_capacity(args.iterations);
     let mut ninja_incremental = Vec::with_capacity(args.iterations);
+    let mut samples = Vec::with_capacity(args.iterations);
     for iteration in 0..args.iterations {
+        // Outside the timed region: which outputs each tool rewrote proves
+        // that exactly one action ran, independently of what frost reports.
+        let frost_before = leaf::snapshot_mtimes(&frost_out)?;
+        let ninja_before = leaf::snapshot_mtimes(&ninja_out)?;
         std::fs::write(&leaf, format!("changed={iteration}\n"))?;
-        if iteration % 2 == 0 {
-            frost_incremental.push(measure_frost_build(&frost, &root, true)?);
+        let mut sample = if iteration % 2 == 0 {
+            let sample = measure_frost_leaf(&frost, &root, &phase_file)?;
             ninja_incremental.push(measure_ninja(&ninja, &root, false)?);
+            sample
         } else {
             ninja_incremental.push(measure_ninja(&ninja, &root, false)?);
-            frost_incremental.push(measure_frost_build(&frost, &root, true)?);
-        }
+            measure_frost_leaf(&frost, &root, &phase_file)?
+        };
+        frost_incremental.push(sample.end_to_end_ms);
+        sample.frost_outputs_rewritten =
+            leaf::rewritten(&frost_before, &leaf::snapshot_mtimes(&frost_out)?, &root);
+        sample.ninja_outputs_rewritten =
+            leaf::rewritten(&ninja_before, &leaf::snapshot_mtimes(&ninja_out)?, &root);
+        samples.push(sample);
     }
+    let (frost_path, frost_bytes, frost_digest, frost_content) =
+        artifact(&root, &format!(".frost/out/{last}.out"))?;
+    let (ninja_path, ninja_bytes, ninja_digest, ninja_content) =
+        artifact(&root, &format!("out/{last}.out"))?;
+    let artifact = ArtifactEvidence {
+        content_verified: frost_content == format!("{frost_path}\n")
+            && ninja_content == format!("{ninja_path}\n"),
+        frost_path,
+        frost_bytes,
+        frost_digest,
+        ninja_path,
+        ninja_bytes,
+        ninja_digest,
+    };
+    let leaf_change = LeafChangeEvidence {
+        phase_timing_env: phases::ENV,
+        phases: leaf::summarize(&samples),
+        details: leaf::summarize_details(&samples),
+        artifact,
+        samples,
+    };
 
     let standalone_noop = LatencyMeasurement::new(standalone);
     let daemon_cli_noop = LatencyMeasurement::new(daemon_cli);
@@ -665,7 +778,7 @@ fn run_daemon_graph(args: DaemonGraphArgs) -> Result<DaemonGraphReport> {
     let daemon_cli_incremental_leaf = LatencyMeasurement::new(frost_incremental);
     let ninja_incremental_leaf = LatencyMeasurement::new(ninja_incremental);
     Ok(DaemonGraphReport {
-        schema: "frost-daemon-graph-v1",
+        schema: "frost-daemon-graph-v2",
         frostbuild_version: env!("CARGO_PKG_VERSION"),
         generated_at_unix_s: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -692,8 +805,11 @@ fn run_daemon_graph(args: DaemonGraphArgs) -> Result<DaemonGraphReport> {
         daemon_cli_noop,
         daemon_socket_noop,
         ninja_noop,
+        leaf_change_vs_ninja: daemon_cli_incremental_leaf.median_ms
+            / ninja_incremental_leaf.median_ms,
         daemon_cli_incremental_leaf,
         ninja_incremental_leaf,
+        leaf_change,
     })
 }
 
@@ -1037,9 +1153,20 @@ fn print_daemon_graph(report: &DaemonGraphReport) {
         report.daemon_cli_incremental_leaf.median_ms
     );
     println!(
-        "`-- Ninja leaf change .. {:>8.3} ms",
-        report.ninja_incremental_leaf.median_ms
+        "+-- Ninja leaf change .. {:>8.3} ms  frost/ninja {:.2}",
+        report.ninja_incremental_leaf.median_ms, report.leaf_change_vs_ninja
     );
+    println!("`-- leaf change, by phase (median ms, share)");
+    let mut phases: Vec<_> = report.leaf_change.phases.iter().collect();
+    phases.sort_by(|a, b| b.median_ms.total_cmp(&a.median_ms));
+    for phase in phases.iter().take(12) {
+        println!(
+            "      {:<36} {:>8.3}  {:>5.1}%",
+            phase.name,
+            phase.median_ms,
+            phase.share_of_median_end_to_end * 100.0
+        );
+    }
     println!(
         "    daemon <5 ms {} · >2x Ninja {}",
         if report.end_to_end_sub_5ms {
@@ -1118,11 +1245,36 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Some(Command::CheckDaemonGraph(args)) => {
+            let text = std::fs::read_to_string(&args.report)
+                .with_context(|| format!("failed to read {}", args.report.display()))?;
+            let report: serde_json::Value = serde_json::from_str(&text)
+                .with_context(|| format!("{} is not JSON", args.report.display()))?;
+            let problems = leaf::validate_report(
+                &report,
+                leaf::Gates {
+                    noop_max_ms: args.noop_max_ms,
+                    noop_min_speedup_vs_ninja: args.noop_min_speedup,
+                    leaf_max_ratio_vs_ninja: args.leaf_max_ratio,
+                },
+            );
+            if !problems.is_empty() {
+                for problem in &problems {
+                    eprintln!("frost-bench-rs: {problem}");
+                }
+                anyhow::bail!(
+                    "{} failed {} check(s)",
+                    args.report.display(),
+                    problems.len()
+                );
+            }
+            println!("{}: all daemon-graph checks passed", args.report.display());
+        }
         None => {
             println!("Use ./frost-bench for frontend comparisons, or run:");
             println!(
                 "  cargo run --release -p frostbuild-bench --bin frost-bench-rs -- \
-                 <cas|daemon-noop|daemon-graph> --help"
+                 <cas|daemon-noop|daemon-graph|check-daemon-graph> --help"
             );
         }
     }

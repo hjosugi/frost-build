@@ -104,6 +104,9 @@ pub fn generate_release_assets(output: &std::path::Path, date: &str) -> Result<(
 }
 
 fn frost_main() {
+    // Starts the phase clock when FROST_PHASE_TIMINGS is set; otherwise one
+    // environment lookup.
+    frostbuild_core::phases::global();
     // Dynamic completion scripts call back into this binary, allowing target,
     // profile and platform candidates to reflect the current frost.toml.
     clap_complete::CompleteEnv::with_factory(Cli::command)

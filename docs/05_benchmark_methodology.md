@@ -523,6 +523,101 @@ gates on the recorded host. It is not evidence that Frost wins a changed leaf;
 the same report shows the opposite, and no claim should omit that result or the
 recorded load.
 
+### Decomposing the leaf change (#152)
+
+Since #152 the report is `frost-daemon-graph-v2`. Every leaf-change sample
+runs with `FROST_PHASE_TIMINGS` set, so the client, the daemon that answers it
+and the child build the daemon starts each append one line of consecutive,
+non-overlapping phase laps. The harness nests them — client ⊃ daemon ⊃ build —
+and reports the parts outside every process's own clock (exec, dynamic
+loading, exit, the socket round trip) as explicit `*.outside` / `transport`
+residuals, so each sample's phases sum to its measured end-to-end time.
+Nested per-action costs (`action.digest_inputs`, `action.key`, …) are
+reported separately as `details`. Output modification times taken outside the
+timed region prove that each tool rewrote exactly one output, and the changed
+artifact's bytes and digest are recorded and checked against the command.
+
+```bash
+cargo build --release --locked -p frostbuild-cli -p frostbuild-bench
+target/release/frost-bench-rs daemon-graph --frost "$PWD/target/release/frost" \
+  --ninja /usr/bin/ninja --targets 10000 --iterations 31 \
+  --out bench/baselines/<date>-issue-152-daemon-10k-after.json
+target/release/frost-bench-rs check-daemon-graph --leaf-max-ratio 2.0 \
+  bench/baselines/<date>-issue-152-daemon-10k-after.json
+```
+
+`check-daemon-graph` fails a report with a missing phase, a sample whose
+phases do not sum to its end-to-end time, anything but one executed and
+`targets - 1` cached actions, an unverified artifact, or a daemon CLI no-op
+that is not below 5 ms and more than 2x Ninja; `--leaf-max-ratio` adds the
+leaf-change ceiling. The nightly Performance job runs it without that ceiling
+(a shared runner's noise should not turn a nightly red on its own) and with a
+`baseline_ref` input builds an older commit and measures it first on the same
+runner.
+
+Reports:
+[`2026-09-25-issue-152-daemon-10k-before.json`](../bench/baselines/2026-09-25-issue-152-daemon-10k-before.json)
+(0.13.2 plus the phase instrumentation alone) and
+[`2026-09-25-issue-152-daemon-10k-after.json`](../bench/baselines/2026-09-25-issue-152-daemon-10k-after.json)
+(the same plus the changes below), Ninja 1.13.2, measured back to back on one
+8-CPU host shared with other work:
+
+| 10k linear graph, median of 31 | Before | After |
+|---|---:|---:|
+| Frost daemon leaf change (end to end) | **670.848 ms** | **208.164 ms** |
+| Ninja leaf change, same run | 99.665 ms | 102.674 ms |
+| Frost / Ninja leaf change | 6.73x | 2.03x |
+| Frost daemon CLI no-op / Ninja no-op | 4.754 ms / 81.094 ms (17.06x) | 4.232 ms / 76.698 ms (18.12x) |
+| phase `daemon.fast_noop` (daemon certificate check) | 20.080 ms | 0.043 ms |
+| phase `build.certificate_check` (child certificate check) | 24.435 ms | 0.041 ms |
+| phase `build.graph_load` (child graph load) | 49.123 ms | 43.972 ms |
+| phase `build.engine_load` (journal + hash cache load) | 40.896 ms | 43.645 ms |
+| phase `build.engine.preflight` (cache preflight) | 50.610 ms | 56.664 ms |
+| phase `build.engine.workers` (scheduler / chain walk) | 232.160 ms | 7.415 ms |
+| phase `build.engine.hashcache_save` (hash cache save) | 29.446 ms | 0.069 ms |
+| phase `build.render_drain` (renderer drain) | 26.667 ms | 15.231 ms |
+| phase `daemon.child_outside` (child exec / exit (residual)) | 21.806 ms | 17.129 ms |
+| load average at start | 10.76 / 5.05 / 2.02 | 14.31 / 7.58 / 3.21 |
+
+Where the time went before: of a 671 ms leaf change, the scheduler
+walked the 9,999 cached actions of the chain one at a time — stat, key and
+output check per action under the scheduler lock — for 232 ms;
+the daemon and then the child each validated the same stale no-op certificate
+(45 ms together); and the child decoded the journal and hash cache
+and rewrote the whole cache. What changed, in order of effect:
+
+1. **Partial preflight.** The all-or-nothing cache preflight now returns a
+   verdict per action, from one parallel stat of every unique path and one
+   parallel key recomputation, with an action certified only if every
+   in-closure producer is certified too. Only the rest are scheduled.
+2. **Directory listings, not directory mtimes, stamp the graph store.** A
+   directory's mtime also moves when its listing does not (a temporary file
+   created and removed, a save-by-rename), and a moved mtime recompiles the
+   10k-target manifest. In an intermediate 7-sample run without this change
+   the child recompiled on most leaf changes (445 ms median graph load); the
+   listing (names, kinds, symlink targets) is exactly what globbing and
+   package discovery read, and tests pin that an added, removed or re-kinded
+   entry or a retargeted symlink still invalidates the stored graph.
+3. **One certificate validation per edit.** The daemon remembers the stamp of
+   a certificate it rejected and passes its digest to the child, which skips a
+   second validation of the same file.
+4. **Smaller writes and parallel decodes.** The hash cache appends changed
+   entries (`FRSTHC03`) instead of rewriting every entry; the journal and the
+   hash cache decode their frames in parallel; a plain renderer no longer
+   receives one event per certified action.
+
+The leaf change is 3.22x faster on the same host (1.98x against the 411.679 ms
+of the #25 report), and the no-op gate holds. The same-run ratio to Ninja is
+2.03x here, on a host under load from other jobs; a 9-sample run on the same
+host while it was quiet measured 71.991 ms against Ninja's 46.961 ms (1.53x).
+The ratio is recorded, not claimed as settled: the nightly `daemon-graph` job
+measures it on a clean runner.
+
+None of these moves a correctness boundary: action keys, the final digest
+gate, the crash-safe journal, CAS verification and the watcher shortcut are
+unchanged, and every action the preflight cannot prove is decided by the same
+per-action path as before.
+
 ## Resource-aware scheduling calibration
 
 The #155 fixture contains four independent 120 ms Python actions, each
