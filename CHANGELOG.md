@@ -5,6 +5,35 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- Signed, attested and inventoried releases. A new `integrity` job in the
+  release workflow writes a CycloneDX SBOM per archive, signs every archive and
+  `SHA256SUMS` with keyless cosign, attaches GitHub SLSA build provenance for
+  all of them as `frostbuild-vX.Y.Z.intoto.jsonl`, and verifies the lot with
+  `scripts/verify_release.sh` — the procedure the README publishes — before the
+  tag exists. No key or secret is involved: certificates are issued to the
+  workflow's OIDC identity, and verification pins `release.yml` on `main` or a
+  release tag. `install.sh --verify-signature` and `--verify-provenance` add the
+  same checks to installation; they are opt-in because they need `cosign` and
+  `gh`, and a requested check whose tool is missing is refused before anything
+  is downloaded. A release dry-run workflow proves that a flipped byte, a
+  rewritten `SHA256SUMS` and a dry-run signature presented as a release are all
+  refused, and the daily distribution smoke verifies the real latest release
+  with the published commands.
+
+### Changed
+
+- Release archives are packed by `scripts/package_release.py` on all three
+  platforms — sorted entries, the release commit's timestamp, uid/gid 0, fixed
+  modes and a gzip header without a timestamp — instead of by each runner's
+  tar or `Compress-Archive`, whose output recorded the machine that packed it.
+  Rebuilding a tag now reproduces the Linux archive byte for byte on another
+  runner, even from another checkout path, and the macOS archive at the
+  release's own path; the release dry run gates both. Windows binaries still
+  embed the link time and a per-link PDB GUID, recorded with the other causes
+  in docs/30_distribution.md.
+
 ## [0.13.2] - 2026-09-22
 
 ### Changed

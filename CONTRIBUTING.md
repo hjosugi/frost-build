@@ -57,9 +57,15 @@ gh workflow run release.yml -f version=0.7.1
 
 The workflow refuses a version that does not match `Cargo.toml`, has no
 CHANGELOG section, or already has a tag; it builds the Linux/macOS/Windows
-archives, then creates the tag and the GitHub release together, so a failed
-build cannot leave a tag behind. Pushing a `vX.Y.Z` tag by hand still works and
-takes the same path.
+archives, writes SBOMs, signs and attests them keylessly and verifies that with
+`scripts/verify_release.sh`, then creates the tag and the GitHub release
+together, so a failed build or signature cannot leave a tag behind. Pushing a
+`vX.Y.Z` tag by hand still works and takes the same path. Dispatch it from
+`main`: the published verification accepts signatures from `release.yml` on
+`main` or on a release tag only, so a release run from another branch fails its
+own verification before publishing. Changes to the release machinery are
+exercised first by `.github/workflows/release-dry-run.yml`, which runs on any
+push that touches it.
 
 Merged branches are removed weekly by `.github/workflows/branch-cleanup.yml`,
 which only deletes branches whose every commit is already in the default

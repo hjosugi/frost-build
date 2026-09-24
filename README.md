@@ -604,6 +604,28 @@ contains `frost`, the optional `frostd` daemon, all generated man pages and
 static completions for six shells. Every release also publishes a tap-ready
 Homebrew formula and Scoop manifest generated from the archive checksums.
 
+From 0.14.0 a release can also be traced to the workflow run that built it.
+Every archive and `SHA256SUMS` carries a keyless Sigstore signature, all of
+them carry GitHub SLSA build provenance, and each archive has a CycloneDX SBOM;
+no signing key exists, because the certificate is issued to the release
+workflow's own identity. Add `--verify-signature` (needs `cosign`) and/or
+`--verify-provenance` (needs an authenticated `gh`) to the installer to require
+them, or check a downloaded release by hand:
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/hjosugi/frost-build/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify frostbuild-v0.14.0-x86_64-unknown-linux-musl.tar.gz \
+  --repo hjosugi/frost-build --signer-workflow hjosugi/frost-build/.github/workflows/release.yml
+```
+
+`scripts/verify_release.sh DIR X.Y.Z` runs those checks for every asset of a
+downloaded release; the release workflow runs it on its own output before
+tagging, and a daily job runs it against the latest release. What the checks do
+and do not prove is in [docs/30_distribution.md](docs/30_distribution.md#verifying-a-release).
+
 An archive/script installation can be updated only when explicitly requested:
 `frost self-update --check` performs a metadata-only check and
 `frost self-update` verifies and atomically replaces the executable. A binary
