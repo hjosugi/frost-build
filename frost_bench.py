@@ -5135,6 +5135,23 @@ def run_go_command(args: argparse.Namespace) -> int:
     return 1 if any(result["status"] == "failed" for result in report["results"]) else 0
 
 
+def run_csharp_command(args: argparse.Namespace) -> int:
+    from frost_bench_csharp import run_csharp_benchmark
+
+    report = run_csharp_benchmark(args)
+    report["digest"] = report_digest(report)
+    if args.out:
+        write_report(pathlib.Path(args.out), report)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    failed_probes = any(
+        probe.get("status") == "failed"
+        for result in report["results"]
+        for probe in result.get("probes", {}).values()
+    )
+    failed = any(result["status"] == "failed" for result in report["results"])
+    return 1 if failed or failed_probes else 0
+
+
 def run_typescript_command(args: argparse.Namespace) -> int:
     report = run_typescript_benchmark(args)
     report["digest"] = report_digest(report)
@@ -5486,6 +5503,12 @@ def main(argv: list[str] | None = None) -> int:
     python_parser.add_argument("--keep-workdir", action="store_true")
     python_parser.add_argument("--out")
     python_parser.set_defaults(func=run_python_command)
+
+    # The C# suite lives in its own module (the #153 language-expansion
+    # prototype); it reuses this module's report helpers.
+    from frost_bench_csharp import add_csharp_parser
+
+    add_csharp_parser(sub, run_csharp_command)
 
     report_parser = sub.add_parser(
         "report",

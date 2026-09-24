@@ -63,6 +63,28 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   `docs/` and `bench/` Markdown must resolve, anchors by GitHub's heading
   rules.
 
+- `docs/32_language_expansion.md` decides the next language adapter. Kotlin,
+  C#/.NET and Swift are compared on graph discovery, correctness key,
+  artifact contract, incumbent ownership, platform and adoption cost. C#/.NET
+  is next, as a generated command boundary; Kotlin stays a Gradle project
+  boundary until the persistent-worker decision; Swift is not taken now. No
+  language became supported: implementation, benchmark and three-OS gates are
+  #248, #249 and #250.
+
+- `frost-bench csharp` builds one four-project C# graph through `dotnet
+  build`, a Frost wrapper around it, and Frost actions generated from the
+  exact `csc` argv MSBuild's design-time build reports -- with the compiler,
+  reference assemblies, analyzers and generated files declared as inputs --
+  with and without Roslyn's compiler server. The generated actions produced
+  assemblies byte-identical to MSBuild's, rebuilt only the changed project
+  (reference-assembly early cutoff stops the rest), and passed a
+  public-constant and a compiler-closure probe. On a heavily loaded host they
+  measured 33.5x faster no-op, 2.14x faster after a leaf change and 1.52x
+  after a shared-dependency change than `dotnet build` (6.78x and 6.77x with
+  the compiler server), with clean builds within noise; wrapping `dotnet
+  build` won only the no-op. A cold `kotlinc` compile of the same-size
+  library took 3.83x `javac`'s.
+
 ### Changed
 
 - Release archives are packed by `scripts/package_release.py` on all three

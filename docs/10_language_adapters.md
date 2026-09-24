@@ -198,6 +198,19 @@ deterministically.
   `cargo metadata`, `go list`, TypeScript project references, Gradle Tooling API
   or Maven reactor metadata remain native-adapter work.
 
+## Evaluated, not supported
+
+[32_language_expansion.md](32_language_expansion.md) compares Kotlin/JVM,
+C#/.NET and Swift on graph discovery, correctness key, artifact contract,
+incumbent ownership, platform cost and adoption cost. None of the three is a
+supported language, and nothing in `frost` itself knows about any of them:
+
+| Ecosystem | Decision | What exists today | Tracked by |
+|---|---|---|---|
+| C#/.NET | generated command boundary — the next language | a prototype generator inside the `frost-bench csharp` harness, byte-identical to MSBuild on its four-project fixture | #248 (implementation), #249 (benchmark), #250 (platform CI) |
+| Kotlin/JVM | incumbent-owned boundary (Gradle project) | an ordinary command target around Gradle, as `sample_spring` does for Java | native `kotlinc` rule revisited with #145 |
+| Swift | not now | an ordinary command target around `swift build`, integration only | none |
+
 Performance is measured per boundary. A fast Frost no-op around a Gradle task
 does not prove faster Java compilation; clean, no-op and one-file changes must
 all be compared on the same generated project. The Java harness records this

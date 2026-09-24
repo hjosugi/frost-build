@@ -532,6 +532,162 @@ class FrostBenchTestCase(unittest.TestCase):
             "6",
         )
 
+    def test_csharp_frontends_share_one_source_graph_with_a_computable_total(self) -> None:
+        import frost_bench_csharp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            digests = set()
+            for tool in frost_bench_csharp.CSHARP_TOOLS:
+                root = base / tool
+                metadata = frost_bench_csharp.generate_csharp_workspace(
+                    root, 3, tool, None, base / ".state"
+                )
+                self.assertEqual(metadata, {})
+                digests.add(frost_bench_csharp.csharp_source_digest(root))
+                sources = sorted(
+                    path.relative_to(root).as_posix() for path in root.glob("src/*/*.cs")
+                )
+                self.assertEqual(sources, frost_bench_csharp.csharp_sources(3))
+            model = (base / "dotnet/src/Model/ModelTotal.cs").read_text(encoding="utf-8")
+            service = (base / "dotnet/src/Service/Service.csproj").read_text(encoding="utf-8")
+
+        self.assertEqual(len(digests), 1)
+        # The constant Model inlines is what makes the dependency probe a real
+        # stale-artifact trap rather than a source edit Model would see anyway.
+        self.assertIn("Bench.Core.CoreConstants.Offset", model)
+        self.assertIn('<ProjectReference Include="../Core/Core.csproj" />', service)
+        values = frost_bench_csharp.csharp_values(3)
+        # 0+1+2 + 1000+1001+1002 + 2000+2001+2002 + 3000+3001+3002, plus
+        # Service's direct use of CoreValue000 (0), plus a probe's offset.
+        self.assertEqual(frost_bench_csharp.csharp_expected_total(values), 18012)
+        self.assertEqual(frost_bench_csharp.csharp_expected_total(values, extra=5), 18017)
+        self.assertEqual(
+            frost_bench_csharp.csharp_graph_contract(3)["initial_expected_stdout"], "18012"
+        )
+
+    def test_csharp_generated_boundary_keys_every_msbuild_compiler_input(self) -> None:
+        import frost_bench_csharp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            sdk = base / "dotnet"
+            roslyn = sdk / "sdk/10.0.401/Roslyn/bincore"
+            roslyn.mkdir(parents=True)
+            (roslyn / "csc.dll").write_bytes(b"compiler")
+            (roslyn / "csc").write_bytes(b"apphost")
+            reference = sdk / "packs/Microsoft.NETCore.App.Ref/10.0.12/ref/net10.0/System.Runtime.dll"
+            analyzer = sdk / "packs/Microsoft.NETCore.App.Ref/10.0.12/analyzers/dotnet/cs/Gen.dll"
+            for path in (reference, analyzer):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(path.name.encode())
+            root = base / "work"
+            frost_bench_csharp.generate_csharp_sources(root, 2)
+            obj = root / ".dotnet/obj"
+            generated = {}
+            for project in frost_bench_csharp.CSHARP_PROJECTS:
+                directory = obj / project / "Release/net10.0"
+                directory.mkdir(parents=True)
+                (directory / f"{project}.AssemblyInfo.cs").write_text("// info\n", encoding="utf-8")
+                (directory / f"{project}.editorconfig").write_text("root = true\n", encoding="utf-8")
+                references = [
+                    f"/reference:{obj / dependency / 'Release/net10.0/ref' / (dependency + '.dll')}"
+                    for dependency in frost_bench_csharp.CSHARP_REFERENCES[project]
+                ]
+                generated[project] = [
+                    "/noconfig",
+                    f"/reference:{reference}",
+                    *references,
+                    f"/analyzer:{analyzer}",
+                    f"/analyzerconfig:{directory / (project + '.editorconfig')}",
+                    f"/out:{directory / (project + '.dll')}",
+                    f"/refout:{directory / 'refint' / (project + '.dll')}",
+                    "/target:library",
+                    *sorted(path.name for path in (root / "src" / project).glob("*.cs")),
+                    str(directory / f"{project}.AssemblyInfo.cs"),
+                ]
+            info = {
+                "dotnet": (sdk / "dotnet").as_posix(),
+                "dotnet_root": sdk.as_posix(),
+                "sdk_version": "10.0.401",
+                "roslyn_dir": roslyn.as_posix(),
+            }
+            metadata = frost_bench_csharp.write_csharp_frost_generated(
+                root, generated, info, '{"runtimeOptions": {}}\n'
+            )
+            import tomllib
+
+            with (root / "frost.toml").open("rb") as file:
+                manifest = tomllib.load(file)
+            closure = (root / ".dotnet-gen/sdk-closure.rsp").read_text(encoding="utf-8")
+            bundled = sorted(
+                path.relative_to(root).as_posix()
+                for path in (root / ".dotnet-sdk").rglob("*")
+                if path.is_file()
+            )
+            frost_bench_csharp.verify_import_current(root)
+            frost_bench_csharp.write_csharp_frost_generated(
+                root, generated, info, '{"runtimeOptions": {}}\n', shared=True
+            )
+            with (root / "frost.toml").open("rb") as file:
+                shared_manifest = tomllib.load(file)
+            (root / "src/Core/Core.csproj").write_text("<Project />\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "changed after"):
+                frost_bench_csharp.verify_import_current(root)
+
+        targets = manifest["target"]
+        self.assertEqual(metadata["actions"], 7)
+        self.assertEqual(manifest["toolchain"]["tools"]["csc"], ".dotnet-sdk/sdk/10.0.401/Roslyn/bincore/csc")
+        self.assertEqual(sorted(targets["service"]["deps"]), ["core_api", "model_api"])
+        self.assertEqual(targets["core_api"]["deps"], ["core"])
+        service_args = targets["service"]["args"]
+        # Dependencies are consumed through their copied reference assembly,
+        # never through MSBuild's obj/ path.
+        self.assertIn("/reference:.frost/out/${config}/api/Core.dll", service_args)
+        self.assertFalse(any(".dotnet/obj" in argument for argument in service_args))
+        self.assertEqual(service_args.count("@.dotnet-gen/sdk-closure.rsp"), 1)
+        self.assertEqual(service_args[-2], "/out:${out}")
+        self.assertIn("/refout:.frost/out/${config}/ref/Service.dll", targets["service"]["args"])
+        # Every generated file the compiler reads is a declared input.
+        self.assertIn(".dotnet-gen/Service/Service.AssemblyInfo.cs", targets["service"]["inputs"])
+        self.assertIn(".dotnet-gen/Service/Service.editorconfig", targets["service"]["inputs"])
+        self.assertIn(".dotnet-gen/sdk-closure.rsp", targets["service"]["inputs"])
+        self.assertIn(".dotnet-sdk/**/*", targets["service"]["inputs"])
+        self.assertIn("/analyzer:.dotnet-sdk/packs/Microsoft.NETCore.App.Ref/10.0.12/analyzers/dotnet/cs/Gen.dll", closure)
+        self.assertIn(".dotnet-sdk/sdk/10.0.401/Roslyn/bincore/csc.dll", bundled)
+        self.assertIn(
+            ".dotnet-sdk/packs/Microsoft.NETCore.App.Ref/10.0.12/ref/net10.0/System.Runtime.dll", bundled
+        )
+        self.assertEqual(targets["app"]["steps"][0]["tool"], "cp")
+        # The compiler-server variant differs only by `/shared` on each compile.
+        self.assertNotIn("/shared", service_args)
+        shared_args = shared_manifest["target"]["service"]["args"]
+        self.assertEqual([arg for arg in shared_args if arg != "/shared"], service_args)
+        self.assertNotIn("/shared", shared_manifest["target"]["core_api"]["args"])
+        # The copy step reads the runtimeconfig, so it must be key material.
+        self.assertIn(".dotnet-gen/App/App.runtimeconfig.json", targets["app"]["inputs"])
+
+    def test_csharp_suite_records_a_missing_sdk_for_every_frontend(self) -> None:
+        import frost_bench_csharp
+
+        args = argparse.Namespace(
+            tools="frost-csc,frost-dotnet,dotnet",
+            scenarios="clean,noop",
+            size=2,
+            iterations=1,
+            jobs=1,
+            workdir=None,
+            keep_workdir=False,
+            no_probes=False,
+            jvm_probe_iterations=0,
+        )
+        with mock.patch.object(frost_bench_csharp, "find_dotnet", return_value=None):
+            report = frost_bench_csharp.run_csharp_benchmark(args)
+
+        self.assertEqual([result["status"] for result in report["results"]], ["skipped"] * 3)
+        self.assertTrue(all("DOTNET_BIN" in result["reason"] for result in report["results"]))
+        self.assertFalse(report["output_equivalence"]["semantic_equal"])
+
     def test_typescript_frontends_share_sources_and_preserve_incremental_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
