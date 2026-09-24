@@ -169,6 +169,29 @@ jobs:
             junit.xml
             events.ndjson
 
+  # docs/guide's tutorials and migration guides are executed exactly as
+  # written: every file block written, every command run, every output snippet
+  # matched, each page from an empty directory. A page is only as current as
+  # the last time something ran it, and this is what runs it. `--require-all`
+  # makes a page whose compiler vanished from the image fail instead of skip,
+  # so the job cannot go green by testing nothing.
+  guides:
+    name: User guide tutorials (executed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install the tools the migration guides compare against
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Show the toolchains the pages will use
+        run: cc --version && javac -version && java -version && rustc --version && make --version && ninja --version && node --version && npm --version
+      - run: cargo build -p frostbuild-cli --locked
+      - name: Run every executable page
+        run: python3 scripts/run_guides.py --frost target/debug/frost --require-all docs/guide
+
   python:
     name: Python prototype tests
     runs-on: ubuntu-latest

@@ -10,6 +10,15 @@ Numeric prefixes are historical and three numbers are used twice (`06`, `09`,
 `17`). They are not renamed because issues, pull requests and source comments
 cite the existing file names.
 
+## Using Frost
+
+The [user guide](guide/README.md) is the entrance for building a repository
+with Frost: tutorials executed in CI, migration guides from Make, Ninja, Bazel
+and npm scripts, the [`frost.toml` reference](guide/reference/manifest.md), the
+[command reference](guide/reference/cli.md) and
+[troubleshooting](guide/troubleshooting.md). The documents below are the other
+entrance — why Frost is built the way it is.
+
 ## Normative
 
 | Document | Contents |

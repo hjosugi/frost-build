@@ -78,6 +78,14 @@ Additive changes only need the CLI snapshot refreshed with
 `UPDATE_CLI_SURFACE=1 cargo test -p frostbuild-cli --bin frost`; renames and
 removals follow the deprecation procedure in that document.
 
+The user guide in `docs/guide/` is checked the same way. A changed help text,
+flag or subcommand fails until `docs/guide/reference/cli.md` is regenerated
+with `UPDATE_CLI_REFERENCE=1 cargo test -p frostbuild-cli --lib
+cli_surface_tests`; a new or removed manifest key fails until
+`docs/guide/reference/manifest.md` has (or loses) its row. Tutorials and
+migration guides are executed by CI; run them locally with
+`python3 scripts/run_guides.py --frost target/debug/frost docs/guide`.
+
 Performance claims must include `frost-bench` JSON, host metadata, medians and
 dispersion. Do not use a one-off stopwatch result. Design changes update
 `DESIGN.md`; manifest/storage changes add compatibility and corruption tests.

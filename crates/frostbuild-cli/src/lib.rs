@@ -715,6 +715,89 @@ mod cli_surface_tests {
         }
     }
 
+    /// `docs/guide/reference/cli.md`: every visible command's `--help`, in
+    /// command-tree order, exactly as the binary prints it.
+    ///
+    /// Rendered from the same `clap::Command` the binary parses with, and the
+    /// same one the man pages come from, so the reference cannot describe a
+    /// flag the binary does not have. clap is built without `wrap_help`, so
+    /// the text is laid out for a fixed width and does not depend on the
+    /// terminal the test runs in.
+    fn cli_reference() -> String {
+        fn visit(command: &mut clap::Command, path: &str, sections: &mut Vec<(String, String)>) {
+            let help = command.render_long_help().to_string();
+            sections.push((path.to_string(), help));
+            let mut subcommands: Vec<clap::Command> = command
+                .get_subcommands()
+                .filter(|sub| !sub.is_hide_set())
+                .cloned()
+                .collect();
+            subcommands.sort_by(|a, b| a.get_name().cmp(b.get_name()));
+            for mut sub in subcommands {
+                let child = format!("{path} {}", sub.get_name());
+                visit(&mut sub, &child, sections);
+            }
+        }
+
+        let mut command = Cli::command().disable_help_subcommand(true);
+        command.build();
+        let mut sections = Vec::new();
+        visit(&mut command, "frost", &mut sections);
+
+        let mut out = String::from(
+            "# `frost` command reference\n\n\
+             <!-- Generated from the binary's own help by\n     \
+             crates/frostbuild-cli/src/lib.rs (the_cli_reference_matches_help).\n     \
+             Do not edit by hand; regenerate with\n     \
+             UPDATE_CLI_REFERENCE=1 cargo test -p frostbuild-cli --lib cli_surface_tests -->\n\n\
+             Every command's `--help`, exactly as `frost` prints it. A test fails when\n\
+             this page and the binary disagree, so it is safe to read instead of\n\
+             running the binary. The same text is installed as man pages\n\
+             (`man frost-build`) by the release archives.\n\n\
+             Options that change what is built (`--profile`, `--platform`, `--sandbox`,\n\
+             ...) can also be set in `.frostrc`; see the\n\
+             [manifest reference](manifest.md#files-that-are-not-frosttoml).\n\n",
+        );
+        for (path, _) in &sections {
+            let anchor = path.replace(' ', "-");
+            out.push_str(&format!("- [`{path}`](#{anchor})\n"));
+        }
+        for (path, help) in &sections {
+            out.push_str(&format!("\n## `{path}`\n\n```text\n"));
+            for line in help.trim_end().lines() {
+                out.push_str(line.trim_end());
+                out.push('\n');
+            }
+            out.push_str("```\n");
+        }
+        out
+    }
+
+    #[test]
+    fn the_cli_reference_matches_help() {
+        let current = cli_reference();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/guide/reference/cli.md"
+        );
+        let checked_in = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        if current != checked_in {
+            if std::env::var_os("UPDATE_CLI_REFERENCE").is_some() {
+                std::fs::write(path, &current).expect("write CLI reference");
+                return;
+            }
+            panic!(
+                "docs/guide/reference/cli.md no longer matches `frost --help`. A help \
+                 text, flag or subcommand changed; regenerate the page with \
+                 UPDATE_CLI_REFERENCE=1 cargo test -p frostbuild-cli --lib cli_surface_tests \
+                 and review the diff (a renamed or removed flag also needs \
+                 docs/28_compatibility_contract.md)."
+            );
+        }
+    }
+
     /// The three outcomes a caller is allowed to distinguish. Scripts branch on
     /// these, so they are contract, not implementation.
     #[test]

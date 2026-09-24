@@ -18,6 +18,11 @@ is [docs/06_manifest_spec.md](docs/06_manifest_spec.md), and the per-language
 definition of “win” is [docs/18_polyglot_win_matrix.md](docs/18_polyglot_win_matrix.md).
 [docs/README.md](docs/README.md) indexes every document by what it is for.
 
+New to Frost? Start with the [user guide](docs/guide/README.md): tutorials
+for C/C++, Java and any compiler through the command adapter, migration
+guides, and the complete [`frost.toml`](docs/guide/reference/manifest.md) and
+[command](docs/guide/reference/cli.md) references.
+
 ## Quick start
 
 FrostBuild builds itself. Cloned fresh, with no frost installed:

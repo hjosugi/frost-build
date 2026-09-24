@@ -36,6 +36,33 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   `execution`) reports the selected strategy, why each other one was or was
   not usable, and whether `--sandbox` and `--hermetic` are available.
 
+- A user guide under `docs/guide/`, a separate entrance from the decision
+  records: tutorials for C/C++, Java and any compiler through the command
+  adapter (Rust with `rustc`), migration guides from Make, Ninja, Bazel and
+  npm scripts written around the real importers and their stop lists, and a
+  troubleshooting page for `--explain`, `frost explain`, `frost doctor`,
+  `frost journal export`/`diff` and the common non-hermetic patterns. The
+  pages are executed, not just rendered: `scripts/run_guides.py` writes each
+  page's file blocks into an empty directory, runs its `sh` blocks, and
+  matches its `text output` snippets, and a new CI job runs every executable
+  page against the freshly built `frost` with `--require-all`, so a missing
+  compiler fails the job instead of skipping it.
+
+- `docs/guide/reference/manifest.md`, a `frost.toml` reference listing every
+  table and key with type and default. A test asks the manifest loader which
+  keys each table accepts — from serde's own rejection message — and fails
+  when a key is undocumented or a documented key is rejected.
+
+- `docs/guide/reference/cli.md`, every command's `--help` rendered from the
+  same `clap` definition the binary parses with. A test fails when it drifts;
+  `UPDATE_CLI_REFERENCE=1 cargo test -p frostbuild-cli --lib cli_surface_tests`
+  regenerates it.
+
+- A documentation link check (`tests/test_docs_links.py`) in the Python job:
+  every relative link and `#anchor` across README, CONTRIBUTING, DESIGN,
+  `docs/` and `bench/` Markdown must resolve, anchors by GitHub's heading
+  rules.
+
 ### Changed
 
 - Release archives are packed by `scripts/package_release.py` on all three

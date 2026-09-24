@@ -3886,6 +3886,132 @@ mod tests {
         assert_eq!(declared, accepted);
     }
 
+    /// Every key the loader accepts in the table a probe manifest puts
+    /// `zzz_probe` into, read from serde's own rejection message.
+    ///
+    /// The same technique as `target_keys_is_what_the_parser_accepts`, applied
+    /// to every table: the parser is the only list that cannot go stale.
+    fn accepted_keys(probe: &str) -> std::collections::BTreeSet<String> {
+        let error = Manifest::parse_str(probe).expect_err(probe);
+        let text = format!("{error:#}");
+        let (_, listed) = text
+            .split_once("`zzz_probe`")
+            .and_then(|(_, rest)| rest.split_once("expected "))
+            .unwrap_or_else(|| {
+                panic!("serde did not list the accepted keys for {probe:?}: {text}")
+            });
+        let listed = listed.lines().next().unwrap_or_default();
+        let listed = listed.split("did you mean").next().unwrap_or_default();
+        // "expected one of `a`, `b`", "expected `a` or `b`" and "expected
+        // `a`" are serde's three spellings; the names are what sits between
+        // backticks in each.
+        let keys: std::collections::BTreeSet<String> = listed
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect();
+        assert!(!keys.is_empty(), "no keys listed for {probe:?}: {text}");
+        keys
+    }
+
+    #[test]
+    fn the_manifest_reference_documents_exactly_the_accepted_keys() {
+        // docs/guide/reference/manifest.md promises to be the complete key
+        // list. A key added to a `Raw*` struct without a row there, or a row
+        // left behind after a key is removed, fails here — so the reference is
+        // generated in the only sense that matters: it cannot disagree with
+        // the loader and still pass.
+        let probes: [(&str, &str); 12] = [
+            ("root", "zzz_probe = 1\n"),
+            ("workspace", "[workspace]\nzzz_probe = 1\n"),
+            ("toolchain", "[toolchain]\nzzz_probe = 1\n"),
+            ("platform", "[platform.dev]\nzzz_probe = 1\n"),
+            ("profile", "[profile.dev]\nzzz_probe = 1\n"),
+            (
+                "target",
+                "[target.app]\nkind = \"cc_binary\"\nzzz_probe = 1\n",
+            ),
+            ("target-kinds", "[target.app]\nkind = \"zzz_probe\"\n"),
+            (
+                "target-steps",
+                "[target.app]\nkind = \"command\"\nsteps = [{ tool = \"t\", zzz_probe = 1 }]\n",
+            ),
+            (
+                "target-resources",
+                "[target.app]\nkind = \"command\"\nresources = { zzz_probe = 1 }\n",
+            ),
+            (
+                "target-platform",
+                "[target.app]\nkind = \"cc_binary\"\n\n[target.app.platform.dev]\nzzz_probe = 1\n",
+            ),
+            ("fetch", "[fetch.dep]\nzzz_probe = 1\n"),
+            ("stamp", "[stamp]\nzzz_probe = 1\n"),
+        ];
+        let mut implemented: std::collections::BTreeMap<&str, std::collections::BTreeSet<String>> =
+            probes
+                .iter()
+                .map(|(table, probe)| (*table, accepted_keys(probe)))
+                .collect();
+        implemented.insert(
+            "visibility",
+            accepted_keys("[visibility.g]\nzzz_probe = 1\n"),
+        );
+        // The kinds are an enum rather than a struct; they must also be the
+        // whole of `TargetKind::ALL`, which `frost init` and completion use.
+        let all_kinds: std::collections::BTreeSet<String> = TargetKind::ALL
+            .iter()
+            .map(|kind| kind.as_str().to_string())
+            .collect();
+        assert_eq!(implemented["target-kinds"], all_kinds);
+
+        let reference =
+            include_str!("../../../docs/guide/reference/manifest.md").replace("\r\n", "\n");
+        let mut documented: std::collections::BTreeMap<&str, std::collections::BTreeSet<String>> =
+            std::collections::BTreeMap::new();
+        for rest in reference.split("<!-- frost-keys: ").skip(1) {
+            let (table, body) = rest.split_once(" -->").expect("closed frost-keys marker");
+            let rows: std::collections::BTreeSet<String> = body
+                .lines()
+                .skip_while(|line| !line.starts_with('|'))
+                .take_while(|line| line.starts_with('|'))
+                .skip(2) // the header row and the |---| separator
+                .map(|row| {
+                    row.trim_start_matches('|')
+                        .split('|')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .trim_matches('`')
+                        .to_string()
+                })
+                .collect();
+            assert!(
+                documented.insert(table, rows).is_none(),
+                "docs/guide/reference/manifest.md has two `{table}` key tables"
+            );
+        }
+
+        let tables = |map: &std::collections::BTreeMap<&str, _>| -> Vec<String> {
+            map.keys().map(|table: &&str| table.to_string()).collect()
+        };
+        assert_eq!(
+            tables(&documented),
+            tables(&implemented),
+            "every table the loader accepts needs a frost-keys table in the reference"
+        );
+        for (table, keys) in &implemented {
+            let rows = &documented[table];
+            let missing: Vec<&String> = keys.difference(rows).collect();
+            let stale: Vec<&String> = rows.difference(keys).collect();
+            assert!(
+                missing.is_empty() && stale.is_empty(),
+                "docs/guide/reference/manifest.md `{table}` table: undocumented keys \
+                 {missing:?}, documented keys the loader rejects {stale:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_manifest_error_reads_the_same_on_every_host() {
         // Package manifests are discovered by walking the filesystem, so their
