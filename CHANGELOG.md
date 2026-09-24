@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-24
+
 ### Added
 
 - A v1 quality gate for scale, endurance and recovery (docs/33).
