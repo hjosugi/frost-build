@@ -104,6 +104,93 @@ jobs:
             ${{ matrix.checkout.path }}/evidence/digests.txt
           if-no-files-found: error
 
+  # The macOS and Windows archives are measured the same way, host builds as
+  # release.yml makes them. They are compared and reported in the summary
+  # below; docs/30_distribution.md records what the comparison found.
+  host-builds:
+    name: ${{ matrix.os }} archive (${{ matrix.checkout.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        checkout:
+          - name: workspace
+            path: .
+          - name: relocated
+            path: a/deliberately/longer/checkout/path
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.checkout.path }}
+    env:
+      PYTHON: ${{ matrix.os == 'windows-latest' && 'python' || 'python3' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ matrix.checkout.path }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+      - if: matrix.checkout.name == 'workspace'
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
+      - name: Generate man pages and completions
+        run: |
+          cargo run --release --locked -p frostbuild-cli \
+            --example release-assets --features release-assets -- dist/release-assets 1970-01-01
+      - name: Package as release.yml does
+        run: |
+          version="$(awk '
+            /^\[workspace\.package\]/ { in_section = 1; next }
+            /^\[/                     { in_section = 0 }
+            in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.toml)"
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "$RUNNER_OS" = Windows ]; then format=zip; suffix=.exe; else format=tar.gz; suffix=; fi
+          "$PYTHON" scripts/package_release.py --tag "v${version}" --triple "$host" \
+            --binary-dir target/release --assets dist/release-assets --output dist --format "$format"
+          mkdir -p evidence
+          cp "target/release/frost${suffix}" "target/release/frostd${suffix}" evidence/
+          "$PYTHON" - dist/frostbuild-* "evidence/frost${suffix}" "evidence/frostd${suffix}" <<'PY' | tee evidence/digests.txt
+          import hashlib, os, sys
+          for path in sys.argv[1:]:
+              with open(path, "rb") as handle:
+                  print(f"{hashlib.sha256(handle.read()).hexdigest()}  {os.path.basename(path)}")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-${{ matrix.os }}-${{ matrix.checkout.name }}
+          path: ${{ matrix.checkout.path }}/evidence
+          retention-days: 14
+          if-no-files-found: error
+
+  host-compare:
+    name: Compare macOS and Windows rebuilds
+    needs: host-builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: host-*
+          path: host
+      - name: Compare
+        shell: bash
+        run: |
+          {
+            for os in macos-latest windows-latest; do
+              echo "### Reproducibility: ${os}, two builds of ${GITHUB_SHA::12}"
+              echo
+              echo '```'
+              paste -d' ' "host/host-${os}-workspace/digests.txt" "host/host-${os}-relocated/digests.txt" |
+                awk '{ printf "%-50s %s\n", $2, ($1 == $3 ? "identical " $1 : "DIFFERENT " $1 " vs " $3) }'
+              echo '```'
+              echo
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   integrity:
     name: Sign, attest, verify and tamper
     needs: build
@@ -165,7 +252,7 @@ jobs:
             echo "IDENTITY=^https://github\\.com/hjosugi/frost-build/\\.github/workflows/release-dry-run\\.yml@${ref_regexp}\$"
           } >> "$GITHUB_ENV"
           mkdir dist
-          cp build-workspace/frostbuild-*.tar.gz dist/
+          cp build-workspace/dist/frostbuild-*.tar.gz dist/
       # From here to "Verify", the same steps as release.yml's integrity job.
       - name: Create checksums
         run: (cd dist && sha256sum frostbuild-*.tar.gz > SHA256SUMS)
