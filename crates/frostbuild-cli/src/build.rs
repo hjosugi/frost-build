@@ -271,11 +271,18 @@ fn run_build_via_daemon(
     enable_fast_noop: bool,
 ) -> Result<Option<i32>> {
     use frostbuild_daemon::{FastNoopRequest, Request, PROTOCOL_VERSION};
-    let mut args = vec![
-        "-C".to_string(),
-        root.to_string_lossy().into_owned(),
-        if request.test_mode { "test" } else { "build" }.to_string(),
-    ];
+    let mut args = vec!["-C".to_string(), root.to_string_lossy().into_owned()];
+    // A global option, so it precedes the subcommand. The child runs in the
+    // daemon's directory, not this one, so a relative path is resolved here.
+    if let Some(path) = &request.build_event_json {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        args.push(format!("--build-event-json={}", path.display()));
+    }
+    args.push(if request.test_mode { "test" } else { "build" }.to_string());
     args.extend(request.targets.iter().cloned());
     if let Some(jobs) = request.jobs {
         args.extend(["--jobs".into(), jobs.to_string()]);
@@ -406,8 +413,21 @@ fn run_build_via_daemon(
     let response = match frostbuild_daemon::request(root, &request_message) {
         Ok(response) => response,
         Err(_) => {
-            daemon_command(root, DaemonCmd::Start)?;
-            frostbuild_daemon::request(root, &request_message)?
+            // A daemon that cannot start — most often because the workspace
+            // has more directories than the OS lets one process watch — is a
+            // lost speedup, not a failed build.
+            let started = daemon_command(root, DaemonCmd::Start)
+                .and_then(|_| frostbuild_daemon::request(root, &request_message));
+            match started {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!(
+                        "frost: warning: {error:#}; building without the daemon \
+                         (`frost daemon serve` shows why it cannot start)"
+                    );
+                    return Ok(None);
+                }
+            }
         }
     };
     let response = if is_protocol_mismatch(&response) {
@@ -526,6 +546,39 @@ fn build_stamps(
     anyhow::bail!("[stamp] {failure}\n(--stamp-optional treats this as no values)")
 }
 
+/// The stream an all-cached build writes, for a build the no-op certificate
+/// answered without planning. It is the same three events the planned
+/// all-cached path emits, so a consumer cannot tell which path ran — and a CI
+/// job that asked for a stream is never handed a missing file because nothing
+/// had changed.
+fn write_fast_noop_events(
+    path: &std::path::Path,
+    request: &BuildRequest,
+    hit: frostbuild_exec::FastNoopHit,
+    started: Instant,
+) -> Result<()> {
+    use frostbuild_exec::ProgressEvent;
+    let mut log = events::EventLog::create(path)?;
+    let jobs = request
+        .jobs
+        .unwrap_or_else(default_jobs)
+        .clamp(1, hit.closure_actions.max(1));
+    log.write(&ProgressEvent::BuildStarted {
+        total: hit.closure_actions,
+        jobs,
+        critical_path_ms: 0,
+        critical_path: Vec::new(),
+    });
+    log.write(&ProgressEvent::AllCached {
+        total: hit.closure_actions,
+    });
+    log.write(&ProgressEvent::BuildFinished {
+        success: true,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    });
+    Ok(())
+}
+
 pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
     for (name, value) in [
         ("--local-cpu-resources", request.local_cpu_resources),
@@ -566,13 +619,20 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     if request.daemon {
         // A daemon that cannot serve this request correctly declines it; the
         // build then runs in this process, which is always the same build.
-        if let Some(code) = run_build_via_daemon(root, &request, enable_fast_noop)? {
+        //
+        // A certificate answered inside frostd writes no event stream, so a
+        // request for one always reaches a child build, which writes it.
+        let daemon_fast_noop = enable_fast_noop && request.build_event_json.is_none();
+        if let Some(code) = run_build_via_daemon(root, &request, daemon_fast_noop)? {
             return Ok(code);
         }
     }
     if enable_fast_noop {
         let started = Instant::now();
         if let Some(hit) = try_fast_noop(root, &request.profile, &request.platform)? {
+            if let Some(path) = &request.build_event_json {
+                write_fast_noop_events(path, &request, hit, started)?;
+            }
             println!(
                 "{}",
                 summarize(

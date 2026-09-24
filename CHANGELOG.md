@@ -7,6 +7,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- A v1 quality gate for scale, endurance and recovery (docs/33).
+  `scripts/frost_scale.py` generates deterministic workspaces of named shapes —
+  wide fan-in, hundreds of nested packages, generated headers compiled by C,
+  owned output trees, up to the 50,000-target / 100,000-file `monorepo` preset
+  — and measures cold plan, warm no-op, one-file and header changes, peak RSS
+  and `.frost/` size, accepting a sample only when the executed action count
+  matches the graph model and the outputs match a clean build byte for byte.
+  Its `soak` mode keeps `frost daemon serve` and `frost watch` resident under a
+  seeded stream of edits and fails on descriptor, memory or journal growth.
+  `tests/recovery.rs` requires convergence to a clean build after SIGKILL at
+  arbitrary moments, `EFBIG` and real `ENOSPC` write failures, damage to every
+  state file and CAS object, and the inotify watch limit. A new `quality.yml`
+  workflow runs the recovery tests on every push (with a tmpfs for the real
+  full-disk case) and the scale and soak runs nightly.
+
 - Signed, attested and inventoried releases. A new `integrity` job in the
   release workflow writes a CycloneDX SBOM per archive, signs every archive and
   `SHA256SUMS` with keyless cosign, attaches GitHub SLSA build provenance for
@@ -126,6 +141,23 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   with the file and line. The importer no longer overwrites an existing
   manifest, and must write its manifest next to the `build.ninja` whose paths
   it contains.
+
+- A journal with an unreadable tail — a frame torn by a crash mid-append, or
+  a damaged byte — no longer swallows every record appended after it. The
+  first append of a build cuts the file back to its last whole record, so the
+  build after a crash is the last one that repeats work.
+- A journal record damaged in place is refused instead of decoded. Records
+  now carry a checksum (journal format `FRSTJR02`; an older journal costs one
+  cold build); before, a flipped byte in an owned output tree's file list made
+  the next build restore a file under the wrong name and report `up to date`.
+- A damaged graph store is recompiled instead of decoded. The store now
+  carries a BLAKE3 digest of its payload (store version 13); before, a flipped
+  bit in a command or path was served from the warm path as a different graph
+  until a manifest changed.
+- `--build-event-json` is written when the no-op certificate answers and when
+  the build runs through `--daemon`; both previously left no file.
+- `build --daemon` builds in process, with a warning, when the daemon cannot
+  start (for example past the OS file-watch limit) instead of failing.
 
 ## [0.13.2] - 2026-09-22
 

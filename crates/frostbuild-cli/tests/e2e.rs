@@ -656,6 +656,97 @@ fn the_build_event_stream_is_ndjson_a_ci_job_can_read() {
 }
 
 #[test]
+fn the_event_stream_is_written_on_every_path_that_finishes_a_build() {
+    // The no-op certificate and the daemon both answer without planning. A
+    // stream that goes missing on those paths is a dashboard that shows
+    // nothing exactly when nothing changed, and a harness that counts
+    // executed actions reading an absent file as zero.
+    let ws = Workspace::new("events-fast-paths");
+    let stream = |name: &str| ws.dir.join(name);
+    let read = |name: &str| -> Vec<serde_json::Value> {
+        std::fs::read_to_string(stream(name))
+            .unwrap_or_else(|error| panic!("{name} was not written: {error}"))
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+            .collect()
+    };
+    let assert_all_cached = |name: &str| {
+        let events = read(name);
+        assert_eq!(
+            events.first().unwrap()["event"],
+            "build_started",
+            "{events:?}"
+        );
+        assert_eq!(
+            events.last().unwrap()["event"],
+            "build_finished",
+            "{events:?}"
+        );
+        assert_eq!(events.last().unwrap()["success"], true, "{events:?}");
+        for (index, event) in events.iter().enumerate() {
+            assert_eq!(event["seq"], index, "{event}");
+        }
+        assert!(
+            events
+                .iter()
+                .any(|event| event["event"] == "all_cached" || event["cached"] == true),
+            "{name}: {events:?}"
+        );
+        assert!(
+            !events.iter().any(|event| event["result"] == "executed"),
+            "{name}: {events:?}"
+        );
+    };
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    // The first no-op writes the certificate; the ones after it are answered
+    // by it without a plan.
+    for name in ["noop-1.ndjson", "noop-2.ndjson", "noop-3.ndjson"] {
+        let (ok, out) = ws.frost(&[
+            "build",
+            "--build-event-json",
+            stream(name).to_str().unwrap(),
+        ]);
+        assert!(ok, "{out}");
+        assert_all_cached(name);
+    }
+
+    let (ok, out) = ws.frost(&["build", "--daemon"]);
+    assert!(ok, "{out}");
+    let (ok, out) = ws.frost(&[
+        "build",
+        "--daemon",
+        "--build-event-json",
+        stream("daemon-noop.ndjson").to_str().unwrap(),
+    ]);
+    assert!(ok, "{out}");
+    assert_all_cached("daemon-noop.ndjson");
+
+    ws.append("src/util.c", "\n/* event stream through the daemon */\n");
+    // Relative, to prove the daemon resolves it against this process's
+    // directory rather than its own.
+    let mut command = Command::new(frost_bin());
+    command.current_dir(&ws.dir).args([
+        "build",
+        "--daemon",
+        "--build-event-json",
+        "daemon-change.ndjson",
+    ]);
+    ws.isolated(&mut command);
+    let out = command.output().expect("spawn frost");
+    assert!(out.status.success(), "{}", normalized_output(&out.stderr));
+    let changed = read("daemon-change.ndjson");
+    assert!(
+        changed
+            .iter()
+            .any(|event| event["event"] == "action_finished" && event["result"] == "executed"),
+        "a daemon build after an edit reports what it ran: {changed:?}"
+    );
+    let _ = ws.frost(&["daemon", "stop"]);
+}
+
+#[test]
 fn frostrc_supplies_defaults_that_the_command_line_can_still_override() {
     let ws = Workspace::new("frostrc");
 

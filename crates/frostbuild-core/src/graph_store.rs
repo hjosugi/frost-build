@@ -16,8 +16,12 @@ const MAGIC: &[u8; 8] = b"FRSTGR01";
 // invocation reads without parsing a manifest. Version 10 adds coverage
 // configuration and per-action coverage metadata. Version 11 adds scheduler-
 // only action resource requirements. Version 12 adds materialized fetch-tree
-// files to target action inputs.
-const VERSION: u32 = 12;
+// files to target action inputs. Version 13 adds a BLAKE3 digest of the graph
+// payload: the sources stamp proves the *definition* is unchanged, not that
+// the stored bytes are, and a flipped bit in a command string or output path
+// otherwise decodes into a different, plausible graph that the warm path
+// trusts until a manifest changes.
+const VERSION: u32 = 13;
 
 /// Evidence that the definition inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
@@ -129,6 +133,7 @@ impl GraphStore {
 
     pub fn validate_bytes(bytes: &[u8]) -> Result<()> {
         let parsed = parse_header(bytes)?;
+        ensure_payload_intact(&parsed)?;
         let _: BuildGraph = postcard::from_bytes(parsed.payload).context("corrupt graph store")?;
         Ok(())
     }
@@ -289,7 +294,28 @@ fn mtime_ns(meta: &std::fs::Metadata) -> i128 {
 struct ParsedStore<'a> {
     fingerprint: &'a [u8],
     stamp: SourcesStamp,
+    payload_digest: &'a [u8],
     payload: &'a [u8],
+}
+
+/// BLAKE3 of the serialized graph. Large payloads hash in parallel so the
+/// check stays small beside decoding them.
+fn payload_digest(payload: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    if payload.len() >= 1 << 20 {
+        hasher.update_rayon(payload);
+    } else {
+        hasher.update(payload);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn ensure_payload_intact(parsed: &ParsedStore<'_>) -> Result<()> {
+    anyhow::ensure!(
+        payload_digest(parsed.payload) == parsed.payload_digest,
+        "graph store payload does not match its digest"
+    );
+    Ok(())
 }
 
 fn parse_header(bytes: &[u8]) -> Result<ParsedStore<'_>> {
@@ -303,10 +329,13 @@ fn parse_header(bytes: &[u8]) -> Result<ParsedStore<'_>> {
     anyhow::ensure!(bytes.len() >= 48 + stamp_len, "truncated graph header");
     let stamp: SourcesStamp =
         postcard::from_bytes(&bytes[48..48 + stamp_len]).context("corrupt sources stamp")?;
+    let payload_start = 48 + stamp_len + 32;
+    anyhow::ensure!(bytes.len() >= payload_start, "truncated graph header");
     Ok(ParsedStore {
         fingerprint: &bytes[12..44],
         stamp,
-        payload: &bytes[48 + stamp_len..],
+        payload_digest: &bytes[48 + stamp_len..payload_start],
+        payload: &bytes[payload_start..],
     })
 }
 
@@ -328,6 +357,7 @@ fn load_graph(
     if let Some(root) = stamp_root {
         ensure_sources_current(root, &parsed.stamp)?;
     }
+    ensure_payload_intact(&parsed)?;
     postcard::from_bytes(parsed.payload).context("corrupt graph store")
 }
 
@@ -369,6 +399,7 @@ fn save_graph(
     }
     let stamp = sources_stamp(root, manifest_paths)?;
     let stamp_bytes = postcard::to_allocvec(&stamp)?;
+    let payload = postcard::to_allocvec(graph)?;
     let tmp = path.with_extension("bin.tmp");
     let mut file = File::create(&tmp)?;
     file.write_all(MAGIC)?;
@@ -376,7 +407,8 @@ fn save_graph(
     file.write_all(fingerprint)?;
     file.write_all(&(stamp_bytes.len() as u32).to_le_bytes())?;
     file.write_all(&stamp_bytes)?;
-    file.write_all(&postcard::to_allocvec(graph)?)?;
+    file.write_all(&payload_digest(&payload))?;
+    file.write_all(&payload)?;
     file.flush()?;
     std::fs::rename(&tmp, path)?;
     Ok(())
@@ -414,6 +446,41 @@ mod tests {
                 .len(),
             2
         );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_damaged_payload_is_recompiled_rather_than_decoded() {
+        let root = workspace("payload");
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            "[target.a]\nkind='genrule'\ncmd='printf ok > ${out}'\noutputs=['a.txt']\n",
+        )
+        .unwrap();
+        let manifest = Manifest::load(&root).unwrap();
+        let graph = GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+        let path = store_path(&root, "debug", HOST_PLATFORM);
+        let pristine = std::fs::read(&path).unwrap();
+        let command = graph.actions[0].argv.join(" ");
+        assert!(command.contains("printf ok"), "{command}");
+
+        // Every single-bit flip in the payload: the ones that still decode are
+        // exactly the ones that would otherwise build something else.
+        let payload_start = pristine.len() - postcard::to_allocvec(&graph).unwrap().len();
+        for position in payload_start..pristine.len() {
+            let mut damaged = pristine.clone();
+            damaged[position] ^= 0x04;
+            std::fs::write(&path, &damaged).unwrap();
+            assert!(
+                GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none(),
+                "byte {position}: a damaged payload was served from the warm path"
+            );
+            assert!(GraphStore::validate_bytes(&damaged).is_err());
+            let recompiled = GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+            assert_eq!(recompiled.actions[0].argv.join(" "), command);
+            // The recompile rewrote a sound store.
+            assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_some());
+        }
         std::fs::remove_dir_all(root).ok();
     }
 

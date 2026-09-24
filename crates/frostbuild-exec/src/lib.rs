@@ -238,8 +238,8 @@ impl<'a> Engine<'a> {
             hermetic: None,
             opts,
             cache,
+            journal: Mutex::new(journal.recorder()),
             previous: journal,
-            journal: Mutex::new(Journal::default()),
             shared: Mutex::new(Shared {
                 ready: BinaryHeap::new(),
                 waiting: vec![0; n],

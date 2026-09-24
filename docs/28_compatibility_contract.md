@@ -116,8 +116,8 @@ not always detectable later.
 
 | File | Marker | Behavior on mismatch |
 |---|---|---|
-| `.frost/graph-<config>.bin` | `FRSTGR01` + `VERSION` | recompile the graph from the manifest |
-| `.frost/journal.bin` | `FRSTJR01` | decode the validated prefix; a foreign magic yields an empty journal |
+| `.frost/graph-<config>.bin` | `FRSTGR01` + `VERSION`, and a BLAKE3 digest of the payload | recompile the graph from the manifest |
+| `.frost/journal.bin` | `FRSTJR02`, and a checksum per record | decode the validated prefix; a foreign magic yields an empty journal |
 | `.frost/hashcache.bin` | `FRSTHC02` | start from an empty cache and re-hash |
 | `.frost/cas/manifests/*` | chunk-manifest version | ignore the manifest; restore from the whole blob or rebuild |
 | no-op certificate | `FRSTNO03` | miss, and take the full check path |
@@ -125,6 +125,16 @@ not always detectable later.
 The consequence is uniform: a `.frost/` written by another version costs time,
 never correctness. `stale_on_disk_state_is_rebuilt_rather_than_misread`
 asserts this for every format at once.
+
+The same holds for state that is *damaged* rather than foreign — truncated by a
+crash, or with bits flipped by a bad disk. Formats whose misreading could skip
+work or restore the wrong bytes carry a digest: of the payload for the graph
+store and the no-op certificate, and of every record for the journal, which
+is append-only and so can only be checked record by record. The hash cache is
+keyed by path and validated by a stat identity, so a damaged entry can only
+cause a re-hash or a rerun. `crates/frostbuild-cli/tests/recovery.rs`
+damages each file in turn and requires the next build to match a clean one; see
+[33_scale_and_recovery.md](33_scale_and_recovery.md).
 
 ## Changing something in the contract
 

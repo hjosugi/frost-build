@@ -1,0 +1,124 @@
+name: Quality gate
+
+# The v1 quality gate (#149): does frost stay correct and bounded at monorepo
+# size, over hours of edits, and after a crash, a full disk or damaged state?
+#
+#   recovery  every push and pull request. It is quick, and it is the one
+#             place the real-ENOSPC and watch-limit cases are guaranteed to
+#             run: they need a small filesystem and a user namespace, which
+#             the job provides (the ordinary `cargo test` covers the same
+#             failed-write paths through RLIMIT_FSIZE).
+#   scale     nightly and on demand. 50k targets / 100k source files by
+#             default; the JSON it uploads is the evidence docs/33 cites.
+#   soak      nightly and on demand. `frost daemon serve` and `frost watch`
+#             stay resident under a seeded stream of edits while fds, RSS,
+#             journal and `.frost/` size are sampled; outputs are checked
+#             against clean builds along the way. Fails on a leak.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+    inputs:
+      shape:
+        description: "scale preset (monorepo, wide, packages, headers, output-dirs, linear, soak)"
+        default: "monorepo"
+        type: string
+      targets:
+        description: "override the preset's target count (empty keeps the preset)"
+        default: ""
+        type: string
+      soak_minutes:
+        description: "soak duration in minutes"
+        default: "45"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  recovery:
+    name: Recovery after SIGKILL, ENOSPC and damaged state
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Mount a 16 MiB filesystem for the real ENOSPC case
+        run: |
+          sudo mkdir -p /mnt/frost-full
+          sudo mount -t tmpfs -o size=16m tmpfs /mnt/frost-full
+          sudo chown "$(id -u):$(id -g)" /mnt/frost-full
+          df -h /mnt/frost-full
+      # The watch-limit case lowers inotify's limit inside a user namespace
+      # rather than for the whole runner; Ubuntu's AppArmor policy otherwise
+      # denies unprivileged namespaces and the case would skip.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Recovery E2E
+        env:
+          FROST_TEST_ENOSPC_DIR: /mnt/frost-full
+        run: cargo test -p frostbuild-cli --test recovery --locked -- --nocapture
+
+  scale:
+    name: Scale (${{ inputs.shape || 'monorepo' }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --release --locked -p frostbuild-cli
+      - name: Measure
+        env:
+          SHAPE: ${{ inputs.shape || 'monorepo' }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          extra=()
+          if [ -n "$TARGETS" ]; then extra+=(--targets "$TARGETS"); fi
+          python3 scripts/frost_scale.py scale --frost "$PWD/target/release/frost" \
+            --shape "$SHAPE" "${extra[@]}" --iterations 5 --digest --out scale.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success() || failure()
+        with:
+          name: scale-${{ github.sha }}
+          path: scale.json
+          if-no-files-found: warn
+
+  soak:
+    name: Soak (daemon + watch)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --release --locked -p frostbuild-cli
+      - name: Soak
+        env:
+          SOAK_MINUTES: ${{ inputs.soak_minutes || '45' }}
+        run: |
+          python3 scripts/frost_scale.py soak --frost "$PWD/target/release/frost" \
+            --duration "$((SOAK_MINUTES * 60))" --out soak.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success() || failure()
+        with:
+          name: soak-${{ github.sha }}
+          path: soak.json
+          if-no-files-found: warn

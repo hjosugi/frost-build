@@ -74,6 +74,7 @@ entrance — why Frost is built the way it is.
 | Document | Contents |
 |---|---|
 | [09_platform_support.md](09_platform_support.md) | host and target support, and which tests run on which host |
+| [33_scale_and_recovery.md](33_scale_and_recovery.md) | the v1 quality gate: monorepo-scale measurements, daemon/watch soak, recovery after SIGKILL, full disk and damaged state, and the known limits |
 | [12_fuzzing.md](12_fuzzing.md) | fuzz and property-testing surface |
 | [13_issue_implementation_matrix.md](13_issue_implementation_matrix.md) | which issue each implementation and evidence gate belongs to |
 
