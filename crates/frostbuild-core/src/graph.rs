@@ -1223,7 +1223,44 @@ impl BuildGraph {
 
         graph.validate_clean_dirs()?;
         graph.validate_volatile_stamps()?;
+        graph.validate_case_portability()?;
         Ok(graph)
+    }
+
+    /// No output may differ from another graph path only in letter case.
+    ///
+    /// On a case-insensitive filesystem — the default on Windows and macOS —
+    /// `gen/Config.h` and `gen/config.h` are one file, so one action would
+    /// silently overwrite the other's output (or a source) while the journal
+    /// recorded two digests for it. Refused on every host, not only on the
+    /// hosts where it breaks, so a workspace that loads on Linux loads the
+    /// same way everywhere. Two *sources* that differ in case are left alone:
+    /// they can only both exist where the filesystem tells them apart, and
+    /// frost does not write either of them.
+    fn validate_case_portability(&self) -> Result<()> {
+        let mut folded: HashMap<String, usize> = HashMap::with_capacity(self.files.len());
+        for (index, file) in self.files.iter().enumerate() {
+            let key = file.path.to_lowercase();
+            match folded.get(&key) {
+                Some(&other) => {
+                    let first = &self.files[other];
+                    if first.producer.is_none() && file.producer.is_none() {
+                        continue;
+                    }
+                    bail!(
+                        "{:?} and {:?} differ only in letter case. On a case-insensitive \
+                         filesystem (the default on Windows and macOS) they are the same \
+                         file, so one would overwrite the other; rename one of them",
+                        first.path,
+                        file.path
+                    );
+                }
+                None => {
+                    folded.insert(key, index);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn file(&mut self, path: &str) -> FileId {
@@ -3787,6 +3824,62 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("produced by both"), "{err}");
+    }
+
+    #[test]
+    fn rejects_outputs_that_differ_only_in_case() {
+        let manifest = Manifest::parse_str(
+            r#"
+            [target.upper]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["gen/Config.h"]
+
+            [target.lower]
+            kind = "genrule"
+            cmd = "true"
+            outputs = ["gen/config.h"]
+            "#,
+        )
+        .unwrap();
+        let err = BuildGraph::from_manifest(&manifest)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("differ only in letter case"), "{err}");
+        assert!(
+            err.contains("gen/Config.h") && err.contains("gen/config.h"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_output_may_not_shadow_a_source_by_case_but_sources_may_differ() {
+        let shadowing = Manifest::parse_str(
+            r#"
+            [target.gen]
+            kind = "genrule"
+            cmd = "true"
+            inputs = ["tools/README"]
+            outputs = ["tools/readme"]
+            "#,
+        )
+        .unwrap();
+        let err = BuildGraph::from_manifest(&shadowing)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("differ only in letter case"), "{err}");
+
+        let sources = Manifest::parse_str(
+            r#"
+            [target.gen]
+            kind = "genrule"
+            cmd = "true"
+            inputs = ["src/Makefile", "src/makefile"]
+            outputs = ["gen/out.txt"]
+            "#,
+        )
+        .unwrap();
+        BuildGraph::from_manifest(&sources).unwrap();
     }
 
     #[test]

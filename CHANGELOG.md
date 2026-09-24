@@ -22,6 +22,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   refused, and the daily distribution smoke verifies the real latest release
   with the published commands.
 
+- `--hermetic` for `build` and `test`: the undeclared-input check on macOS and
+  Windows, and on Linux without bubblewrap. Each action runs in a private tree
+  under `.frost/hermetic/` holding exactly what the bubblewrap sandbox would let
+  it see — one shared definition, so the two backends reach the same verdict,
+  which an E2E asserts where both exist — and only declared outputs, the
+  depfile and owned/clean directories come back. `--materialize
+  auto|reflink|hardlink|copy` chooses how the tree is filled: `auto` probes
+  `.frost/hermetic` and takes the host's first working strategy (reflink →
+  hardlink → copy on Linux and macOS, hardlink → copy on Windows); a named one
+  is used exactly or refused with the reason. A write through a hard-linked
+  input is detected and fails the action. `frost doctor` (and `--json`, under
+  `execution`) reports the selected strategy, why each other one was or was
+  not usable, and whether `--sandbox` and `--hermetic` are available.
+
 ### Changed
 
 - Release archives are packed by `scripts/package_release.py` on all three
@@ -33,6 +47,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   release's own path; the release dry run gates both. Windows binaries still
   embed the link time and a per-link PDB GUID, recorded with the other causes
   in docs/30_distribution.md.
+
+- `--sandbox` on a host without bubblewrap is refused before any work starts,
+  with exit code 2 and a sentence naming `--hermetic`, instead of failing every
+  action with the same spawn error.
+
+- Path policy is explicit per host. A drive designator (`C:/x`) is refused
+  everywhere, because on Windows it names a path outside the workspace; names
+  Windows cannot store (reserved device names, a trailing dot or space,
+  `< > : " |`) are refused on Windows only; and an output that differs only in
+  letter case from another graph path is refused everywhere, because on a
+  case-insensitive filesystem one would overwrite the other. Long paths beyond
+  `MAX_PATH` build, restore, clean and run hermetically on all three CI hosts.
+  docs/09 records the rules, the per-OS strategy order and what each CI host
+  verifies.
 
 ## [0.13.2] - 2026-09-22
 

@@ -22,7 +22,7 @@ use frostbuild_exec::Engine;
 use frostbuild_exec::Outcome;
 use frostbuild_exec::ResourceLimits;
 
-use crate::cli::{DaemonCmd, EstimatorArg, SchedulerArg, TestOutputArg};
+use crate::cli::{DaemonCmd, EstimatorArg, MaterializeArg, SchedulerArg, TestOutputArg};
 use crate::daemon::daemon_command;
 use crate::graph::{attribute_missing_tool, load_graph, load_graph_instrumented, resolve_targets};
 use crate::human_bytes;
@@ -42,6 +42,10 @@ pub(crate) struct BuildRequest {
     pub(crate) platform: String,
     pub(crate) no_cache: bool,
     pub(crate) sandbox: bool,
+    /// Run each action in a private tree of what it may read (`--hermetic`).
+    pub(crate) hermetic: bool,
+    /// How that tree is filled.
+    pub(crate) materialize: MaterializeArg,
     pub(crate) check_determinism: bool,
     pub(crate) trace: Option<PathBuf>,
     /// `None` writes no report; `Some` writes one, at the default path when
@@ -236,6 +240,8 @@ pub(crate) fn run_pick(
             platform,
             no_cache: false,
             sandbox: false,
+            hermetic: false,
+            materialize: MaterializeArg::Auto,
             check_determinism: false,
             trace: None,
             report: None,
@@ -331,6 +337,21 @@ fn run_build_via_daemon(
     }
     if request.sandbox {
         args.push("--sandbox".into());
+    }
+    if request.hermetic {
+        args.push("--hermetic".into());
+    }
+    if request.materialize != MaterializeArg::Auto {
+        args.extend([
+            "--materialize".into(),
+            match request.materialize {
+                MaterializeArg::Auto => "auto",
+                MaterializeArg::Reflink => "reflink",
+                MaterializeArg::Hardlink => "hardlink",
+                MaterializeArg::Copy => "copy",
+            }
+            .into(),
+        ]);
     }
     if request.check_determinism {
         args.push("--check-determinism".into());
@@ -517,6 +538,11 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     if request.local_ram_resources == Some(0) {
         bail!("--local-ram-resources must be at least 1 MiB");
     }
+    // Asked once, up front: a host that cannot sandbox gets one sentence and
+    // the alternative, not the same spawn failure from every action.
+    if request.sandbox {
+        frostbuild_exec::sandbox_backend()?;
+    }
     let enable_fast_noop = !request.test_mode
         && request.targets.is_empty()
         && !request.keep_going
@@ -524,6 +550,7 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         && !request.verbose
         && !request.no_cache
         && !request.sandbox
+        && !request.hermetic
         && !request.check_determinism
         && request.trace.is_none()
         // The certificate answers without producing a BuildReport, and a
@@ -680,6 +707,8 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         verbose: request.verbose,
         no_cache: request.no_cache,
         sandbox: request.sandbox,
+        hermetic: request.hermetic,
+        materialize: request.materialize.into(),
         check_determinism: request.check_determinism,
         write_fast_noop: enable_fast_noop,
         scheduler: match request.scheduler {

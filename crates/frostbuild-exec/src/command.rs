@@ -49,10 +49,50 @@ impl<'a> Engine<'a> {
         action: &frostbuild_core::graph::ActionNode,
         inputs: &BTreeMap<String, String>,
     ) -> std::result::Result<CommandBatch, String> {
-        let mut captured = String::new();
         if let Some(spec) = &action.coverage {
             return Ok(self.merge_coverage(action, spec));
         }
+        // `sandbox = false` on a target opts out of both backends: it names a
+        // target that has to see the workspace, however isolation is done.
+        let Some(strategy) = self.hermetic.filter(|_| action.sandbox) else {
+            return self.run_argvs(action, inputs, None);
+        };
+        let tree = self
+            .prepare_hermetic_tree(action, inputs, strategy)
+            .map_err(|error| format!("failed to prepare the hermetic tree: {error:#}"))?;
+        let result = self
+            .run_argvs(action, inputs, Some(&tree.root))
+            .and_then(|mut batch| {
+                if let Err(violation) = tree.verify_links() {
+                    match batch.failure {
+                        None => batch.failure = Some((action.argv.clone(), violation)),
+                        Some(_) => {
+                            batch.captured.push_str(&violation);
+                            batch.captured.push('\n');
+                        }
+                    }
+                }
+                if batch.failure.is_none() {
+                    self.publish_hermetic_outputs(action, &tree)
+                        .map_err(|error| {
+                            format!("failed to publish outputs from the hermetic tree: {error:#}")
+                        })?;
+                }
+                Ok(batch)
+            });
+        let _ = std::fs::remove_dir_all(&tree.root);
+        result
+    }
+
+    /// Run the action's command lines in order, in `cwd` (a hermetic tree) or
+    /// the workspace root.
+    fn run_argvs(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        inputs: &BTreeMap<String, String>,
+        cwd: Option<&std::path::Path>,
+    ) -> std::result::Result<CommandBatch, String> {
+        let mut captured = String::new();
         for argv in std::iter::once(&action.argv).chain(&action.followup_argv) {
             // The graph carries the reference; the value arrives here, once
             // per build. Doing it at execution rather than at graph
@@ -62,7 +102,7 @@ impl<'a> Engine<'a> {
                 .stamped_argv(action, argv)
                 .map_err(|error| format!("{error:#}"))?;
             let mut command = self
-                .command_for_argv(action, inputs, argv)
+                .command_for_argv(action, inputs, argv, cwd)
                 .map_err(|error| format!("{error:#}"))?;
             #[cfg(unix)]
             {
@@ -212,12 +252,17 @@ impl<'a> Engine<'a> {
         action: &frostbuild_core::graph::ActionNode,
         inputs: &BTreeMap<String, String>,
         argv: &[String],
+        cwd: Option<&std::path::Path>,
     ) -> Result<Command> {
         let mut command = if self.opts.sandbox && action.sandbox {
             sandbox_command(self.root, self.graph, action, inputs, argv)?
         } else {
-            let mut command = Command::new(resolve_action_program(self.root, &argv[0]));
-            command.args(&argv[1..]).current_dir(self.root);
+            // In a hermetic tree a workspace-relative program resolves inside
+            // the tree, so a tool nobody declared is as absent as any other
+            // undeclared file.
+            let cwd = cwd.unwrap_or(self.root);
+            let mut command = Command::new(resolve_action_program(cwd, &argv[0]));
+            command.args(&argv[1..]).current_dir(cwd);
             command
         };
         command

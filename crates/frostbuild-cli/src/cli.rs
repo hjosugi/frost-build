@@ -166,8 +166,19 @@ pub(crate) enum Cmd {
         )]
         remote_timeout: u64,
         /// Isolate actions from undeclared workspace files with bubblewrap
-        #[arg(long)]
+        /// (Linux). `--hermetic` reaches the same verdict on every host
+        #[arg(long, conflicts_with = "hermetic")]
         sandbox: bool,
+        /// Run each action in a private tree holding only the files it may
+        /// read, so an undeclared input fails the build on any host. No extra
+        /// tool; not a security boundary
+        #[arg(long)]
+        hermetic: bool,
+        /// How --hermetic places inputs in each action's tree: the host's
+        /// first working strategy, or one named (`frost doctor` shows which
+        /// work here)
+        #[arg(long, value_enum, default_value = "auto", value_name = "STRATEGY")]
+        materialize: MaterializeArg,
         /// Execute each selected action twice and compare output digests
         #[arg(long, num_args = 0..=1, default_missing_value = "0", require_equals = true)]
         check_determinism: Option<Option<usize>>,
@@ -468,8 +479,20 @@ pub(crate) enum Cmd {
         /// only, with gcc's gcov
         #[arg(long)]
         coverage: bool,
-        #[arg(long)]
+        /// Isolate actions from undeclared workspace files with bubblewrap
+        /// (Linux). `--hermetic` reaches the same verdict on every host
+        #[arg(long, conflicts_with = "hermetic")]
         sandbox: bool,
+        /// Run each action in a private tree holding only the files it may
+        /// read, so an undeclared input fails the build on any host. No extra
+        /// tool; not a security boundary
+        #[arg(long, conflicts_with = "coverage")]
+        hermetic: bool,
+        /// How --hermetic places inputs in each action's tree: the host's
+        /// first working strategy, or one named (`frost doctor` shows which
+        /// work here)
+        #[arg(long, value_enum, default_value = "auto", value_name = "STRATEGY")]
+        materialize: MaterializeArg,
         /// Disable the interactive terminal UI and print plain progress lines
         #[arg(long)]
         no_tui: bool,
@@ -963,6 +986,31 @@ pub(crate) enum TestOutputArg {
     Errors,
     /// Everything, passing tests included.
     All,
+}
+
+/// `--materialize`: which of the host's strategies fills a hermetic tree.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum MaterializeArg {
+    /// The first of the host's order that works where the trees live
+    Auto,
+    /// A copy-on-write clone (Linux FICLONE on btrfs/XFS, macOS APFS clonefile)
+    Reflink,
+    /// A hard link; a write through it is detected and fails the action
+    Hardlink,
+    /// A byte copy, which always works
+    Copy,
+}
+
+impl From<MaterializeArg> for frostbuild_exec::materialize::Materialization {
+    fn from(argument: MaterializeArg) -> Self {
+        use frostbuild_exec::materialize::{Materialization, Strategy};
+        match argument {
+            MaterializeArg::Auto => Materialization::Auto,
+            MaterializeArg::Reflink => Materialization::Only(Strategy::Reflink),
+            MaterializeArg::Hardlink => Materialization::Only(Strategy::Hardlink),
+            MaterializeArg::Copy => Materialization::Only(Strategy::Copy),
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]

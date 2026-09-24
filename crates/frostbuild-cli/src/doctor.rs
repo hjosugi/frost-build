@@ -41,6 +41,79 @@ fn inspect_tool(root: &Path, name: &str, configured: &str, required: bool) -> Do
     }
 }
 
+/// One materialization strategy as `frost doctor` found it.
+#[derive(serde::Serialize)]
+struct StrategyProbe {
+    strategy: &'static str,
+    supported: bool,
+    error: Option<String>,
+}
+
+/// How this host would run `--hermetic` and `--sandbox`, probed rather than
+/// inferred from the OS: whether a clone works is a property of the
+/// filesystem under `.frost`, and ext4 and btrfs are both "Linux".
+#[derive(serde::Serialize)]
+struct ExecutionReport {
+    /// What `--materialize auto` selects here, or `None` if nothing works.
+    materialization: Option<&'static str>,
+    /// The order `auto` tries on this OS.
+    order: Vec<&'static str>,
+    probed_in: String,
+    probes: Vec<StrategyProbe>,
+    sandbox_available: bool,
+    sandbox_backend: Option<String>,
+    sandbox_detail: Option<String>,
+    hermetic_available: bool,
+}
+
+fn inspect_execution(root: &Path) -> ExecutionReport {
+    use frostbuild_exec::materialize;
+    let directory = root.join(frostbuild_exec::HERMETIC_DIR);
+    let probes: Vec<StrategyProbe> = match materialize::probe(&directory) {
+        Ok(probes) => probes
+            .into_iter()
+            .map(|probe| StrategyProbe {
+                strategy: probe.strategy.as_str(),
+                supported: probe.error.is_none(),
+                error: probe.error,
+            })
+            .collect(),
+        Err(error) => materialize::Strategy::ALL
+            .into_iter()
+            .map(|strategy| StrategyProbe {
+                strategy: strategy.as_str(),
+                supported: false,
+                error: Some(format!("{error:#}")),
+            })
+            .collect(),
+    };
+    let materialization = materialize::host_order()
+        .iter()
+        .map(|strategy| strategy.as_str())
+        .find(|name| {
+            probes
+                .iter()
+                .any(|probe| probe.strategy == *name && probe.supported)
+        });
+    let (sandbox_backend, sandbox_detail) = match frostbuild_exec::sandbox_backend() {
+        Ok(path) => (Some(path.display().to_string()), None),
+        Err(error) => (None, Some(format!("{error:#}"))),
+    };
+    ExecutionReport {
+        materialization,
+        order: materialize::host_order()
+            .iter()
+            .map(|strategy| strategy.as_str())
+            .collect(),
+        probed_in: directory.display().to_string(),
+        probes,
+        sandbox_available: sandbox_backend.is_some(),
+        sandbox_backend,
+        sandbox_detail,
+        hermetic_available: materialization.is_some(),
+    }
+}
+
 /// Every location Frost derives from a configuration, in report order.
 ///
 /// This exists so wrappers, editors and CI scripts ask for a path instead of
@@ -192,6 +265,7 @@ pub(crate) fn run_doctor(
     .map(|(name, tool)| inspect_tool(root, name, tool, false))
     .collect::<Vec<_>>();
     let ready = required.iter().all(|tool| tool.available);
+    let execution = inspect_execution(root);
     if json {
         println!(
             "{}",
@@ -204,6 +278,7 @@ pub(crate) fn run_doctor(
                 "actions": graph.actions.len(),
                 "required_tools": required,
                 "optional_integrations": extras,
+                "execution": execution,
                 "frostrc": frostrc
                     .origins
                     .iter()
@@ -281,6 +356,29 @@ pub(crate) fn run_doctor(
                 "not installed"
             }
         );
+    }
+    println!("|-- execution");
+    println!(
+        "|   |-- materialization  {}  (auto tries {})",
+        execution.materialization.unwrap_or("none"),
+        execution.order.join(" > ")
+    );
+    for probe in &execution.probes {
+        match &probe.error {
+            None => println!("|   |     {:<9} ok", probe.strategy),
+            Some(error) => println!("|   |     {:<9} unsupported: {error}", probe.strategy),
+        }
+    }
+    match (&execution.sandbox_backend, &execution.sandbox_detail) {
+        (Some(path), _) => println!("|   |-- --sandbox        available  {path}"),
+        (None, Some(detail)) => println!("|   |-- --sandbox        unavailable: {detail}"),
+        (None, None) => println!("|   |-- --sandbox        unavailable"),
+    }
+    match execution.materialization {
+        Some(strategy) => {
+            println!("|   `-- --hermetic       available  (inputs placed by {strategy})")
+        }
+        None => println!("|   `-- --hermetic       unavailable: no strategy works here"),
     }
     println!(
         "`-- result     {}",

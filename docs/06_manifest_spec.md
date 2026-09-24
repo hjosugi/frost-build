@@ -823,7 +823,10 @@ off downstream work.
 
 `frost plan`, `build --explain`, `explain TARGET`, `graph --dot`, `compdb`, and
 `build --trace FILE` expose planning and execution. `--sandbox` hides undeclared
-workspace paths on Linux; `--check-determinism` reruns selected actions.
+workspace paths on Linux; `--hermetic` reaches the same verdict on every host by
+running each action in a private tree of what it may read (docs/09);
+`--check-determinism` reruns selected actions. `sandbox = false` on a target
+opts it out of both.
 
 ## frost lint
 

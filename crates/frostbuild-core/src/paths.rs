@@ -67,19 +67,74 @@ pub fn validate_rel_path(raw: &str) -> Result<String> {
     if raw.starts_with('/') {
         bail!("path {raw:?} must be workspace-relative, not absolute");
     }
+    // `C:/x` passes every check above, and on Windows joining it to the
+    // workspace root yields `C:/x` itself — a path outside the workspace. It
+    // is refused on every host so a manifest means the same thing everywhere.
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        bail!(
+            "path {raw:?} starts with a drive designator, which on Windows names a path \
+             outside the workspace; use a workspace-relative path"
+        );
+    }
     let mut parts = Vec::new();
     for part in raw.split('/') {
         match part {
             "" => bail!("path {raw:?} has an empty component"),
             "." => continue,
             ".." => bail!("path {raw:?} must not escape the workspace with `..`"),
-            other => parts.push(other),
+            other => {
+                if cfg!(windows) {
+                    windows_component(raw, other)?;
+                }
+                parts.push(other)
+            }
         }
     }
     if parts.is_empty() {
         bail!("path {raw:?} does not name a file");
     }
     Ok(parts.join("/"))
+}
+
+/// Names a Windows host cannot store as written.
+///
+/// Checked only on Windows, where they fail: `aux.c` is an ordinary file on
+/// Linux and a device on Windows, and refusing it on a host that can build it
+/// would break a working workspace to protect one that cannot exist. What the
+/// check buys on Windows is a sentence at load time instead of a hang reading
+/// a device or an output that silently loses its trailing dot.
+pub fn windows_component(raw: &str, component: &str) -> Result<()> {
+    // `*` and `?` are also unstorable, but manifest paths are validated
+    // before glob expansion, where they are pattern syntax; a pattern can
+    // only ever expand to names the filesystem already holds.
+    if let Some(bad) = component
+        .chars()
+        .find(|c| matches!(c, '<' | '>' | ':' | '"' | '|') || c.is_control())
+    {
+        bail!("path {raw:?} contains {bad:?}, which Windows does not allow in a file name");
+    }
+    if component.ends_with('.') || component.ends_with(' ') {
+        bail!(
+            "path {raw:?} has a component ending in a dot or space, which Windows \
+             silently removes, so the file frost wrote would not be the one it declared"
+        );
+    }
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or(component)
+        .trim_end()
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if reserved {
+        bail!("path {raw:?} uses the reserved device name {component:?}, which Windows cannot store as a file");
+    }
+    Ok(())
 }
 
 /// Find an executable named without a directory component on `PATH`.
@@ -220,5 +275,73 @@ mod tests {
         assert!(validate_rel_path("a//b").is_err());
         assert!(validate_rel_path("a\\b").is_err());
         assert!(validate_rel_path(".").is_err());
+    }
+
+    #[test]
+    fn a_drive_designator_is_absolute_on_windows_so_it_is_refused_everywhere() {
+        for raw in ["C:/Windows/win.ini", "c:foo.c", "Z:"] {
+            let error = validate_rel_path(raw).unwrap_err().to_string();
+            assert!(error.contains("drive designator"), "{raw}: {error}");
+        }
+        // A colon later in a name is only a Windows problem.
+        assert_eq!(
+            validate_rel_path("man/Foo::Bar.3").is_ok(),
+            !cfg!(windows),
+            "a colon inside a name is refused on Windows only"
+        );
+    }
+
+    #[test]
+    fn windows_only_names_are_refused_on_windows_and_nowhere_else() {
+        for raw in [
+            "src/aux.c",
+            "CON",
+            "out/nul.txt",
+            "gen/COM1.h",
+            "lpt9",
+            "file.",
+            "dir /x",
+            "a|b",
+            "stream.txt:hidden",
+        ] {
+            assert_eq!(
+                validate_rel_path(raw).is_err(),
+                cfg!(windows),
+                "{raw} on this host"
+            );
+            // The rule itself, independent of the host.
+            let last = raw.rsplit('/').next().unwrap();
+            let first = raw.split('/').next().unwrap();
+            assert!(
+                windows_component(raw, last).is_err() || windows_component(raw, first).is_err(),
+                "{raw}"
+            );
+        }
+        for fine in [
+            "src/auxiliary.c",
+            "COM0",
+            "com10.txt",
+            "console.c",
+            "a.b.c",
+            "src/*.c",
+            "src/?.h",
+        ] {
+            assert!(validate_rel_path(fine).is_ok(), "{fine}");
+            assert!(windows_component(fine, fine).is_ok(), "{fine}");
+        }
+    }
+
+    #[test]
+    fn long_relative_paths_are_accepted_as_written() {
+        // Frost never shortens a path. Long ones are the filesystem's to
+        // accept, and Rust's std prefixes `\\?\` on Windows when a path
+        // exceeds MAX_PATH; the E2E suite builds one on every host.
+        let long = (0..30)
+            .map(|i| format!("segment-{i:02}"))
+            .collect::<Vec<_>>()
+            .join("/")
+            + "/input.txt";
+        assert!(long.len() > 300);
+        assert_eq!(validate_rel_path(&long).unwrap(), long);
     }
 }

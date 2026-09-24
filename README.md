@@ -102,8 +102,11 @@ frost -C myrepo test --coverage --explain
 frost -C myrepo build --timeout 600
 frost -C myrepo test --timeout 120
 
-# Optional workspace sandbox and determinism audit
+# Optional undeclared-input check and determinism audit. --sandbox is
+# bubblewrap (Linux); --hermetic runs each action in a private tree of its
+# declared inputs on any host, and `frost doctor` shows how that tree is filled
 frost -C myrepo build --sandbox
+frost -C myrepo build --hermetic
 frost -C myrepo build --check-determinism
 
 # Materialize root [fetch.NAME] pins explicitly; builds never use the network
@@ -252,7 +255,8 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   JavaScript and Python, with dry-run preview and strict no-overwrite behavior
 - `doctor`: graph/toolchain readiness plus optional debugger/runtime/fzf/
   sandbox/Graphviz diagnostics, with matching machine-readable JSON
-- opt-in Linux bubblewrap sandbox and process-group cancellation
+- opt-in Linux bubblewrap sandbox, a `--hermetic` mode that gives every host
+  the same undeclared-input verdict, and process-group cancellation
 - Ninja importer, conservative Bazel-query native C/C++ migration importer,
   and reproducible Ninja/Make/Frost/Bazel benchmark harness
 

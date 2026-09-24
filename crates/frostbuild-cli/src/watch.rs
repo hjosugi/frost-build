@@ -61,6 +61,8 @@ fn watch_build_request(request: &WatchRequest) -> BuildRequest {
         platform: request.platform.clone(),
         no_cache: false,
         sandbox: false,
+        hermetic: false,
+        materialize: crate::cli::MaterializeArg::Auto,
         check_determinism: false,
         trace: None,
         report: None,

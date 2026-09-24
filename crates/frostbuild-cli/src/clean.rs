@@ -110,6 +110,14 @@ pub(crate) fn run_clean(
             removed += 1;
         }
     }
+    // Hermetic trees are removed with their action; only a run that was
+    // killed mid-action leaves one, and nothing reads it.
+    let hermetic = root.join(frostbuild_exec::HERMETIC_DIR);
+    if subtree.is_none() && hermetic.exists() {
+        std::fs::remove_dir_all(&hermetic)
+            .with_context(|| format!("failed to remove {}", hermetic.display()))?;
+        removed += 1;
+    }
     if cache {
         for rel in [
             frostbuild_core::journal::JOURNAL_REL_PATH,

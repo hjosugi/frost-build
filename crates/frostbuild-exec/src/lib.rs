@@ -29,7 +29,9 @@ mod determinism;
 mod discovered;
 mod estimates;
 mod fast_noop;
+mod hermetic;
 mod keys;
+pub mod materialize;
 mod options;
 mod outputs;
 mod process;
@@ -41,11 +43,13 @@ mod sandbox;
 mod schedule;
 mod toolchain;
 pub use fast_noop::{FastNoopDaemonHit, FastNoopHit, FastNoopWatchProof};
+pub use hermetic::HERMETIC_DIR;
 use keys::{action_key_argv, path_is_inside, streamed_action_key, StreamedActionDescriptor};
 pub use options::{BuildOptions, Estimator, ResourceLimits, Scheduler, DEFAULT_TEST_TIMEOUT};
 pub use process::{install_signal_handler, request_cancellation, resolve_timeout, was_cancelled};
 pub use progress::{progress_channel, ProgressEvent, ProgressSender, ProgressState};
 pub use report::{ActionResult, BuildReport, BuildStats, Outcome};
+pub use sandbox::sandbox_backend;
 pub use schedule::{Schedule, Simulation};
 pub use toolchain::{
     toolchain_closure_fingerprint_cached, toolchain_closure_fingerprint_cached_instrumented,
@@ -173,6 +177,9 @@ pub struct Engine<'a> {
     /// in a 10k-action no-op build.
     key_env: BTreeMap<String, String>,
     command_env: Vec<(OsString, OsString)>,
+    /// How `--hermetic` fills each action's tree, probed once per build where
+    /// the trees live. `None` when the mode is off.
+    hermetic: Option<materialize::Strategy>,
     opts: BuildOptions,
     cache: HashCache,
     /// Entries recorded by the *previous* build. Immutable for the duration
@@ -228,6 +235,7 @@ impl<'a> Engine<'a> {
             toolchain_hash,
             key_env,
             command_env,
+            hermetic: None,
             opts,
             cache,
             previous: journal,
@@ -274,6 +282,12 @@ impl<'a> Engine<'a> {
         } else {
             if !self.opts.dry_run {
                 self.prepare_output_dirs()?;
+                if self.opts.hermetic {
+                    self.hermetic = Some(materialize::select(
+                        &self.root.join(HERMETIC_DIR),
+                        self.opts.materialize,
+                    )?);
+                }
             }
             self.prepare_schedule();
             if let Some(progress) = &progress {

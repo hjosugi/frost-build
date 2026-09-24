@@ -60,7 +60,7 @@ regressions against this table are architecture bugs.
 | "Just run bazel clean" incremental escapes (bazel#12462, #11200, #13135) | Mutable convenience output trees desync from graph state | Outputs are content-addressed in the CAS and re-materialized from the journal; determinism-check mode turns nondeterminism into an error instead of latent cache poison. |
 | Ecosystem churn: WORKSPACE→bzlmod forced migration, `--incompatible_*` matrices (bazel#23023) | Extensibility platform + LTS breakage policy | One binary, versioned boring manifest, no external ruleset ecosystem to churn. |
 | IDE integration requires third-party "de-Bazeling" aspects (hedronvision extractor) | Post-analysis actions hidden behind wrappers | Actions store real compiler argv; `frost compdb` is first-party and lossless. |
-| Windows/macOS friction: path limits, symlink farms, sandbox tax | Linux-first primitives ported literally | Roadmap stance ([09](09_platform_support.md)): copy/hardlink materialization and no-sandbox-hermetic mode are planned as first-class modes, not ports of the Linux model. Device builds for such targets already work today from a Linux host via `[platform.*]` cross toolchains. |
+| Windows/macOS friction: path limits, symlink farms, sandbox tax | Linux-first primitives ported literally | **Shipped** (#146, [09](09_platform_support.md)): `--hermetic` materializes each action's declared visible set with a probed reflink → hardlink → copy strategy (hardlink → copy on Windows) instead of porting the Linux sandbox; paths beyond `MAX_PATH`, case-only output collisions and Windows-unstorable names have explicit, tested rules. Device builds for such targets also work from a Linux host via `[platform.*]` cross toolchains. |
 
 ## What Bazel still does better
 

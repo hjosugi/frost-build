@@ -16,6 +16,11 @@ pub struct BuildOptions {
     pub verbose: bool,
     pub no_cache: bool,
     pub sandbox: bool,
+    /// Run each action in a private tree holding only what the sandbox would
+    /// let it see, on any host. See `hermetic.rs`.
+    pub hermetic: bool,
+    /// How that tree is filled.
+    pub materialize: crate::materialize::Materialization,
     pub check_determinism: bool,
     pub cas_max_bytes: u64,
     /// Persist a whole-closure certificate after the normal path proves that
@@ -184,6 +189,8 @@ impl Default for BuildOptions {
             verbose: false,
             no_cache: false,
             sandbox: false,
+            hermetic: false,
+            materialize: crate::materialize::Materialization::Auto,
             check_determinism: false,
             cas_max_bytes: DEFAULT_CAS_MAX_BYTES,
             write_fast_noop: false,

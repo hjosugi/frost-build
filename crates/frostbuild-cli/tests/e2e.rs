@@ -4074,6 +4074,354 @@ fn sandbox_rejects_undeclared_workspace_header() {
     );
 }
 
+/// Build `target` from a cache-free state with `extra` isolation flags and
+/// report (succeeded, mentions `needle`).
+fn isolated_verdict(ws: &Workspace, target: &str, extra: &[&str], needle: &str) -> (bool, bool) {
+    let (ok, out) = ws.frost(&["clean", "--cache"]);
+    assert!(ok, "{out}");
+    let mut args = vec!["build", target];
+    args.extend_from_slice(extra);
+    let (ok, out) = ws.frost(&args);
+    (ok, out.contains(needle))
+}
+
+#[test]
+fn hermetic_mode_rejects_undeclared_workspace_header_on_every_host() {
+    let ws = Workspace::new("hermetic");
+    ws.write("secret.h", "#define SECRET 0\n");
+    ws.write(
+        "src/sandbox.c",
+        "#include \"../secret.h\"\nint main(void) { return SECRET; }\n",
+    );
+    ws.append(
+        "frost.toml",
+        "\n[target.sandbox_app]\nkind = \"cc_binary\"\nsrcs = [\"src/sandbox.c\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build", "sandbox_app"]);
+    assert!(ok, "non-hermetic control build failed:\n{out}");
+
+    let undeclared = isolated_verdict(&ws, "sandbox_app", &["--hermetic"], "secret.h");
+    assert_eq!(
+        undeclared,
+        (false, true),
+        "the undeclared header must fail the build and be named"
+    );
+
+    // Everything the sample declares — a generated header from a declared
+    // tool, an include directory, a sibling header found through discovery,
+    // a static library and a link — still builds, and the result runs.
+    let declared = isolated_verdict(&ws, "app", &["--hermetic"], "error");
+    assert!(declared.0, "the declared workspace must build hermetically");
+    assert!(ws.run_app().contains("42"));
+    let (ok, out) = ws.frost(&["build", "app", "--hermetic"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+    // Each tree is removed with its action.
+    let trees = std::fs::read_dir(ws.dir.join(".frost/hermetic"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(trees, 0, "hermetic trees outlived their actions");
+
+    // Where bubblewrap exists, the two backends must agree case by case: they
+    // share one definition of what an action may see.
+    if frostbuild_exec::sandbox_backend().is_ok() {
+        assert_eq!(
+            isolated_verdict(&ws, "sandbox_app", &["--sandbox"], "secret.h"),
+            undeclared,
+            "bubblewrap and --hermetic disagree about an undeclared header"
+        );
+        assert_eq!(
+            isolated_verdict(&ws, "app", &["--sandbox"], "error").0,
+            declared.0,
+            "bubblewrap and --hermetic disagree about the declared workspace"
+        );
+    }
+}
+
+#[test]
+fn sandbox_without_bubblewrap_names_the_hermetic_alternative() {
+    let ws = Workspace::new("sandbox-unavailable");
+    let empty = ws.dir.join("empty-path");
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut command = Command::new(frost_bin());
+    command
+        .arg("-C")
+        .arg(&ws.dir)
+        .args(["build", "--sandbox"])
+        .env("PATH", &empty);
+    ws.isolated(&mut command);
+    let out = command.output().expect("spawn frost");
+    let text = normalized_output(&out.stdout) + &normalized_output(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a refusal, not a failed build:\n{text}"
+    );
+    assert!(text.contains("--hermetic"), "{text}");
+    assert!(text.contains("bubblewrap"), "{text}");
+    assert!(
+        !ws.dir.join(".frost/obj").exists(),
+        "nothing may run once the sandbox is known to be unavailable"
+    );
+}
+
+#[test]
+fn doctor_reports_the_materialization_strategy_this_host_selects() {
+    let ws = Workspace::new("doctor-materialize");
+    let (_, out) = ws.frost(&["doctor", "--json"]);
+    let report: serde_json::Value = serde_json::from_str(&out).expect("doctor --json");
+    let execution = &report["execution"];
+    let order: Vec<&str> = execution["order"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    let expected_order: &[&str] = if cfg!(windows) {
+        &["hardlink", "copy"]
+    } else {
+        &["reflink", "hardlink", "copy"]
+    };
+    assert_eq!(order, expected_order);
+    let supported = |name: &str| {
+        execution["probes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|probe| probe["strategy"] == name && probe["supported"] == true)
+    };
+    let selected = execution["materialization"].as_str().expect("a strategy");
+    assert_eq!(
+        Some(selected),
+        order.iter().copied().find(|name| supported(name)),
+        "auto must select the first working strategy in the host order"
+    );
+    assert!(supported("copy") && supported("hardlink"), "{execution}");
+    // APFS clones on every macOS runner; Windows never clones.
+    if cfg!(target_os = "macos") {
+        assert_eq!(selected, "reflink", "{execution}");
+    }
+    if cfg!(windows) {
+        assert_eq!(selected, "hardlink", "{execution}");
+    }
+    assert_eq!(execution["hermetic_available"], true);
+    assert_eq!(
+        execution["sandbox_available"],
+        frostbuild_exec::sandbox_backend().is_ok()
+    );
+
+    let (_, text) = ws.frost(&["doctor"]);
+    assert!(
+        text.contains(&format!("materialization  {selected}")),
+        "{text}"
+    );
+    assert!(text.contains("--hermetic       available"), "{text}");
+}
+
+#[test]
+fn every_materialization_strategy_builds_or_is_refused_by_name() {
+    let ws = Workspace::new("materialize-strategies");
+    for strategy in ["copy", "hardlink", "reflink", "auto"] {
+        let (ok, out) = ws.frost(&["clean", "--cache"]);
+        assert!(ok, "{out}");
+        let (ok, out) = ws.frost(&["build", "--hermetic", "--materialize", strategy]);
+        if strategy == "reflink" && !ok {
+            // A filesystem without clones (ext4, NTFS) refuses by name
+            // rather than quietly copying.
+            assert!(
+                out.contains("--materialize reflink is not supported"),
+                "{out}"
+            );
+            continue;
+        }
+        assert!(ok, "--materialize {strategy} failed:\n{out}");
+        assert!(ws.run_app().contains("42"), "--materialize {strategy}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_through_a_hard_link_fails_the_action_and_a_copy_isolates_it() {
+    let ws = Workspace::empty("hermetic-write-through");
+    std::fs::create_dir_all(ws.dir.join("data")).unwrap();
+    ws.write("data/in.txt", "original\n");
+    ws.write(
+        "frost.toml",
+        "[target.tamper]\nkind = \"genrule\"\n\
+         cmd = \"cat data/in.txt > ${out} && echo tampered >> data/in.txt\"\n\
+         inputs = [\"data/in.txt\"]\noutputs = [\"gen/out.txt\"]\n",
+    );
+    let (ok, out) = ws.frost(&["build", "--hermetic", "--materialize", "copy"]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(ws.dir.join("data/in.txt")).unwrap(),
+        "original\n",
+        "a copied input must not reach back into the workspace"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.dir.join("gen/out.txt")).unwrap(),
+        "original\n"
+    );
+
+    let (ok, out) = ws.frost(&["clean", "--cache"]);
+    assert!(ok, "{out}");
+    let (ok, out) = ws.frost(&["build", "--hermetic", "--materialize", "hardlink"]);
+    assert!(
+        !ok,
+        "a write through a hard link must fail the action:\n{out}"
+    );
+    assert!(out.contains("wrote to its input"), "{out}");
+    assert!(out.contains("in.txt"), "{out}");
+    assert!(
+        !ws.dir.join("gen/out.txt").exists(),
+        "a failed action publishes nothing"
+    );
+}
+
+#[test]
+fn a_hermetic_command_sees_only_its_visible_set_on_every_host() {
+    // `frost pack-jar` is itself a portable tool, so this runs on every host,
+    // and the archive it writes is a listing of what the action could read.
+    let ws = Workspace::empty("hermetic-visible");
+    std::fs::create_dir_all(ws.dir.join("classes/pkg")).unwrap();
+    ws.write("classes/pkg/A.class", "declared\n");
+    ws.write("classes/pkg/B.class", "sibling of a declared input\n");
+    ws.write(
+        "classes/Undeclared.class",
+        "outside every visible directory\n",
+    );
+    let frost = serde_json::to_string(frost_bin()).unwrap();
+    ws.write(
+        "frost.toml",
+        &format!(
+            "[toolchain.tools]\nfrost = {frost}\n\n\
+             [target.jar]\nkind = \"command\"\ntool = \"frost\"\n\
+             args = [\"pack-jar\", \"--input\", \"classes\", \"--output\", \"out/${{config}}/lib.jar\"]\n\
+             inputs = [\"classes/pkg/A.class\"]\noutputs = [\"out/${{config}}/lib.jar\"]\n"
+        ),
+    );
+    let listing = |ws: &Workspace| {
+        String::from_utf8_lossy(&std::fs::read(ws.dir.join("out/debug/lib.jar")).unwrap())
+            .into_owned()
+    };
+
+    let (ok, out) = ws.frost(&["build", "--hermetic"]);
+    assert!(ok, "{out}");
+    let hermetic = listing(&ws);
+    assert!(hermetic.contains("pkg/A.class"), "{hermetic}");
+    // The directory of a declared input is visible, exactly as bubblewrap
+    // binds it; a file outside every visible directory is not.
+    assert!(hermetic.contains("pkg/B.class"), "{hermetic}");
+    assert!(!hermetic.contains("Undeclared.class"), "{hermetic}");
+    let (ok, out) = ws.frost(&["build", "--hermetic"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    // Without isolation the same manifest silently packs the undeclared file,
+    // which is the bug the mode exists to surface.
+    let (ok, out) = ws.frost(&["clean", "--cache"]);
+    assert!(ok, "{out}");
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert!(listing(&ws).contains("Undeclared.class"));
+}
+
+#[test]
+fn a_workspace_path_longer_than_max_path_builds_restores_and_cleans() {
+    // 260 characters is MAX_PATH on Windows. Frost never shortens a path; the
+    // property under test is that hashing, CAS publication, restoration and
+    // cleaning all accept one this long on every host.
+    let ws = Workspace::empty("long-path");
+    let deep = (0..14)
+        .map(|index| format!("nested-directory-{index:02}"))
+        .collect::<Vec<_>>()
+        .join("/");
+    let input_dir = format!("{deep}/classes");
+    // Command outputs carry `${config}`; the host debug configuration names
+    // the file on disk.
+    let declared = format!("{deep}/out/${{config}}/archive-with-a-long-name.jar");
+    let output = format!("{deep}/out/debug/archive-with-a-long-name.jar");
+    std::fs::create_dir_all(ws.dir.join(&input_dir)).unwrap();
+    ws.write(&format!("{input_dir}/Payload.class"), "payload\n");
+    assert!(
+        ws.dir.join(&output).as_os_str().len() > 300,
+        "the test must exceed MAX_PATH to mean anything"
+    );
+    let frost = serde_json::to_string(frost_bin()).unwrap();
+    ws.write(
+        "frost.toml",
+        &format!(
+            "[toolchain.tools]\nfrost = {frost}\n\n\
+             [target.long]\nkind = \"command\"\ntool = \"frost\"\n\
+             args = [\"pack-jar\", \"--input\", \"{input_dir}\", \"--output\", \"{declared}\"]\n\
+             inputs = [\"{input_dir}/Payload.class\"]\noutputs = [\"{declared}\"]\n"
+        ),
+    );
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let built = std::fs::read(ws.dir.join(&output)).unwrap();
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok && out.contains("up to date"), "{out}");
+
+    std::fs::remove_file(ws.dir.join(&output)).unwrap();
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    assert_eq!(std::fs::read(ws.dir.join(&output)).unwrap(), built);
+
+    let (ok, out) = ws.frost(&["clean", "--cache"]);
+    assert!(ok, "{out}");
+    let (ok, out) = ws.frost(&["build", "--hermetic"]);
+    assert!(
+        ok,
+        "the hermetic tree adds its own prefix to an already long path:\n{out}"
+    );
+    assert_eq!(std::fs::read(ws.dir.join(&output)).unwrap(), built);
+}
+
+#[test]
+fn outputs_that_differ_only_in_case_are_refused_on_every_host() {
+    let ws = Workspace::empty("case-collision");
+    #[cfg(unix)]
+    let cmd = "printf x > ${out}";
+    #[cfg(windows)]
+    let cmd = "echo x>${out}";
+    ws.write(
+        "frost.toml",
+        &format!(
+            "[target.upper]\nkind = \"genrule\"\ncmd = \"{cmd}\"\noutputs = [\"gen/Config.h\"]\n\n\
+             [target.lower]\nkind = \"genrule\"\ncmd = \"{cmd}\"\noutputs = [\"gen/config.h\"]\n"
+        ),
+    );
+    let (code, out) = ws.frost_code(&["build", "upper", "lower"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("differ only in letter case"), "{out}");
+    assert!(!ws.dir.join("gen").exists(), "nothing may run: {out}");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_refuses_names_it_cannot_store_before_anything_runs() {
+    let ws = Workspace::empty("windows-names");
+    for (output, needle) in [
+        ("gen/aux.h", "reserved device name"),
+        ("gen/trailing.", "dot or space"),
+        ("C:/outside.txt", "drive designator"),
+    ] {
+        ws.write(
+            "frost.toml",
+            &format!(
+                "[target.bad]\nkind = \"genrule\"\ncmd = \"echo x>${{out}}\"\noutputs = [\"{output}\"]\n"
+            ),
+        );
+        let (code, out) = ws.frost_code(&["build"]);
+        assert_eq!(code, 2, "{output}: {out}");
+        assert!(out.contains(needle), "{output}: {out}");
+    }
+}
+
 #[test]
 fn strategies_are_selectable_and_measured() {
     let ws = Workspace::new("strategies");
