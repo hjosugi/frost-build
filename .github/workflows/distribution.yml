@@ -65,3 +65,35 @@ jobs:
       - name: Render the installed manual
         shell: bash
         run: MANPATH="$RUNNER_TEMP/frost-prefix/share/man" MANPAGER=cat man frost >/dev/null
+      # The signing and provenance README.md tells users to check, checked
+      # against the real release with exactly the published commands. Releases
+      # before 0.14.0 predate signing and are reported, not failed.
+      - name: Decide whether the release is signed
+        shell: bash
+        run: |
+          signed="$(python3 -c 'import sys; print(tuple(map(int, sys.argv[1].split("."))) >= (0, 14, 0))' "$EXPECTED_VERSION")"
+          echo "RELEASE_SIGNED=${signed}" >> "$GITHUB_ENV"
+          if [ "$signed" != True ]; then
+            echo "::notice::v${EXPECTED_VERSION} predates signed releases; signature checks skipped."
+          fi
+      - if: env.RELEASE_SIGNED == 'True'
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: cosign@3.1.3
+      - name: Verify every asset with the published procedure
+        if: env.RELEASE_SIGNED == 'True' && runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "v${EXPECTED_VERSION}" --repo hjosugi/frost-build --dir "$RUNNER_TEMP/release"
+          scripts/verify_release.sh "$RUNNER_TEMP/release" "$EXPECTED_VERSION"
+      - name: Install with signature and provenance verification
+        if: env.RELEASE_SIGNED == 'True'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sh install.sh --version "$EXPECTED_VERSION" --prefix "$RUNNER_TEMP/verified-prefix" \
+            --verify-signature --verify-provenance
+          test "$("$RUNNER_TEMP/verified-prefix/bin/frost" --version)" = "frost $EXPECTED_VERSION"

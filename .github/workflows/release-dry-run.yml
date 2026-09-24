@@ -1,0 +1,281 @@
+name: Release dry run
+
+# release.yml signs, attests and verifies what it publishes, but it only runs
+# when a release is cut — the worst moment to learn that signing broke. This
+# builds the Linux archive exactly as release.yml does (musl, then
+# scripts/package_release.py), makes the same SBOM, keyless signatures and
+# SLSA provenance with the same tools, verifies them with the script README.md
+# publishes, and then proves the checks bite: a tampered archive, a rewritten
+# SHA256SUMS and a signature from the wrong workflow must all be refused, by
+# the tools directly, by the script and by install.sh.
+#
+# The same commit is also built a second time, at a different path on a
+# different runner and without the build cache, and the two archives are
+# compared byte for byte. That comparison is the evidence behind the
+# reproducibility section of docs/30_distribution.md.
+#
+# Nothing is published. The signatures name this workflow file, not
+# release.yml, so the published verification command rejects them; the tamper
+# step checks that as well.
+on:
+  push:
+    # Dependabot branches get a read-only token and no OIDC identity.
+    branches-ignore: ["dependabot/**"]
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-dry-run.yml"
+      - "scripts/package_release.py"
+      - "scripts/release_sbom.sh"
+      - "scripts/verify_release.sh"
+      - "install.sh"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+  # Sigstore, the attestation API and the runner image all change without a
+  # commit here; a weekly run notices before a release does.
+  schedule:
+    - cron: "43 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Linux archive (${{ matrix.checkout.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        checkout:
+          - name: workspace
+            path: .
+          - name: relocated
+            path: a/deliberately/longer/checkout/path
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.checkout.path }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ${{ matrix.checkout.path }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+          targets: x86_64-unknown-linux-musl
+      # Only one of the two builds is cached: the comparison is then also
+      # between an incremental build and a clean one.
+      - if: matrix.checkout.name == 'workspace'
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p frostbuild-cli -p frostbuild-daemon
+      - name: Generate man pages and completions
+        run: |
+          cargo run --release --locked --target x86_64-unknown-linux-musl -p frostbuild-cli \
+            --example release-assets --features release-assets -- dist/release-assets 1970-01-01
+      - name: Package as release.yml does
+        run: |
+          version="$(awk '
+            /^\[workspace\.package\]/ { in_section = 1; next }
+            /^\[/                     { in_section = 0 }
+            in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.toml)"
+          bin=target/x86_64-unknown-linux-musl/release
+          "$bin/frost" --version
+          python3 scripts/package_release.py --tag "v${version}" \
+            --triple x86_64-unknown-linux-musl --binary-dir "$bin" \
+            --assets dist/release-assets --output dist
+          mkdir -p evidence
+          {
+            (cd "$bin" && sha256sum frost frostd)
+            (cd dist && sha256sum frostbuild-*.tar.gz)
+          } | tee evidence/digests.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dry-run-${{ matrix.checkout.name }}
+          path: |
+            ${{ matrix.checkout.path }}/dist/frostbuild-*.tar.gz
+            ${{ matrix.checkout.path }}/evidence/digests.txt
+          if-no-files-found: error
+
+  integrity:
+    name: Sign, attest, verify and tamper
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNER_WORKFLOW: .github/workflows/release-dry-run.yml
+      ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.95.0
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: cosign@3.1.3,cargo-cyclonedx@0.5.9
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dry-run-workspace
+          path: build-workspace
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dry-run-relocated
+          path: build-relocated
+      - name: Compare the two builds
+        run: |
+          {
+            echo "### Reproducibility: two builds of ${GITHUB_SHA::12}"
+            echo
+            echo "Cached build in the workspace vs. clean build at a longer path, on separate runners."
+            echo
+            echo '```'
+            paste -d' ' build-workspace/evidence/digests.txt build-relocated/evidence/digests.txt |
+              awk '{ printf "%-50s %s\n", $2, ($1 == $3 ? "identical " $1 : "DIFFERENT " $1 " vs " $3) }'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if ! diff -u build-workspace/evidence/digests.txt build-relocated/evidence/digests.txt; then
+            echo "::error::The two builds of one commit differ; docs/30_distribution.md claims they do not."
+            exit 1
+          fi
+      - name: Resolve the version and this run's signer identity
+        run: |
+          version="$(awk '
+            /^\[workspace\.package\]/ { in_section = 1; next }
+            /^\[/                     { in_section = 0 }
+            in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.toml)"
+          ref_regexp="$(printf '%s' "$GITHUB_REF" | sed 's/[].[^$*+?(){}|\\]/\\&/g')"
+          {
+            echo "VERSION=${version}"
+            echo "REF_REGEXP=${ref_regexp}"
+            echo "IDENTITY=^https://github\\.com/hjosugi/frost-build/\\.github/workflows/release-dry-run\\.yml@${ref_regexp}\$"
+          } >> "$GITHUB_ENV"
+          mkdir dist
+          cp build-workspace/frostbuild-*.tar.gz dist/
+      # From here to "Verify", the same steps as release.yml's integrity job.
+      - name: Create checksums
+        run: (cd dist && sha256sum frostbuild-*.tar.gz > SHA256SUMS)
+      - name: Generate SBOMs
+        run: scripts/release_sbom.sh dist "$VERSION"
+      - name: Sign archives and checksums (keyless)
+        run: |
+          for blob in dist/SHA256SUMS dist/frostbuild-*.tar.gz; do
+            cosign sign-blob --yes --bundle "${blob}.sigstore.json" "$blob"
+          done
+      - id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/frostbuild-*.tar.gz
+            dist/frostbuild-*.cdx.json
+            dist/SHA256SUMS
+      - name: Attach the provenance bundle
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/frostbuild-v${VERSION}.intoto.jsonl"
+      - name: Verify with the published procedure
+        run: |
+          scripts/verify_release.sh --signer-workflow "$SIGNER_WORKFLOW" \
+            --source-ref-regexp "$REF_REGEXP" dist "$VERSION"
+      - name: Tampering is refused
+        run: |
+          set -euo pipefail
+          archive="$(cd dist && ls frostbuild-*.tar.gz)"
+          flip() {
+            python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[len(b) // 2] ^= 0xFF; open(p, "wb").write(b)' "$1"
+          }
+          refused() {
+            local label="$1"
+            shift
+            if "$@" >"$RUNNER_TEMP/attempt.log" 2>&1; then
+              cat "$RUNNER_TEMP/attempt.log"
+              echo "::error::accepted, but must be refused: $label"
+              exit 1
+            fi
+            echo "refused as required: $label"
+            sed 's/^/    /' "$RUNNER_TEMP/attempt.log" | tail -n 3
+          }
+
+          # One flipped byte in the archive.
+          cp -R dist tampered-archive
+          flip "tampered-archive/$archive"
+          refused "cosign, archive with one flipped byte" \
+            cosign verify-blob --bundle "tampered-archive/$archive.sigstore.json" \
+              --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+              "tampered-archive/$archive"
+          refused "gh attestation, archive with one flipped byte" \
+            gh attestation verify "tampered-archive/$archive" \
+              --bundle "tampered-archive/frostbuild-v${VERSION}.intoto.jsonl" \
+              --repo hjosugi/frost-build --signer-workflow "hjosugi/frost-build/$SIGNER_WORKFLOW"
+          refused "SHA256SUMS, archive with one flipped byte" \
+            bash -c 'cd tampered-archive && sha256sum --check --strict SHA256SUMS'
+          refused "verify_release.sh, archive with one flipped byte" \
+            scripts/verify_release.sh --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref-regexp "$REF_REGEXP" tampered-archive "$VERSION"
+
+          # The archive and SHA256SUMS rewritten together, as someone able to
+          # replace release assets would: the checksum now agrees, the
+          # signature over the genuine list cannot.
+          cp -R tampered-archive tampered-release
+          (cd tampered-release && sha256sum frostbuild-*.tar.gz > SHA256SUMS)
+          (cd tampered-release && sha256sum --check --strict SHA256SUMS)
+          refused "cosign, rewritten SHA256SUMS" \
+            cosign verify-blob --bundle tampered-release/SHA256SUMS.sigstore.json \
+              --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+              tampered-release/SHA256SUMS
+          refused "verify_release.sh, rewritten archive and SHA256SUMS" \
+            scripts/verify_release.sh --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref-regexp "$REF_REGEXP" tampered-release "$VERSION"
+
+          # Genuine signatures from this dry run are not release signatures:
+          # the published command, which names release.yml, rejects them.
+          refused "the published release verification, on dry-run signatures" \
+            scripts/verify_release.sh dist "$VERSION"
+      - name: install.sh verifies before it installs
+        run: |
+          set -euo pipefail
+          serve="$RUNNER_TEMP/release-server"
+          mkdir -p "$serve/v${VERSION}"
+          cp dist/* "$serve/v${VERSION}/"
+          python3 -m http.server --bind 127.0.0.1 --directory "$serve" 8765 >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for _ in $(seq 50); do
+            curl -fsS -o /dev/null "http://127.0.0.1:8765/v${VERSION}/SHA256SUMS" && break
+            sleep 0.2
+          done
+          export FROST_INSTALL_RELEASE_BASE_URL=http://127.0.0.1:8765
+          export FROST_INSTALL_SIGNER_WORKFLOW="$SIGNER_WORKFLOW"
+          export FROST_INSTALL_SIGNER_REF_REGEXP="$REF_REGEXP"
+
+          sh install.sh --version "$VERSION" --prefix "$RUNNER_TEMP/verified" \
+            --verify-signature --verify-provenance
+          test "$("$RUNNER_TEMP/verified/bin/frost" --version)" = "frost ${VERSION}"
+
+          rm -rf "$serve/v${VERSION}"
+          cp -R tampered-release "$serve/v${VERSION}"
+          if sh install.sh --version "$VERSION" --prefix "$RUNNER_TEMP/refused" --verify-signature; then
+            echo "::error::install.sh --verify-signature installed a rewritten release"
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/refused"
+          echo "install.sh refused the rewritten release and created nothing"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dry-run-release
+          path: dist
+          if-no-files-found: error

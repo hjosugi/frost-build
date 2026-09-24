@@ -5,6 +5,15 @@
 # release's SHA256SUMS, unpacked and smoke-tested before the prefix is touched.
 # Network, OS and architecture overrides exist so this exact script can be
 # exercised against a local fixture without trusting the network in CI.
+#
+# The checksum proves the archive is the one the release lists. It cannot
+# prove who published that list: anyone able to replace release assets can
+# replace both. Two opt-in checks close that gap and are off by default only
+# because each needs a tool this script cannot assume is installed:
+#   --verify-signature   cosign checks the keyless Sigstore signature on
+#                        SHA256SUMS, which only release.yml running in this
+#                        repository on main or a release tag can produce
+#   --verify-provenance  gh checks the archive's SLSA build provenance
 
 set -eu
 
@@ -13,6 +22,14 @@ version=
 prefix=${FROST_INSTALL_PREFIX:-${HOME:?HOME is not set}/.local}
 api_url=${FROST_INSTALL_API_URL:-https://api.github.com/repos/hjosugi/frost-build/releases/latest}
 release_base=${FROST_INSTALL_RELEASE_BASE_URL:-https://github.com/hjosugi/frost-build/releases/download}
+repository=hjosugi/frost-build
+verify_signature=${FROST_INSTALL_VERIFY_SIGNATURE:-0}
+verify_provenance=${FROST_INSTALL_VERIFY_PROVENANCE:-0}
+# Which workflow must have signed the release. Only the release dry run
+# changes these, to point an installer test at its own signatures.
+signer_workflow=${FROST_INSTALL_SIGNER_WORKFLOW:-.github/workflows/release.yml}
+signer_ref=${FROST_INSTALL_SIGNER_REF_REGEXP:-}
+[ -n "$signer_ref" ] || signer_ref='refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)'
 
 say() {
     printf '%s: %s\n' "$program" "$1" >&2
@@ -27,12 +44,20 @@ usage() {
     cat <<'EOF'
 Install a checksum-verified FrostBuild release.
 
-Usage: install.sh [--version X.Y.Z] [--prefix DIR]
+Usage: install.sh [--version X.Y.Z] [--prefix DIR] [--verify-signature] [--verify-provenance]
 
 Options:
-  --version X.Y.Z  Install this exact release instead of the latest stable one
-  --prefix DIR     Install under DIR (default: $HOME/.local)
-  -h, --help       Show this help
+  --version X.Y.Z      Install this exact release instead of the latest stable one
+  --prefix DIR         Install under DIR (default: $HOME/.local)
+  --verify-signature   Also require SHA256SUMS to carry the release workflow's
+                       keyless Sigstore signature (needs cosign on PATH;
+                       FROST_INSTALL_VERIFY_SIGNATURE=1 does the same)
+  --verify-provenance  Also require the archive's GitHub SLSA provenance
+                       attestation (needs an authenticated gh on PATH;
+                       FROST_INSTALL_VERIFY_PROVENANCE=1 does the same)
+  -h, --help           Show this help
+
+By default the archive is checked against the release's SHA256SUMS only.
 EOF
 }
 
@@ -50,6 +75,8 @@ while [ "$#" -gt 0 ]; do
         shift 2
         ;;
     --prefix=*) prefix=${1#*=}; shift ;;
+    --verify-signature) verify_signature=1; shift ;;
+    --verify-provenance) verify_provenance=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown option '$1'" ;;
     esac
@@ -58,6 +85,24 @@ done
 case "$prefix" in
 '') die "the install prefix cannot be empty" ;;
 esac
+
+# A typo here must not quietly install without the check that was asked for.
+case "$verify_signature" in
+0 | 1) ;;
+*) die "FROST_INSTALL_VERIFY_SIGNATURE must be 0 or 1, not '$verify_signature'" ;;
+esac
+case "$verify_provenance" in
+0 | 1) ;;
+*) die "FROST_INSTALL_VERIFY_PROVENANCE must be 0 or 1, not '$verify_provenance'" ;;
+esac
+# Checked before anything is downloaded: a requested check that cannot run
+# is a refusal, never a silent downgrade to the checksum alone.
+if [ "$verify_signature" = 1 ] && ! command -v cosign >/dev/null 2>&1; then
+    die "--verify-signature needs cosign on PATH (https://docs.sigstore.dev/cosign/system_config/installation/); nothing was installed"
+fi
+if [ "$verify_provenance" = 1 ] && ! command -v gh >/dev/null 2>&1; then
+    die "--verify-provenance needs the GitHub CLI (gh) on PATH; nothing was installed"
+fi
 
 if command -v curl >/dev/null 2>&1; then
     fetch() { curl --fail --location --silent --show-error --output "$2" -- "$1"; }
@@ -116,6 +161,22 @@ say "downloading frost $version ($triple)"
 fetch "$release_url/SHA256SUMS" "$staging/SHA256SUMS" ||
     die "cannot download $release_url/SHA256SUMS"
 
+if [ "$verify_signature" = 1 ]; then
+    fetch "$release_url/SHA256SUMS.sigstore.json" "$staging/SHA256SUMS.sigstore.json" ||
+        die "cannot download $release_url/SHA256SUMS.sigstore.json; release $version may predate signed releases"
+    escaped_workflow=$(printf '%s' "$signer_workflow" | sed 's/[].[^$*+?(){}|\\]/\\&/g')
+    identity="^https://github\\.com/$repository/$escaped_workflow@$signer_ref\$"
+    if ! cosign verify-blob \
+        --bundle "$staging/SHA256SUMS.sigstore.json" \
+        --certificate-identity-regexp "$identity" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        "$staging/SHA256SUMS" >"$staging/cosign.log" 2>&1; then
+        cat "$staging/cosign.log" >&2
+        die "SHA256SUMS is not signed by $repository's $signer_workflow; nothing was installed"
+    fi
+    say "SHA256SUMS signature verified ($repository $signer_workflow)"
+fi
+
 expected=$(
     awk -v want="$archive" '
         { name = $2; sub(/^[*]/, "", name) }
@@ -134,6 +195,20 @@ if [ "$actual" != "$expected" ]; then
     say "  expected $expected"
     say "  got      $actual"
     die "the download was discarded and nothing was installed"
+fi
+
+if [ "$verify_provenance" = 1 ]; then
+    provenance="frostbuild-v${version}.intoto.jsonl"
+    fetch "$release_url/$provenance" "$staging/$provenance" ||
+        die "cannot download $release_url/$provenance; release $version may predate attested releases"
+    if ! gh attestation verify "$staging/$archive" \
+        --bundle "$staging/$provenance" \
+        --repo "$repository" \
+        --signer-workflow "$repository/$signer_workflow" >"$staging/gh.log" 2>&1; then
+        cat "$staging/gh.log" >&2
+        die "$archive has no valid provenance from $repository's $signer_workflow; nothing was installed"
+    fi
+    say "build provenance verified ($repository $signer_workflow)"
 fi
 
 tar -xzf "$staging/$archive" -C "$staging" || die "cannot unpack $archive"
