@@ -1083,7 +1083,15 @@ def measure_daemon(
 
 
 def reproduce_command(args: argparse.Namespace) -> str:
-    argv = [a for a in sys.argv[1:] if not a.startswith("--out")]
+    argv: list[str] = []
+    skip = False
+    for arg in sys.argv[1:]:
+        if skip:
+            skip = False
+        elif arg == "--out":
+            skip = True
+        elif not arg.startswith("--out="):
+            argv.append(arg)
     return "python3 scripts/frost_scale.py " + " ".join(argv)
 
 

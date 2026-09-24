@@ -1,0 +1,208 @@
+{
+  "schema": "frost-scale-v1",
+  "generated_at": "2026-09-24T18:22:49+00:00",
+  "reproduce": "python3 scripts/frost_scale.py scale --frost /home/runner/work/frost-build/frost-build/target/release/frost --shape monorepo --iterations 5 --digest scale.json",
+  "frost_executable": "/home/runner/work/frost-build/frost-build/target/release/frost",
+  "frost_version": "frost 0.13.2",
+  "shape": {
+    "name": "monorepo",
+    "targets": 50000,
+    "packages": 500,
+    "fanout": 16,
+    "files_per_target": 2,
+    "generated_headers": 8,
+    "cc_sources": 2,
+    "output_dir_targets": 20,
+    "output_dir_files": 500,
+    "cross_package_deps": 2,
+    "seed": 149
+  },
+  "workspace": {
+    "targets": 55057,
+    "actions": 56057,
+    "planned_actions": 56057,
+    "source_files": 102021,
+    "source_bytes": 14362316,
+    "manifests": 501,
+    "declared_output_files": 58057,
+    "owned_output_dirs": 20,
+    "owned_output_dir_files": 10000,
+    "directories_after_build": 5321,
+    "generate_ms": 8874.77,
+    "tree_digest": "f638d2e0f67bdc42952562391125b018f05575b221ee87a154867327bd92d438"
+  },
+  "jobs": null,
+  "iterations": 5,
+  "environment_before": {
+    "captured_at": "2026-09-24T18:18:33+00:00",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "cpu_count": 4,
+    "memory_kib": 16377680,
+    "load_avg": [
+      4.34326171875,
+      1.69287109375,
+      0.62890625
+    ],
+    "cpu_governor": null,
+    "github_runner": "GitHub Actions 1000042488",
+    "github_run": "https://github.com/hjosugi/frost-build/actions/runs/36039953580"
+  },
+  "environment_after": {
+    "captured_at": "2026-09-24T18:23:06+00:00",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "cpu_count": 4,
+    "memory_kib": 16377680,
+    "load_avg": [
+      3.541015625,
+      3.2802734375,
+      1.60546875
+    ],
+    "cpu_governor": null,
+    "github_runner": "GitHub Actions 1000042488",
+    "github_run": "https://github.com/hjosugi/frost-build/actions/runs/36039953580"
+  },
+  "cold_plan_ms": {
+    "samples": [
+      2927.704
+    ],
+    "median": 2927.704,
+    "min": 2927.704,
+    "max": 2927.704,
+    "stdev": 0.0
+  },
+  "cold_plan_max_rss_kib": 335364,
+  "warm_plan_ms": {
+    "samples": [
+      616.615,
+      619.159,
+      644.584,
+      621.82,
+      615.693
+    ],
+    "median": 619.159,
+    "min": 615.693,
+    "max": 644.584,
+    "stdev": 11.984
+  },
+  "cold_build": {
+    "ms": 72555.772,
+    "max_rss_kib": 504540,
+    "executed_actions": 56057
+  },
+  "warm_noop_ms": {
+    "samples": [
+      2637.97,
+      298.905,
+      298.725,
+      298.939,
+      311.957
+    ],
+    "median": 298.939,
+    "min": 298.725,
+    "max": 2637.97,
+    "stdev": 1044.634
+  },
+  "warm_noop_max_rss_kib": 424112,
+  "leaf_change": {
+    "ms": {
+      "samples": [
+        1898.928,
+        3227.618,
+        3200.266,
+        3202.978,
+        3222.754
+      ],
+      "median": 3202.978,
+      "min": 1898.928,
+      "max": 3227.618,
+      "stdev": 587.973
+    },
+    "max_rss_kib": 478096,
+    "executed_actions": [
+      33,
+      6,
+      35,
+      19,
+      37
+    ]
+  },
+  "header_change": {
+    "ms": {
+      "samples": [
+        3285.814,
+        3340.523,
+        3328.252,
+        3399.648,
+        3294.533
+      ],
+      "median": 3328.252,
+      "min": 3285.814,
+      "max": 3399.648,
+      "stdev": 45.207
+    },
+    "executed_actions": [
+      9,
+      9,
+      48,
+      104,
+      16
+    ]
+  },
+  "daemon": {
+    "noop_ms": {
+      "samples": [
+        370.098,
+        339.061,
+        341.176,
+        327.308,
+        327.337
+      ],
+      "median": 339.061,
+      "min": 327.308,
+      "max": 370.098,
+      "stdev": 17.497
+    },
+    "leaf_change_ms": {
+      "samples": [
+        2019.119,
+        3257.484,
+        3396.994,
+        3294.618,
+        3365.117
+      ],
+      "median": 3294.618,
+      "min": 2019.119,
+      "max": 3396.994,
+      "stdev": 588.2
+    },
+    "resident": {
+      "fds": 7,
+      "rss_kib": 41544,
+      "hwm_kib": 41544,
+      "threads": 7
+    }
+  },
+  "frost_state": {
+    "total": {
+      "files": 72568,
+      "bytes": 91429941
+    },
+    "journal.bin": 30657708,
+    "hashcache.bin": 18944488,
+    "toolchain.bin": 196,
+    "graph_stores": 25425651,
+    "cas": {
+      "files": 70043,
+      "bytes": 4632418
+    }
+  },
+  "clean_build_oracle": {
+    "compared_files": 68057,
+    "mismatches": [],
+    "ok": true,
+    "clean_build_ms": 73053.959
+  },
+  "ok": true
+}

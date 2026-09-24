@@ -68,9 +68,55 @@ the error, because where a run breaks is the finding.
 
 ## Scale at the target shape
 
-The `scale` job of `quality.yml` measures the `monorepo` shape on a GitHub-hosted
-runner; its report is checked in beside the other baselines once a run on
-`main` completes.
+[`2026-09-25-issue-149-scale-monorepo.json`](../bench/baselines/2026-09-25-issue-149-scale-monorepo.json)
+is the `monorepo` shape measured by the `scale` job of `quality.yml`
+([run 36039953580](https://github.com/hjosugi/frost-build/actions/runs/36039953580))
+on a GitHub-hosted `ubuntu-latest` runner: 4 CPUs, 16 GiB, load average 4.3
+at the start, a release build of commit `9657e8c`, default `-j` (4). Five
+samples per scenario unless stated; medians, with every raw sample in the
+JSON.
+
+| Workspace | |
+|---|---:|
+| targets (50,000 leaves plus aggregators, header genrules, libraries, trees) | 55,057 |
+| actions | 56,057 |
+| source files / bytes | 102,021 / 14.4 MB |
+| manifests | 501 |
+| declared output files / owned-tree files | 58,057 / 10,000 |
+| directories after a build | 5,321 |
+
+| Scenario | Median | Peak RSS | Executed actions |
+|---|---:|---:|---|
+| cold plan (no `.frost/`, 1 sample) | 2.93 s | 328 MiB | — |
+| warm plan | 0.62 s | — | — |
+| cold build (1 sample) | 72.6 s | 493 MiB | 56,057 |
+| warm no-op | 0.30 s | 414 MiB | 0 |
+| one leaf file changed | 3.20 s | 467 MiB | 6–37, each equal to the model |
+| one generated-header input changed | 3.33 s | — | 9–104, each equal to the model |
+| daemon no-op (`build --daemon`) | 0.34 s | — | 0 |
+| daemon one leaf changed | 3.29 s | — | equal to the model |
+| resident daemon | — | 41 MiB, 7 fds | — |
+
+After the run `.frost/` held 91.4 MB in 72,568 files: a 30.7 MB journal
+(just under the 32 MiB compaction threshold), an 18.9 MB hash cache, a 25.4 MB
+graph store and 4.6 MB of CAS objects. The final comparison against a
+from-scratch build of the same sources checked 68,057 files and found no
+difference.
+
+What this says, without claiming more:
+
+- Planning scales with the workspace: 2.9 s to discover 501 manifests and
+  compile 56k actions cold, 0.6 s to load the stored graph warm.
+- A no-op costs 0.3 s at this size, standalone or through the daemon. It is
+  dominated by proving 160k files unchanged, not by the graph.
+- A one-file change costs about 3 s regardless of how few actions it reruns
+  (6 to 37 here). That fixed cost is the full-graph check a changed workspace
+  pays — loading the graph and journal and establishing which actions are
+  still current — and it is the dominant cost of an incremental build at
+  this scale; #152 is where it is being worked on.
+- Peak RSS of a build is about 0.5 GiB at 56k actions, roughly 9 KiB per
+  action; the resident daemon itself stays small because each build runs in
+  a child process.
 
 ## Soak
 
@@ -193,7 +239,9 @@ test that fails without its fix.
   `fs.inotify.max_user_watches` allows, `frost watch` and `frost daemon serve`
   exit at startup with `OS file watch limit reached`; `build --daemon` falls
   back to an in-process build and warns on every invocation. The `monorepo`
-  scale report records how many directories a built workspace has. Raise the limit
+  shape has 5,321 directories once built: inside current defaults, but two
+  such workspaces watched at once would exceed the 8,192 that older kernels
+  allow per user. Raise the limit
   (`sysctl fs.inotify.max_user_watches=…`) or do without the daemon; there is no
   polling fallback.
 
@@ -212,8 +260,9 @@ test that fails without its fix.
   cap, not the workspace, that decides how much space Frost uses.
 
 - **Memory is proportional to the graph.** Planning holds the whole compiled
-  graph, and the daemon keeps it resident; the scale report records peak RSS
-  for planning, building and the resident daemon.
+  graph: about 0.5 GiB peak at 56k actions (roughly 9 KiB per action), so a
+  workspace ten times larger needs about 5 GiB for a build. The daemon runs
+  each build in a child process and itself stays at about 40 MiB.
 
 - **Cold builds of many tiny actions are process-spawn bound.** Each genrule
   is at least one shell plus its commands; at the target shape the cold build
@@ -231,7 +280,7 @@ test that fails without its fix.
 ```bash
 cargo build --release --locked -p frostbuild-cli
 
-# scale: the target shape, five samples per scenario (≈ 20 min on a 4-core CI runner)
+# scale: the target shape, five samples per scenario (≈ 10 min on a 4-core CI runner)
 python3 scripts/frost_scale.py scale --frost target/release/frost \
   --shape monorepo --iterations 5 --digest --out scale.json
 
