@@ -55,6 +55,7 @@ entrance — why Frost is built the way it is.
 | [25_npm_workspace_import.md](25_npm_workspace_import.md) | npm workspace gates and explicit Vite build discovery |
 | [26_deltacdc_remote_calibration.md](26_deltacdc_remote_calibration.md) | fresh corpus, RPC and CPU/bandwidth decision for remote DeltaCDC |
 | [27_npm_production_adoption.md](27_npm_production_adoption.md) | real npm/Vite production adoption certificate and boundary policy |
+| [31_persistent_workers.md](31_persistent_workers.md) | measured javac/tsc persistent-worker study, worker hermeticity hazards, and the defer decision for workers and dynamic execution |
 | [32_language_expansion.md](32_language_expansion.md) | Kotlin / C# / Swift adapter comparison, the C# generated-boundary prototype, and the next-language decision |
 
 ## Comparisons and measurement
