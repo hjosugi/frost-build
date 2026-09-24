@@ -22,6 +22,20 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   workflow runs the recovery tests on every push (with a tmpfs for the real
   full-disk case) and the scale and soak runs nightly.
 
+- A measured decision on persistent workers and dynamic execution (#145),
+  in docs/31. `scripts/bench_persistent_worker.py` compares cold javac and tsc
+  with minimal persistent workers after a one-file edit, in rotating order,
+  and requires every worker output to be byte-identical to the cold compile.
+  On a 60-unit module a warm javac worker spent 6.2x less CPU than cold
+  `javac`; a JavaScript `tsc` 6 worker 1.2x (1.9x with parse reuse), while
+  native `tsc` 7 spent 5.4x less with no worker at all. Two replays show
+  worker state outliving its inputs: a shared javac file manager compiles a
+  stale inlined constant after a class-path jar is republished by rename, and
+  a stat-keyed TypeScript cache emits stale JavaScript after a same-stat edit;
+  a cold rerun catches both. Workers stay deferred with their design fixed
+  (Bazel's protocol, worker keys from the action key, digest-only reuse, cold
+  `--check-determinism` reruns); dynamic execution stays v2.
+
 - Signed, attested and inventoried releases. A new `integrity` job in the
   release workflow writes a CycloneDX SBOM per archive, signs every archive and
   `SHA256SUMS` with keyless cosign, attaches GitHub SLSA build provenance for
