@@ -62,6 +62,22 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   docs/09 records the rules, the per-OS strategy order and what each CI host
   verifies.
 
+### Fixed
+
+- `frost import-ninja` now implements the subset docs/06 always described,
+  and refuses the rest instead of dropping it. Top-level variables were left
+  unexpanded — `cc $cflags` ran as `cc` with the shell's empty `$cflags` — and
+  `$in` on an edge whose inputs were all produced by other edges expanded to
+  nothing, so an imported link command linked no objects. Variables, escapes
+  and continuations are now evaluated; `$in`/`$out` become the edge's own
+  paths, quoted as Ninja quotes them; implicit, order-only and `phony`
+  references resolve to files and dependencies; and `default` becomes
+  `default_targets`. Rule `depfile`/`deps`, per-edge bindings, `include`,
+  `subninja`, `pool`, validations and paths outside the directory are refused
+  with the file and line. The importer no longer overwrites an existing
+  manifest, and must write its manifest next to the `build.ninja` whose paths
+  it contains.
+
 ## [0.13.2] - 2026-09-22
 
 ### Changed
@@ -280,7 +296,6 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   option of *some* subcommand and is skipped where it does not apply. A key no
   subcommand accepts anywhere is still a typo and still refused with file, line
   and a suggestion.
-
 
 - `frost explain TARGET --platform NAME` names the platform it is describing.
   It reported only the profile, so `explain app` and
