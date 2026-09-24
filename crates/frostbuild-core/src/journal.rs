@@ -140,20 +140,24 @@ impl Journal {
                 })
                 .unwrap_or(false);
             let file = if appendable {
-                let file = std::fs::OpenOptions::new().append(true).open(&path)?;
                 // Records appended after an unreadable tail are unreadable
                 // too: the decoder stops at the first frame it cannot parse,
                 // so every build would redo the work it just recorded,
                 // forever. Cut the tail back to the last whole record first.
-                let len = file.metadata()?.len();
+                let len = std::fs::metadata(&path)?.len();
                 let valid_len = match self.loaded {
                     Some(extent) if extent.file_len == len => extent.valid_len,
                     _ => decode_prefix(&std::fs::read(&path)?).1 as u64,
                 };
                 if valid_len < len {
-                    file.set_len(valid_len)?;
+                    // A separate handle: Windows refuses to truncate through
+                    // one opened for appending only.
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)?
+                        .set_len(valid_len)?;
                 }
-                file
+                std::fs::OpenOptions::new().append(true).open(&path)?
             } else {
                 let mut file = std::fs::File::create(&path)?;
                 file.write_all(MAGIC)?;
