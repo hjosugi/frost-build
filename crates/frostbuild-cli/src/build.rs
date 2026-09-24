@@ -15,6 +15,7 @@ use anyhow::Result;
 use frostbuild_core::graph::BuildGraph;
 use frostbuild_core::manifest::Manifest;
 use frostbuild_core::manifest::TargetKind;
+use frostbuild_core::phases;
 use frostbuild_exec::toolchain_closure_fingerprint_cached_instrumented;
 use frostbuild_exec::try_fast_noop;
 use frostbuild_exec::BuildOptions;
@@ -399,6 +400,7 @@ fn run_build_via_daemon(
             _ => return Ok(None),
         }
     }
+    phases::lap("client.prepare");
     let request_message = Request::Run {
         version: PROTOCOL_VERSION,
         program: std::env::current_exe()?,
@@ -454,8 +456,10 @@ fn run_build_via_daemon(
     } else {
         response
     };
+    phases::lap("client.daemon_request");
     print!("{}", response.stdout);
     eprint!("{}", response.stderr);
+    phases::flush("client", "client.output");
     Ok(Some(response.code))
 }
 
@@ -580,6 +584,7 @@ fn write_fast_noop_events(
 }
 
 pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result<i32> {
+    phases::lap("cli.startup");
     for (name, value) in [
         ("--local-cpu-resources", request.local_cpu_resources),
         ("--local-test-jobs", request.local_test_jobs),
@@ -629,7 +634,25 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     }
     if enable_fast_noop {
         let started = Instant::now();
-        if let Some(hit) = try_fast_noop(root, &request.profile, &request.platform)? {
+        // A daemon that just found this exact certificate stale says so; the
+        // answer would be the same, so do not pay for it twice.
+        let known_stale = std::env::var(frostbuild_exec::STALE_CERTIFICATE_ENV)
+            .ok()
+            .is_some_and(|stale| {
+                frostbuild_exec::fast_noop_certificate_digest(
+                    root,
+                    &request.profile,
+                    &request.platform,
+                )
+                .is_some_and(|current| current == stale)
+            });
+        let hit = if known_stale {
+            None
+        } else {
+            try_fast_noop(root, &request.profile, &request.platform)?
+        };
+        phases::lap("build.certificate_check");
+        if let Some(hit) = hit {
             if let Some(path) = &request.build_event_json {
                 write_fast_noop_events(path, &request, hit, started)?;
             }
@@ -645,11 +668,13 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
                     started.elapsed().as_millis(),
                 )
             );
+            phases::flush("build", "build.summary");
             return Ok(0);
         }
     }
     let mut graph =
         load_graph_instrumented(root, &request.profile, &request.platform, request.coverage)?;
+    phases::lap("build.graph_load");
     // In memory only. The stored graph stays the manifest's, so a run with
     // `--test-filter parse` cannot leave a filtered graph behind for the next
     // one; and because argv and env are already action-key material, the
@@ -658,6 +683,7 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     graph.apply_test_options(&request.test_options);
     let graph = graph;
     let toolchain = toolchain_fingerprint(root, &graph)?;
+    phases::lap("build.toolchain");
     let mut requested = if request.test_mode && (request.all || request.targets.is_empty()) {
         graph
             .targets
@@ -718,6 +744,7 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         }
     }
     let closure = graph.action_closure(&requested)?;
+    phases::lap("build.closure");
     // A misspelled endpoint is a configuration error worth reporting before the
     // build; an endpoint that is merely unreachable is not, and is handled per
     // request by falling back to local execution.
@@ -782,6 +809,7 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
             EstimatorArg::Learned => frostbuild_exec::Estimator::Learned,
         },
         progress: Some(progress),
+        report_cache_hits: renderer.reads_cache_hits(),
         remote: remote.clone(),
         timeout: request.timeout.map(std::time::Duration::from_secs),
         runs_per_test: request.runs_per_test,
@@ -789,10 +817,14 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         ..BuildOptions::default()
     };
 
+    phases::lap("build.prepare");
     let started = Instant::now();
     let total = closure.len();
-    let report = Engine::new(root, &graph, closure, toolchain, opts).run();
+    let engine = Engine::new(root, &graph, closure, toolchain, opts);
+    phases::lap("build.engine_load");
+    let report = engine.run();
     renderer.finish();
+    phases::lap("build.render_drain");
     let report = report?;
     let elapsed = started.elapsed().as_millis();
 
@@ -1020,6 +1052,10 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         println!("frost: report {}", destination.display());
     }
 
+    phases::count("actions.executed", report.executed() as u64);
+    phases::count("actions.cached", report.cached() as u64);
+    phases::count("actions.failed", failed as u64);
+    phases::flush("build", "build.summary");
     Ok(if frostbuild_exec::was_cancelled() {
         130
     } else if report.success() {

@@ -118,7 +118,7 @@ not always detectable later.
 |---|---|---|
 | `.frost/graph-<config>.bin` | `FRSTGR01` + `VERSION`, and a BLAKE3 digest of the payload | recompile the graph from the manifest |
 | `.frost/journal.bin` | `FRSTJR02`, and a checksum per record | decode the validated prefix; a foreign magic yields an empty journal |
-| `.frost/hashcache.bin` | `FRSTHC02` | start from an empty cache and re-hash |
+| `.frost/hashcache.bin` | `FRSTHC03` | start from an empty cache and re-hash; a torn or corrupt appended frame keeps the prefix before it, and the next save rewrites the file whole |
 | `.frost/cas/manifests/*` | chunk-manifest version | ignore the manifest; restore from the whole blob or rebuild |
 | no-op certificate | `FRSTNO03` | miss, and take the full check path |
 

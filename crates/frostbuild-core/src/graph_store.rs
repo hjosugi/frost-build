@@ -20,16 +20,23 @@ const MAGIC: &[u8; 8] = b"FRSTGR01";
 // payload: the sources stamp proves the *definition* is unchanged, not that
 // the stored bytes are, and a flipped bit in a command string or output path
 // otherwise decodes into a different, plausible graph that the warm path
-// trusts until a manifest changes.
-const VERSION: u32 = 13;
+// trusts until a manifest changes. Version 14 stamps directories by their
+// listing alone (with symlink targets), no longer by modification time.
+const VERSION: u32 = 14;
 
 /// Evidence that the definition inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every
-/// contributing manifest/fetch-state file plus a stat stamp of every workspace directory.
-/// Directory mtimes change whenever entries are added/removed/renamed, so an
-/// equal stamp implies identical package discovery and glob expansion; file
-/// content edits cannot alter either. This makes the warm path sound while
-/// skipping TOML parsing entirely.
+/// contributing manifest/fetch-state file plus the listing of every workspace
+/// directory. Package discovery and glob expansion read names, kinds and
+/// where symlinks point — nothing else — so an equal stamp implies identical
+/// discovery and expansion; file content edits cannot alter either. This makes
+/// the warm path sound while skipping TOML parsing entirely.
+///
+/// The listing is the evidence rather than the directory's modification
+/// time, which also moves when nothing a glob can see did: an editor saving by
+/// rename, a tool creating and deleting a temporary file, Ninja compacting
+/// `.ninja_log`. Each of those used to recompile a 10k-target manifest on the
+/// next build (#152).
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SourcesStamp {
     /// (workspace-relative path, BLAKE3 of bytes) per definition file.
@@ -41,10 +48,11 @@ struct SourcesStamp {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct DirStamp {
     path: String,
-    mtime_ns: i128,
-    /// BLAKE3 of sorted native entry names plus their filesystem kind.
-    /// This is required in addition to mtime: Windows can expose the same
-    /// directory timestamp immediately before and after an entry mutation.
+    /// BLAKE3 of sorted native entry names plus their filesystem kind, and
+    /// each symlink's target. Content, not timestamps: Windows can expose the
+    /// same directory timestamp immediately before and after an entry
+    /// mutation, and every platform moves it for mutations that leave the
+    /// listing as it was.
     entries_hash: [u8; 32],
 }
 
@@ -223,16 +231,26 @@ fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<DirStamp>) -> Result<()> {
         } else {
             b'o'
         };
-        entries.push((entry.file_name(), kind));
+        // A retargeted symlink keeps its name and kind; its target is what
+        // a glob that follows it would see change.
+        let target = if ty.is_symlink() {
+            std::fs::read_link(entry.path()).ok()
+        } else {
+            None
+        };
+        entries.push((entry.file_name(), kind, target));
         if ty.is_dir() && !ty.is_symlink() {
             child_dirs.push(entry.path());
         }
     }
     entries.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
     let mut hasher = blake3::Hasher::new();
-    for (name, kind) in entries {
+    for (name, kind, target) in entries {
         hash_os_str(&mut hasher, &name);
         hasher.update(&[kind]);
+        if let Some(target) = target {
+            hash_os_str(&mut hasher, target.as_os_str());
+        }
     }
     let path = dir
         .strip_prefix(root)
@@ -241,7 +259,6 @@ fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<DirStamp>) -> Result<()> {
         .replace('\\', "/");
     out.push(DirStamp {
         path,
-        mtime_ns: mtime_ns(&std::fs::metadata(dir)?),
         entries_hash: *hasher.finalize().as_bytes(),
     });
     child_dirs.sort();
@@ -274,21 +291,6 @@ fn hash_os_str(hasher: &mut blake3::Hasher, value: &OsStr) {
     let value = value.to_string_lossy();
     hasher.update(&(value.len() as u64).to_le_bytes());
     hasher.update(value.as_bytes());
-}
-
-#[cfg(unix)]
-fn mtime_ns(meta: &std::fs::Metadata) -> i128 {
-    use std::os::unix::fs::MetadataExt;
-    i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec())
-}
-
-#[cfg(not(unix))]
-fn mtime_ns(meta: &std::fs::Metadata) -> i128 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i128)
-        .unwrap_or(0)
 }
 
 struct ParsedStore<'a> {
@@ -355,10 +357,13 @@ fn load_graph(
         anyhow::ensure!(parsed.fingerprint == fingerprint, "stale graph store");
     }
     if let Some(root) = stamp_root {
-        ensure_sources_current(root, &parsed.stamp)?;
+        crate::phases::time("graph.sources_stamp", || {
+            ensure_sources_current(root, &parsed.stamp)
+        })?;
     }
     ensure_payload_intact(&parsed)?;
-    postcard::from_bytes(parsed.payload).context("corrupt graph store")
+    crate::phases::time("graph.decode", || postcard::from_bytes(parsed.payload))
+        .context("corrupt graph store")
 }
 
 fn validate_cached_sources(path: &Path, root: &Path) -> Result<[u8; 32]> {
@@ -542,9 +547,67 @@ mod tests {
         GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
         assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_some());
 
-        // Adding a file changes the parent dir mtime → warm miss (globs and
-        // package discovery may see a different tree).
+        // Adding a file changes the listing → warm miss (globs and package
+        // discovery may see a different tree).
         std::fs::write(root.join("src/new.c"), "int x;").unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_directory_touched_without_a_listing_change_stays_warm() {
+        let root = workspace("touched");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.c"), "int a;").unwrap();
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            "[target.a]\nkind='cc_binary'\nsrcs=['src/*.c']\n",
+        )
+        .unwrap();
+        let manifest = Manifest::load(&root).unwrap();
+        GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+
+        // Save-by-rename and a temporary file that comes and goes both move
+        // the directory's mtime and leave the listing as it was.
+        std::fs::write(root.join("src/a.c.tmp"), "int a = 1;").unwrap();
+        std::fs::rename(root.join("src/a.c.tmp"), root.join("src/a.c")).unwrap();
+        std::fs::write(root.join("scratch"), "").unwrap();
+        std::fs::remove_file(root.join("scratch")).unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_some());
+
+        // Removing a file a glob matched is a different tree.
+        std::fs::write(root.join("src/b.c"), "int b;").unwrap();
+        GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_some());
+        std::fs::remove_file(root.join("src/b.c")).unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none());
+        GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+
+        // A kind change under the same name is a different tree.
+        std::fs::remove_file(root.join("src/a.c")).unwrap();
+        std::fs::create_dir(root.join("src/a.c")).unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retargeted_symlink_is_a_different_tree() {
+        let root = workspace("symlink");
+        std::fs::create_dir_all(root.join("one")).unwrap();
+        std::fs::create_dir_all(root.join("two")).unwrap();
+        std::os::unix::fs::symlink("one", root.join("link")).unwrap();
+        std::fs::write(
+            root.join(MANIFEST_FILE),
+            "[target.a]\nkind='cc_binary'\nsrcs=['a.c']\n",
+        )
+        .unwrap();
+        let manifest = Manifest::load(&root).unwrap();
+        GraphStore::load_or_compile(&root, &manifest, "debug").unwrap();
+        assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_some());
+
+        std::fs::remove_file(root.join("link")).unwrap();
+        std::os::unix::fs::symlink("two", root.join("link")).unwrap();
         assert!(GraphStore::load_cached(&root, "debug", HOST_PLATFORM).is_none());
         std::fs::remove_dir_all(root).ok();
     }

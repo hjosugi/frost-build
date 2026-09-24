@@ -15,9 +15,17 @@ use frostbuild_exec::{progress_channel, ProgressEvent, ProgressSender, ProgressS
 
 pub struct RendererHandle {
     thread: Option<JoinHandle<()>>,
+    reads_cache_hits: bool,
 }
 
 impl RendererHandle {
+    /// Whether this renderer does anything with a cache hit: the live display
+    /// counts them and an event log records them. The plain renderer prints
+    /// only what ran or failed.
+    pub fn reads_cache_hits(&self) -> bool {
+        self.reads_cache_hits
+    }
+
     pub fn finish(mut self) {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -43,6 +51,7 @@ pub fn start(
     let (sender, receiver) = progress_channel();
     let live = !no_tui && std::env::var_os("CI").is_none() && io::stdout().is_terminal();
     let interactive_input = io::stdin().is_terminal();
+    let reads_cache_hits = live || events.is_some();
     let thread = thread::spawn(move || {
         if live {
             run_live(receiver, interactive_input, events);
@@ -54,6 +63,7 @@ pub fn start(
         sender,
         RendererHandle {
             thread: Some(thread),
+            reads_cache_hits,
         },
     )
 }

@@ -116,6 +116,29 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Changed
 
+- A one-file change in a large graph no longer walks every cached action
+  through the scheduler (#152). The cache preflight now certifies each action
+  it can prove cached — journal entry for the current inputs, every input and
+  output still at its recorded digest, recomputed key equal to the recorded
+  one, and every in-closure producer itself certified — in two parallel
+  passes, and schedules only the rest; anything it cannot prove is decided by
+  the scheduler exactly as before, including early cutoff. On the 10k linear
+  graph with the last leaf changed, the chain walk went from 232 ms to 7 ms.
+  Around it: the daemon remembers a certificate it has found stale (by the
+  file's stamp) and tells its child build so, instead of both validating it
+  on every edit; the graph store's warm-path stamp hashes each directory's
+  listing (names, kinds, symlink targets) instead of its modification time,
+  so a temporary file or save-by-rename no longer recompiles a 10k-target
+  manifest; the hash cache appends a changed entry instead of rewriting
+  twenty thousand (`FRSTHC03`), and the journal decodes its records in
+  parallel. On the same host, back to back, the daemon leaf change went from
+  671 ms to 208 ms against Ninja's 103 ms (median of 31), with the
+  no-op gate intact. `FROST_PHASE_TIMINGS=<file>` makes the client, daemon and
+  child build append their phase laps to one file, and `frost-bench-rs
+  daemon-graph` now attributes every leaf-change sample by phase, proves from
+  output timestamps that exactly one action ran, and is checked by
+  `frost-bench-rs check-daemon-graph` in a nightly Performance job.
+
 - Release archives are packed by `scripts/package_release.py` on all three
   platforms — sorted entries, the release commit's timestamp, uid/gid 0, fixed
   modes and a gzip header without a timestamp — instead of by each runner's

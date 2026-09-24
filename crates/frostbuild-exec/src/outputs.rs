@@ -85,9 +85,15 @@ impl<'a> Engine<'a> {
         Ok(None)
     }
 
-    pub(crate) fn prepare_output_dirs(&self) -> Result<()> {
+    /// Create the parent of every output an action may write. Certified
+    /// actions (`skip`) will not run, and their outputs were just found on
+    /// disk, so their directories are not revisited.
+    pub(crate) fn prepare_output_dirs(&self, skip: &[bool]) -> Result<()> {
         let mut directories = BTreeSet::new();
-        for &action_id in &self.closure {
+        for (local, &action_id) in self.closure.iter().enumerate() {
+            if skip.get(local).copied().unwrap_or(false) {
+                continue;
+            }
             let action = &self.graph.actions[action_id];
             for &out in &action.outputs {
                 let path = self.root.join(&self.graph.files[out].path);

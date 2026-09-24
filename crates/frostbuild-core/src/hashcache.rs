@@ -51,25 +51,146 @@ pub struct HashCache {
     /// than twice. A build is a single point in time: a path is re-stat'd
     /// only after frost itself writes it, which clears the entry.
     settled: RwLock<HashMap<String, String>>,
+    /// The file `snapshot` was read from, so a save can append this build's
+    /// changes to it instead of rewriting every entry.
+    loaded: Option<LoadedFile>,
+}
+
+/// What `load` saw on disk. A save appends only to the very file it loaded
+/// (same inode, same length): anything else — another build rewrote or
+/// extended it, or it did not decode to the end — is replaced wholesale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoadedFile {
+    len: u64,
+    ino: u64,
+    /// Decoded entries that a later frame superseded: the file's garbage.
+    superseded: usize,
+    /// Every frame decoded; a torn or corrupt tail must not be appended to.
+    complete: bool,
+}
+
+/// Entries per frame when the cache is written whole. Frames decode
+/// independently, so a 20k-entry cache loads on several threads.
+const FRAME_ENTRIES: usize = 4096;
+
+/// One frame: a length prefix and a postcard list of `(path, entry)`. An entry
+/// with an empty digest removes its path.
+fn push_frame<'a>(
+    bytes: &mut Vec<u8>,
+    entries: impl Iterator<Item = (&'a String, &'a Entry)>,
+) -> Result<()> {
+    let entries: Vec<(&String, &Entry)> = entries.collect();
+    let payload = postcard::to_allocvec(&entries)?;
+    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    Ok(())
+}
+
+/// Decode a cache file: every complete frame in order, later entries
+/// replacing earlier ones. Stops at the first frame that is torn or does not
+/// decode, like the journal, and says so.
+fn decode(bytes: &[u8]) -> Option<(HashMap<String, Entry>, usize, bool)> {
+    if bytes.len() < CACHE_MAGIC.len() || &bytes[..CACHE_MAGIC.len()] != CACHE_MAGIC {
+        return None;
+    }
+    let mut frames = Vec::new();
+    let mut cursor = CACHE_MAGIC.len();
+    let mut complete = true;
+    while cursor < bytes.len() {
+        let Some(prefix) = bytes.get(cursor..cursor + 4) else {
+            complete = false;
+            break;
+        };
+        let len = u32::from_le_bytes(prefix.try_into().unwrap()) as usize;
+        let start = cursor + 4;
+        let Some(frame) = start.checked_add(len).and_then(|end| bytes.get(start..end)) else {
+            complete = false;
+            break;
+        };
+        frames.push(frame);
+        cursor = start + len;
+    }
+    let decoded: Vec<Option<Vec<(String, Entry)>>> = frames
+        .par_iter()
+        .map(|frame| postcard::from_bytes(frame).ok())
+        .collect();
+    let mut snapshot = HashMap::new();
+    let mut total = 0usize;
+    for frame in decoded {
+        let Some(entries) = frame else {
+            complete = false;
+            break;
+        };
+        total += entries.len();
+        for (path, entry) in entries {
+            if entry.hash.is_empty() {
+                snapshot.remove(&path);
+            } else {
+                snapshot.insert(path, entry);
+            }
+        }
+    }
+    let superseded = total.saturating_sub(snapshot.len());
+    Some((snapshot, superseded, complete))
+}
+
+#[cfg(unix)]
+fn inode(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.ino()
+}
+
+#[cfg(not(unix))]
+fn inode(_metadata: &std::fs::Metadata) -> u64 {
+    0
 }
 
 pub const CACHE_REL_PATH: &str = ".frost/hashcache.bin";
 /// Pre-0.2 JSON cache location, removed opportunistically on save.
 pub const LEGACY_CACHE_REL_PATH: &str = ".frost/hashcache.json";
-const CACHE_MAGIC: &[u8; 8] = b"FRSTHC02";
+/// `03` frames the entries so that a build which changed a few files appends
+/// those few instead of rewriting the whole cache. An `02` cache is a foreign
+/// version and starts empty (one re-hash).
+const CACHE_MAGIC: &[u8; 8] = b"FRSTHC03";
 
 impl HashCache {
     pub fn load(workspace_root: &Path) -> Self {
         let path = workspace_root.join(CACHE_REL_PATH);
-        let snapshot = std::fs::read(&path)
-            .ok()
-            .filter(|bytes| bytes.len() >= 8 && &bytes[..8] == CACHE_MAGIC)
-            .and_then(|bytes| postcard::from_bytes(&bytes[8..]).ok())
-            .unwrap_or_default();
-        Self {
-            snapshot,
-            ..Self::default()
-        }
+        crate::phases::time("hashcache.load", || {
+            let Ok(mut file) = std::fs::File::open(&path) else {
+                return Self::default();
+            };
+            let Ok(metadata) = file.metadata() else {
+                return Self::default();
+            };
+            let mut bytes = Vec::with_capacity(metadata.len() as usize);
+            if file.read_to_end(&mut bytes).is_err() {
+                return Self::default();
+            }
+            let Some((snapshot, superseded, complete)) = decode(&bytes) else {
+                return Self::default();
+            };
+            Self {
+                snapshot,
+                loaded: Some(LoadedFile {
+                    len: bytes.len() as u64,
+                    ino: inode(&metadata),
+                    superseded,
+                    complete,
+                }),
+                ..Self::default()
+            }
+        })
+    }
+
+    #[cfg(test)]
+    fn snapshot_entry(&self, rel: &str) -> Entry {
+        self.updates
+            .read()
+            .unwrap()
+            .get(rel)
+            .cloned()
+            .unwrap_or_else(|| self.snapshot[rel].clone())
     }
 
     /// Cached entry for `rel`, newest first. Lock-free until this build has
@@ -121,26 +242,66 @@ impl HashCache {
         if !self.changed.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let mut merged = self.snapshot.clone();
-        for (path, entry) in self.updates.read().unwrap().iter() {
-            if entry.hash.is_empty() {
-                merged.remove(path);
-            } else {
-                merged.insert(path.clone(), entry.clone());
-            }
-        }
+        let updates = self.updates.read().unwrap();
         let path = workspace_root.join(CACHE_REL_PATH);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+
+        // Append when the file is exactly the one this build loaded and the
+        // garbage appending leaves behind stays under half the live entries.
+        // A build that changed one file then writes two entries, not twenty
+        // thousand.
+        let unchanged_on_disk = self.loaded.is_some_and(|loaded| {
+            loaded.complete
+                && std::fs::metadata(&path)
+                    .is_ok_and(|now| now.len() == loaded.len && inode(&now) == loaded.ino)
+        });
+        let superseded = self.loaded.map_or(0, |loaded| loaded.superseded);
+        if unchanged_on_disk && superseded + updates.len() <= self.snapshot.len() / 2 {
+            let mut frame = Vec::new();
+            crate::phases::time("hashcache.encode", || {
+                push_frame(&mut frame, updates.iter())
+            })?;
+            drop(updates);
+            // One write of one buffer on an append-mode file. A crash can
+            // tear only this frame, which the next load drops (and then
+            // rewrites the file whole).
+            return crate::phases::time("hashcache.write", || -> Result<()> {
+                use std::io::Write;
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)?
+                    .write_all(&frame)
+                    .with_context(|| format!("failed to append to {}", path.display()))
+            });
+        }
+
         let tmp = path.with_extension("bin.tmp");
         let mut bytes = CACHE_MAGIC.to_vec();
-        bytes.extend(postcard::to_allocvec(&merged)?);
-        std::fs::write(&tmp, bytes)?;
-        std::fs::rename(&tmp, &path)
-            .with_context(|| format!("failed to persist {}", path.display()))?;
-        let _ = std::fs::remove_file(workspace_root.join(LEGACY_CACHE_REL_PATH));
-        Ok(())
+        // Encoded straight from the two halves, never cloning the snapshot to
+        // merge into: that was twenty thousand string copies on a 10k-target
+        // graph.
+        crate::phases::time("hashcache.encode", || -> Result<()> {
+            let live = self
+                .snapshot
+                .iter()
+                .filter(|(path, _)| !updates.contains_key(*path))
+                .chain(updates.iter().filter(|(_, entry)| !entry.hash.is_empty()));
+            let mut live = live.peekable();
+            while live.peek().is_some() {
+                push_frame(&mut bytes, live.by_ref().take(FRAME_ENTRIES))?;
+            }
+            Ok(())
+        })?;
+        drop(updates);
+        crate::phases::time("hashcache.write", || -> Result<()> {
+            std::fs::write(&tmp, bytes)?;
+            std::fs::rename(&tmp, &path)
+                .with_context(|| format!("failed to persist {}", path.display()))?;
+            let _ = std::fs::remove_file(workspace_root.join(LEGACY_CACHE_REL_PATH));
+            Ok(())
+        })
     }
 
     /// Digest for `rel` (workspace-relative, or absolute e.g. a system
@@ -238,6 +399,20 @@ impl HashCache {
     /// is checked exactly once, stat calls run in parallel, and only entries
     /// whose stat identity changed are re-hashed and written back.
     pub fn matches_many(&self, workspace_root: &Path, expected: &[(&str, &str)]) -> Result<bool> {
+        Ok(self
+            .matches_each(workspace_root, expected)?
+            .into_iter()
+            .all(|matched| matched))
+    }
+
+    /// As [`Self::matches_many`], with one verdict per expectation, so a
+    /// build in which one file changed can still certify every action that
+    /// does not read it.
+    pub fn matches_each(
+        &self,
+        workspace_root: &Path,
+        expected: &[(&str, &str)],
+    ) -> Result<Vec<bool>> {
         let checked: Result<Vec<_>> = expected
             .par_iter()
             .map(|&(rel, digest)| {
@@ -263,14 +438,15 @@ impl HashCache {
             })
             .collect();
 
-        let mut matches = true;
-        for (matched, update) in checked? {
-            matches &= matched;
+        let checked = checked?;
+        let mut verdicts = Vec::with_capacity(checked.len());
+        for (matched, update) in checked {
+            verdicts.push(matched);
             if let Some((rel, entry)) = update {
                 self.store(&rel, entry);
             }
         }
-        Ok(matches)
+        Ok(verdicts)
     }
 
     /// Drop the cached stat for a path we just (re)wrote, forcing a re-hash.
@@ -452,6 +628,126 @@ mod tests {
         let reloaded = HashCache::load(&dir);
         assert_eq!(reloaded.digest(&dir, "a.txt").unwrap(), h);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_save_applies_updates_and_removals_to_the_loaded_snapshot() {
+        let dir =
+            std::env::temp_dir().join(format!("frost-hashcache-merge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["keep", "change", "remove"] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        let first = HashCache::load(&dir);
+        for name in ["keep", "change", "remove"] {
+            first.digest(&dir, name).unwrap();
+        }
+        first.save(&dir).unwrap();
+
+        // The next build rewrites one file, loses another and adds a third.
+        std::fs::write(dir.join("change"), "changed contents").unwrap();
+        std::fs::remove_file(dir.join("remove")).unwrap();
+        std::fs::write(dir.join("new"), "new").unwrap();
+        let second = HashCache::load(&dir);
+        for name in ["keep", "change", "remove", "new"] {
+            second.digest(&dir, name).unwrap();
+        }
+        second.save(&dir).unwrap();
+
+        let reloaded = HashCache::load(&dir);
+        let mut paths: Vec<&str> = reloaded.snapshot.keys().map(String::as_str).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, ["change", "keep", "new"]);
+        assert_eq!(
+            reloaded.snapshot["change"].hash,
+            hash_file(&dir.join("change")).unwrap()
+        );
+        assert_eq!(reloaded.snapshot["keep"], first.snapshot_entry("keep"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_small_change_is_appended_and_a_torn_tail_forces_a_rewrite() {
+        let dir =
+            std::env::temp_dir().join(format!("frost-hashcache-append-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let names: Vec<String> = (0..(FRAME_ENTRIES + 10)).map(|i| format!("f{i}")).collect();
+        for name in &names {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        let first = HashCache::load(&dir);
+        first.digest_many(&dir, &names).unwrap();
+        first.save(&dir).unwrap();
+        let cache = dir.join(CACHE_REL_PATH);
+        let whole = std::fs::metadata(&cache).unwrap().len();
+
+        // One file changes: the save appends one small frame.
+        std::fs::write(dir.join("f3"), "a different length").unwrap();
+        let second = HashCache::load(&dir);
+        assert_eq!(second.snapshot.len(), names.len(), "all frames decoded");
+        second.digest(&dir, "f3").unwrap();
+        second.save(&dir).unwrap();
+        let appended = std::fs::metadata(&cache).unwrap().len();
+        assert!(
+            appended > whole && appended - whole < 200,
+            "{whole} -> {appended}"
+        );
+        let third = HashCache::load(&dir);
+        assert_eq!(third.snapshot.len(), names.len());
+        assert_eq!(
+            third.snapshot["f3"].hash,
+            hash_file(&dir.join("f3")).unwrap(),
+            "the appended entry replaces the chunked one"
+        );
+        assert_eq!(third.loaded.unwrap().superseded, 1);
+
+        // A torn append: everything before it still loads, and the next save
+        // rewrites the file instead of appending after the tear.
+        let mut torn = std::fs::read(&cache).unwrap();
+        torn.extend_from_slice(&500u32.to_le_bytes());
+        torn.extend_from_slice(b"partial");
+        std::fs::write(&cache, &torn).unwrap();
+        let fourth = HashCache::load(&dir);
+        assert_eq!(fourth.snapshot.len(), names.len());
+        assert!(!fourth.loaded.unwrap().complete);
+        std::fs::write(dir.join("f4"), "changed again").unwrap();
+        fourth.digest(&dir, "f4").unwrap();
+        fourth.save(&dir).unwrap();
+        let rewritten = HashCache::load(&dir);
+        assert!(rewritten.loaded.unwrap().complete);
+        assert_eq!(rewritten.loaded.unwrap().superseded, 0);
+        assert_eq!(
+            rewritten.snapshot["f4"].hash,
+            hash_file(&dir.join("f4")).unwrap()
+        );
+        assert_eq!(rewritten.snapshot["f3"], third.snapshot["f3"]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn matches_each_reports_one_verdict_per_expectation() {
+        let dir = std::env::temp_dir().join(format!("frost-hashcache-each-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a"), "a").unwrap();
+        std::fs::write(dir.join("b"), "b").unwrap();
+        let a = hash_file(&dir.join("a")).unwrap();
+        let cache = HashCache::default();
+        let verdicts = cache
+            .matches_each(
+                &dir,
+                &[("a", a.as_str()), ("b", a.as_str()), ("absent", MISSING)],
+            )
+            .unwrap();
+        assert_eq!(verdicts, [true, false, true]);
+        assert!(!cache
+            .matches_many(&dir, &[("a", a.as_str()), ("b", a.as_str())])
+            .unwrap());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

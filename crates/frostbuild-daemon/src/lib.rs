@@ -9,6 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use frostbuild_core::phases::PhaseLog;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,26 @@ struct DaemonState {
     next_barrier: u64,
     barrier_seen: u64,
     cached_noop: Option<CachedNoop>,
+    /// The certificate file the last full validation rejected. A rejected
+    /// certificate stays rejected until something rewrites it: it recorded
+    /// file identities that no longer hold, and the certificate itself only
+    /// changes by a rename that changes its stamp. Remembering it saves a
+    /// consecutive edit-build loop from re-proving, every time, that the
+    /// same stale certificate is still stale.
+    ///
+    /// It can only decline the shortcut, never take it: a request that
+    /// matches is sent to a child build, which is always correct. In the one
+    /// case where a stale certificate becomes true again (files moved back to
+    /// exactly their recorded identities), that child build finds everything
+    /// cached and writes a fresh certificate, whose new stamp ends this.
+    stale_certificate: Option<StaleCertificate>,
+}
+
+struct StaleCertificate {
+    profile: String,
+    platform: String,
+    key_env: BTreeMap<String, String>,
+    stamp: frostbuild_exec::CertificateStamp,
 }
 
 struct CachedNoop {
@@ -194,6 +215,7 @@ pub fn serve(root: &Path) -> Result<()> {
             next_barrier: 0,
             barrier_seen: 0,
             cached_noop: None,
+            stale_certificate: None,
         }),
         events: Condvar::new(),
     });
@@ -412,8 +434,30 @@ fn try_full_noop(
     root: &Path,
     request: &FastNoopRequest,
     shared: &DaemonShared,
+    log: Option<&PhaseLog>,
 ) -> Result<Option<frostbuild_exec::FastNoopHit>> {
+    let stamp =
+        frostbuild_exec::fast_noop_certificate_stamp(root, &request.profile, &request.platform);
+    {
+        let state = shared.state.lock().unwrap();
+        if let (Some(stamp), Some(stale)) = (&stamp, &state.stale_certificate) {
+            if stale.stamp == *stamp
+                && stale.profile == request.profile
+                && stale.platform == request.platform
+                && stale.key_env == request.key_env
+            {
+                if let Some(log) = log {
+                    log.count("daemon.known_stale_certificate", 1);
+                }
+                return Ok(None);
+            }
+        }
+    }
+    let started = Instant::now();
     let barrier_ready = watcher_barrier(root, shared);
+    if let Some(log) = log {
+        log.add("daemon.barrier", started.elapsed(), 1);
+    }
     let baseline_epoch = {
         let mut state = shared.state.lock().unwrap();
         if barrier_ready && state.watcher_trusted {
@@ -421,15 +465,34 @@ fn try_full_noop(
         }
         state.event_epoch
     };
+    let started = Instant::now();
     let validated = frostbuild_exec::try_fast_noop_for_daemon(
         root,
         &request.profile,
         &request.platform,
         &request.key_env,
-    )?;
-    let Some(validated) = validated else {
+    );
+    if let Some(log) = log {
+        log.add("daemon.certificate_validation", started.elapsed(), 1);
+    }
+    let Some(validated) = validated? else {
+        // Remember the rejection only if the file that was validated is the
+        // one stamped before validation began.
+        let after =
+            frostbuild_exec::fast_noop_certificate_stamp(root, &request.profile, &request.platform);
+        let mut state = shared.state.lock().unwrap();
+        state.stale_certificate = match (stamp, after) {
+            (Some(before), Some(after)) if before == after => Some(StaleCertificate {
+                profile: request.profile.clone(),
+                platform: request.platform.clone(),
+                key_env: request.key_env.clone(),
+                stamp: before,
+            }),
+            _ => None,
+        };
         return Ok(None);
     };
+    shared.state.lock().unwrap().stale_certificate = None;
 
     let stable = barrier_ready && watcher_barrier(root, shared);
     let mut state = shared.state.lock().unwrap();
@@ -502,14 +565,39 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
             fast_noop,
             ..
         } => {
+            // Measurement only: the client's FROST_PHASE_TIMINGS names a file
+            // this request's phases are appended to, beside the client's and
+            // the child build's.
+            let log = PhaseLog::from_env_pairs(
+                env.iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            );
+            let log = log.as_ref();
+            let mut stale_certificate = None;
             if let Some(fast_noop) = fast_noop {
                 let started = Instant::now();
-                match try_cached_noop(root, &fast_noop, shared).and_then(|hit| match hit {
-                    Some(hit) => Ok(Some(hit)),
-                    None => try_full_noop(root, &fast_noop, shared),
-                }) {
-                    Ok(Some(hit)) => return (noop_response(version, hit, started), false),
-                    Ok(None) => {}
+                let answered =
+                    try_cached_noop(root, &fast_noop, shared).and_then(|hit| match hit {
+                        Some(hit) => Ok(Some(hit)),
+                        None => try_full_noop(root, &fast_noop, shared, log),
+                    });
+                if let Some(log) = log {
+                    log.lap("daemon.fast_noop");
+                }
+                match answered {
+                    Ok(Some(hit)) => {
+                        if let Some(log) = log {
+                            let _ = log.write("daemon");
+                        }
+                        return (noop_response(version, hit, started), false);
+                    }
+                    Ok(None) => {
+                        stale_certificate = frostbuild_exec::fast_noop_certificate_digest(
+                            root,
+                            &fast_noop.profile,
+                            &fast_noop.platform,
+                        );
+                    }
                     Err(error) => {
                         return (
                             Response {
@@ -523,15 +611,27 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
                     }
                 }
             }
-            match std::process::Command::new(program)
+            let child = std::process::Command::new(program)
                 .args(&args)
                 .current_dir(root)
                 // Exactly the client's environment, so `--daemon` builds the
                 // same bytes as the same command without it.
                 .env_clear()
                 .envs(env.iter().map(|(key, value)| (key, value)))
-                .output()
-            {
+                // Not part of the client's environment and never seen by an
+                // action (the executor passes a fixed list through): it only
+                // spares the child a certificate check this request already
+                // made. See `STALE_CERTIFICATE_ENV`.
+                .envs(
+                    stale_certificate
+                        .iter()
+                        .map(|digest| (frostbuild_exec::STALE_CERTIFICATE_ENV, digest)),
+                )
+                .output();
+            if let Some(log) = log {
+                log.lap("daemon.child_build");
+            }
+            let response = match child {
                 Ok(output) => {
                     if output.status.success() {
                         // Drain the child build's writes before clearing its
@@ -562,7 +662,12 @@ fn handle(root: &Path, request: Request, shared: &DaemonShared) -> (Response, bo
                     },
                     false,
                 ),
+            };
+            if let Some(log) = log {
+                log.lap("daemon.post_barrier");
+                let _ = log.write("daemon");
             }
+            response
         }
     }
 }

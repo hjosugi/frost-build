@@ -22,6 +22,7 @@ use frostbuild_core::cas::LocalCas;
 use frostbuild_core::graph::{ActionId, ActionKind, BuildGraph};
 use frostbuild_core::hashcache::HashCache;
 use frostbuild_core::journal::{Journal, JournalEntry};
+use frostbuild_core::phases::{self, Stopwatch};
 use rayon::prelude::*;
 
 mod command;
@@ -42,7 +43,7 @@ mod resources;
 mod sandbox;
 mod schedule;
 mod toolchain;
-pub use fast_noop::{FastNoopDaemonHit, FastNoopHit, FastNoopWatchProof};
+pub use fast_noop::{CertificateStamp, FastNoopDaemonHit, FastNoopHit, FastNoopWatchProof};
 pub use hermetic::HERMETIC_DIR;
 use keys::{action_key_argv, path_is_inside, streamed_action_key, StreamedActionDescriptor};
 pub use options::{BuildOptions, Estimator, ResourceLimits, Scheduler, DEFAULT_TEST_TIMEOUT};
@@ -122,6 +123,29 @@ pub fn try_fast_noop_for_daemon(
     key_env: &BTreeMap<String, String>,
 ) -> Result<Option<FastNoopDaemonHit>> {
     fast_noop::check_for_daemon(root, profile, platform, key_env, false)
+}
+
+/// Set by the daemon on a child build, naming (by header digest) the no-op
+/// certificate the daemon has just validated and found stale. The child then
+/// goes straight to the build instead of validating the same certificate a
+/// second time. It only ever skips a shortcut: if the certificate on disk has
+/// changed since, the digests differ and the child checks it as usual.
+pub const STALE_CERTIFICATE_ENV: &str = "FROST_STALE_CERTIFICATE";
+
+/// Header digest of the current no-op certificate; see
+/// [`STALE_CERTIFICATE_ENV`].
+pub fn fast_noop_certificate_digest(root: &Path, profile: &str, platform: &str) -> Option<String> {
+    fast_noop::certificate_digest(root, profile, platform)
+}
+
+/// Which no-op certificate file is on disk, for a daemon that remembers one
+/// it found stale.
+pub fn fast_noop_certificate_stamp(
+    root: &Path,
+    profile: &str,
+    platform: &str,
+) -> Option<CertificateStamp> {
+    fast_noop::certificate_stamp(root, profile, platform)
 }
 
 /// Revalidate the non-workspace portion of a watcher-backed certificate.
@@ -259,7 +283,20 @@ impl<'a> Engine<'a> {
         let workers = self.opts.jobs.max(1).min(self.closure.len().max(1));
         let progress = self.opts.progress.clone();
         let started = std::time::Instant::now();
-        if self.all_cached().unwrap_or(false) {
+        // A preflight that fails to read something certifies nothing; the
+        // scheduler then decides every action, exactly as it always could.
+        let precached = self.preflight().unwrap_or(None);
+        phases::lap("engine.preflight");
+        let all_cached = precached
+            .as_ref()
+            .is_some_and(|cached| cached.iter().all(|&certified| certified));
+        if let Some(cached) = &precached {
+            phases::count(
+                "actions.preflight_cached",
+                cached.iter().filter(|&&certified| certified).count() as u64,
+            );
+        }
+        if all_cached {
             if let Some(progress) = &progress {
                 progress.emit(ProgressEvent::BuildStarted {
                     total: self.closure.len(),
@@ -280,8 +317,9 @@ impl<'a> Engine<'a> {
                 });
             }
         } else {
+            let precached = precached.unwrap_or_else(|| vec![false; self.closure.len()]);
             if !self.opts.dry_run {
-                self.prepare_output_dirs()?;
+                self.prepare_output_dirs(&precached)?;
                 if self.opts.hermetic {
                     self.hermetic = Some(materialize::select(
                         &self.root.join(HERMETIC_DIR),
@@ -289,7 +327,9 @@ impl<'a> Engine<'a> {
                     )?);
                 }
             }
-            self.prepare_schedule();
+            phases::lap("engine.output_dirs");
+            self.prepare_schedule(&precached);
+            phases::lap("engine.schedule");
             if let Some(progress) = &progress {
                 progress.emit(ProgressEvent::BuildStarted {
                     total: self.closure.len(),
@@ -298,12 +338,36 @@ impl<'a> Engine<'a> {
                     critical_path: std::mem::take(&mut self.critical_path_labels),
                 });
             }
+            if let Some(progress) = progress.as_ref().filter(|_| self.opts.report_cache_hits) {
+                // One cache hit per certified action, in closure order and
+                // before anything runs. No `ActionStarted`: nothing was
+                // started for these, and quoting ten thousand command lines
+                // nobody will see was a visible share of a leaf build.
+                let certified = precached.iter().enumerate().filter(|(_, &c)| c);
+                for (completed, (local, _)) in (1..).zip(certified) {
+                    let action = &self.graph.actions[self.closure[local]];
+                    let critical = self.critical_path.contains(&local);
+                    progress.emit(ProgressEvent::ActionFinished {
+                        slot: 0,
+                        completed,
+                        total: self.closure.len(),
+                        id: action.id.clone(),
+                        desc: action.desc.clone(),
+                        state: ProgressState::CacheHit,
+                        duration_ms: 0,
+                        detail: String::new(),
+                        critical,
+                    });
+                }
+                phases::lap("engine.preflight_events");
+            }
             std::thread::scope(|scope| {
                 let engine = &self;
                 for slot in 0..workers {
                     scope.spawn(move || engine.worker(slot));
                 }
             });
+            phases::lap("engine.workers");
         }
         let makespan_ms = started.elapsed().as_millis() as u64;
 
@@ -318,9 +382,12 @@ impl<'a> Engine<'a> {
                 compacted.actions.extend(recorded.actions);
                 compacted.save(self.root)?;
             }
+            phases::lap("engine.journal_compaction");
             let _ = self.cas.gc()?;
+            phases::lap("engine.cas_gc");
         }
         self.cache.save(self.root)?;
+        phases::lap("engine.hashcache_save");
 
         let mut results = Vec::with_capacity(self.closure.len());
         for (local, &action_id) in self.closure.iter().enumerate() {
@@ -373,19 +440,64 @@ impl<'a> Engine<'a> {
                 elapsed_ms: makespan_ms,
             });
         }
+        phases::lap("engine.results");
         Ok(report)
     }
 
     /// Scheduling data is irrelevant when a whole closure is cached. Delay
-    /// its O(actions + edges) allocation until the cache preflight finds work.
-    fn prepare_schedule(&mut self) {
+    /// its O(actions + edges) allocation until the cache preflight finds work,
+    /// and plan only the actions the preflight could not certify: those are
+    /// the work. Certified actions keep their closure-local index, are
+    /// recorded as cached before any worker starts, and are never queued.
+    fn prepare_schedule(&mut self, precached: &[bool]) {
+        let n = self.closure.len();
+        let scheduled: Vec<usize> = (0..n).filter(|&local| !precached[local]).collect();
         let plan = Schedule::plan(
             self.graph,
-            self.closure.clone(),
+            scheduled.iter().map(|&local| self.closure[local]).collect(),
             &self.previous,
             self.opts.scheduler,
             self.opts.estimator,
         );
+        // Plan indices are positions in `scheduled`; the engine's are
+        // positions in the whole closure.
+        let full = |planned: usize| scheduled[planned];
+        let plan = crate::schedule::Schedule {
+            closure_index: self
+                .closure
+                .iter()
+                .enumerate()
+                .map(|(local, &action_id)| (action_id, local))
+                .collect(),
+            dependents: {
+                let mut dependents = vec![Vec::new(); n];
+                for (planned, list) in plan.dependents.into_iter().enumerate() {
+                    dependents[full(planned)] = list.into_iter().map(full).collect();
+                }
+                dependents
+            },
+            waiting: {
+                let mut waiting = vec![0; n];
+                for (planned, count) in plan.waiting.into_iter().enumerate() {
+                    waiting[full(planned)] = count;
+                }
+                waiting
+            },
+            priority: {
+                let mut priority = vec![0; n];
+                for (planned, value) in plan.priority.into_iter().enumerate() {
+                    priority[full(planned)] = value;
+                }
+                priority
+            },
+            critical_path: plan.critical_path.into_iter().map(full).collect(),
+            closure: self.closure.clone(),
+            duration_ms: Vec::new(),
+            resources: Vec::new(),
+            is_test: Vec::new(),
+            critical_path_ms: plan.critical_path_ms,
+            work_ms: plan.work_ms,
+        };
         // The ids are always carried: they are one string per action on the
         // chain, not per action in the closure, and the finished report needs
         // them whether or not anyone was watching the build happen.
@@ -412,63 +524,115 @@ impl<'a> Engine<'a> {
         self.estimated_work_ms = plan.work_ms;
         let mut shared = self.shared.lock().unwrap();
         shared.waiting = plan.waiting;
-        shared.ready = shared
-            .waiting
+        for local in (0..n).filter(|&local| precached[local]) {
+            shared.outcomes[local] = Some(Outcome::Cached);
+        }
+        shared.pending = scheduled.len();
+        shared.ready = scheduled
             .iter()
-            .enumerate()
-            .filter(|(_, &waiting)| waiting == 0)
-            .map(|(local, _)| (self.priority[local], Reverse(local)))
+            .filter(|&&local| shared.waiting[local] == 0)
+            .map(|&local| (self.priority[local], Reverse(local)))
             .collect();
     }
 
-    /// Validate a fully cached closure in two passes instead of sending every
-    /// action through the scheduler. The normal path stats the same output as
-    /// one action's output and the next action's input, and takes the shared
-    /// scheduler lock for every cached node. A workspace-wide pass stats each
-    /// unique path once, then verifies the exact same action keys and output
-    /// digests before declaring the closure cached.
-    fn all_cached(&self) -> Result<bool> {
+    /// Decide, for every action in the closure, whether it is cached — in two
+    /// parallel passes instead of sending each action through the scheduler.
+    ///
+    /// The scheduler path stats the same output as one action's output and
+    /// the next action's input, and takes the shared scheduler lock for every
+    /// node, serially along every dependency chain. On a 10k-action chain whose
+    /// last leaf changed, that was most of the build (#152). Here each unique
+    /// path is stat'd once, in parallel, then each action is held to exactly
+    /// the checks the per-action path would apply:
+    ///
+    /// - a journal entry exists for its current declared-input set, and its
+    ///   recorded output set is the one it declares;
+    /// - every input and output on disk still has the recorded digest, and the
+    ///   recorded digests agree across producer and consumer;
+    /// - its action key recomputed from those digests is the recorded key;
+    /// - every in-closure producer it waits on is itself cached, so nothing it
+    ///   reads can be rewritten later in this build.
+    ///
+    /// Anything that fails a check is simply left to the scheduler, which
+    /// decides it as before — including restoring outputs from the CAS and
+    /// early cutoff. `None` means no per-action evidence was gathered (dry run).
+    fn preflight(&self) -> Result<Option<Vec<bool>>> {
         if self.opts.dry_run {
-            return Ok(false);
+            return Ok(None);
         }
+        let n = self.closure.len();
+        let files = self.graph.files.len();
+        let mut clock = Stopwatch::start();
 
-        let mut expected_by_file = vec![None; self.graph.files.len()];
-        let mut discovered_expected = HashMap::new();
-        for &action_id in &self.closure {
-            let action = &self.graph.actions[action_id];
-            // Same reasoning as `no_cache`, and it has to be repeated here:
-            // this pass declares the whole closure cached before the scheduler
-            // ever sees an action, so a check that lives only in the per-action
-            // path never runs.
-            if action.kind == ActionKind::Test
-                && (self.opts.no_cache || self.opts.runs_per_test > 1)
+        // Pass one, serial and allocation-light: the static checks, and the one
+        // digest each file is expected to have. A file two recorded entries
+        // disagree about is `conflicted`: no action that touches it can be
+        // certified here.
+        let mut previous: Vec<Option<&JournalEntry>> = Vec::with_capacity(n);
+        let mut eligible = vec![true; n];
+        let mut expected_by_file: Vec<Option<&str>> = vec![None; files];
+        let mut conflicted = vec![false; files];
+        let mut discovered_expected: HashMap<&str, Option<&str>> = HashMap::new();
+        fn expect_file<'s>(
+            expected_by_file: &mut [Option<&'s str>],
+            conflicted: &mut [bool],
+            file: usize,
+            digest: &'s str,
+        ) {
+            if expected_by_file[file]
+                .replace(digest)
+                .is_some_and(|other| other != digest)
             {
-                return Ok(false);
+                conflicted[file] = true;
             }
-            if !action.volatile_stamps.is_empty() {
-                return Ok(false);
+        }
+        fn expect_path<'s>(
+            discovered_expected: &mut HashMap<&'s str, Option<&'s str>>,
+            path: &'s str,
+            digest: &'s str,
+        ) {
+            match discovered_expected.entry(path) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(Some(digest));
+                }
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    // `None` marks a path two records disagree about.
+                    if slot.get().is_some_and(|other| other != digest) {
+                        slot.insert(None);
+                    }
+                }
             }
-            let Some(previous) = self.previous.actions.get(&journal_id(self.graph, action)) else {
-                return Ok(false);
+        }
+        for (local, &action_id) in self.closure.iter().enumerate() {
+            let action = &self.graph.actions[action_id];
+            let entry = self.previous.actions.get(&journal_id(self.graph, action));
+            previous.push(entry);
+            // Same reasoning as `no_cache`, and it has to be repeated here:
+            // an action certified by this pass never reaches the per-action
+            // checks, so a rule that lives only there would never run.
+            let Some(entry) = entry.filter(|_| {
+                !(action.kind == ActionKind::Test
+                    && (self.opts.no_cache || self.opts.runs_per_test > 1))
+                    && action.volatile_stamps.is_empty()
+            }) else {
+                eligible[local] = false;
+                continue;
             };
 
-            // Reusing `previous.inputs` for the key is valid only when the
+            // Reusing `entry.inputs` for the key is valid only when the
             // current declared-input set is identical. Discovered inputs are
             // explicitly recorded, so they can be separated without changing
             // the journal format.
-            if previous.discovered.is_empty() {
-                if action.inputs.len() != previous.inputs.len()
-                    || action
+            let same_inputs = if entry.discovered.is_empty() {
+                action.inputs.len() == entry.inputs.len()
+                    && action
                         .inputs
                         .iter()
-                        .any(|&file| !previous.inputs.contains_key(&self.graph.files[file].path))
-                {
-                    return Ok(false);
-                }
+                        .all(|&file| entry.inputs.contains_key(&self.graph.files[file].path))
             } else {
                 let discovered: BTreeSet<&str> =
-                    previous.discovered.iter().map(String::as_str).collect();
-                let previous_declared: BTreeSet<&str> = previous
+                    entry.discovered.iter().map(String::as_str).collect();
+                let previous_declared: BTreeSet<&str> = entry
                     .inputs
                     .keys()
                     .map(String::as_str)
@@ -479,97 +643,144 @@ impl<'a> Engine<'a> {
                     .iter()
                     .map(|&file| self.graph.files[file].path.as_str())
                     .collect();
-                if current_declared != previous_declared {
-                    return Ok(false);
-                }
+                current_declared == previous_declared
+            };
+            if !same_inputs
+                || !self.recorded_outputs_match(action, entry)
+                || entry
+                    .discovered
+                    .iter()
+                    .any(|path| !entry.inputs.contains_key(path))
+            {
+                eligible[local] = false;
+                continue;
             }
-
             for &file in &action.inputs {
-                let path = &self.graph.files[file].path;
-                let Some(digest) = previous.inputs.get(path) else {
-                    return Ok(false);
-                };
-                if expected_by_file[file]
-                    .replace(digest.as_str())
-                    .is_some_and(|other| other != digest)
-                {
-                    return Ok(false);
-                }
+                let digest = entry.inputs[&self.graph.files[file].path].as_str();
+                expect_file(&mut expected_by_file, &mut conflicted, file, digest);
             }
-            for path in &previous.discovered {
-                let Some(digest) = previous.inputs.get(path) else {
-                    return Ok(false);
-                };
-                if discovered_expected
-                    .insert(path.as_str(), digest.as_str())
-                    .is_some_and(|other| other != digest)
-                {
-                    return Ok(false);
-                }
-            }
-            if !self.recorded_outputs_match(action, previous) {
-                return Ok(false);
+            for path in &entry.discovered {
+                expect_path(&mut discovered_expected, path, entry.inputs[path].as_str());
             }
             for &file in &action.outputs {
-                let path = &self.graph.files[file].path;
-                let Some(digest) = previous.outputs.get(path) else {
-                    return Ok(false);
-                };
-                if expected_by_file[file]
-                    .replace(digest.as_str())
-                    .is_some_and(|other| other != digest)
-                {
-                    return Ok(false);
-                }
+                let digest = entry.outputs[&self.graph.files[file].path].as_str();
+                expect_file(&mut expected_by_file, &mut conflicted, file, digest);
             }
             // Files inside an owned directory are recorded outputs without
             // being graph files, so they are checked alongside discovered
             // inputs rather than through the per-file slots.
             if !action.output_dirs.is_empty() {
-                for (path, digest) in &previous.outputs {
-                    if !action
+                for (path, digest) in &entry.outputs {
+                    if action
                         .output_dirs
                         .iter()
                         .any(|directory| path_is_inside(directory, path))
                     {
-                        continue;
-                    }
-                    if discovered_expected
-                        .insert(path.as_str(), digest.as_str())
-                        .is_some_and(|other| other != digest)
-                    {
-                        return Ok(false);
+                        expect_path(&mut discovered_expected, path, digest);
                     }
                 }
             }
         }
 
-        let mut expected = Vec::with_capacity(
-            expected_by_file
-                .len()
-                .saturating_add(discovered_expected.len()),
-        );
-        expected.extend(
-            self.graph
-                .files
-                .iter()
-                .zip(expected_by_file)
-                .filter_map(|(file, digest)| digest.map(|digest| (file.path.as_str(), digest))),
-        );
-        expected.extend(discovered_expected);
-        let (files_match, keys_match) = rayon::join(
-            || self.cache.matches_many(self.root, &expected),
+        clock.lap("preflight.journal_and_expectations");
+        // Pass two, parallel: every unique path against its expected digest,
+        // and every eligible action's key.
+        let mut expected = Vec::with_capacity(files.saturating_add(discovered_expected.len()));
+        let mut file_slot = vec![usize::MAX; files];
+        for (file, digest) in expected_by_file.iter().enumerate() {
+            if let (Some(digest), false) = (digest, conflicted[file]) {
+                file_slot[file] = expected.len();
+                expected.push((self.graph.files[file].path.as_str(), *digest));
+            }
+        }
+        let mut path_slot: HashMap<&str, usize> = HashMap::with_capacity(discovered_expected.len());
+        for (path, digest) in &discovered_expected {
+            if let Some(digest) = digest {
+                path_slot.insert(path, expected.len());
+                expected.push((path, digest));
+            }
+        }
+        let (on_disk, keys) = rayon::join(
+            || self.cache.matches_each(self.root, &expected),
             || {
-                self.closure.par_iter().all(|&action_id| {
-                    let action = &self.graph.actions[action_id];
-                    let previous = &self.previous.actions[&journal_id(self.graph, action)];
-                    self.action_key(action, &previous.inputs) == previous.key
-                })
+                (0..n)
+                    .into_par_iter()
+                    .map(|local| {
+                        eligible[local]
+                            && previous[local].is_some_and(|entry| {
+                                let action = &self.graph.actions[self.closure[local]];
+                                self.action_key(action, &entry.inputs) == entry.key
+                            })
+                    })
+                    .collect::<Vec<bool>>()
             },
         );
-        let files_match = files_match?;
-        let cached = files_match && keys_match;
-        if cached && self.opts.write_fast_noop {
+        let on_disk = on_disk?;
+        clock.lap("preflight.disk_and_keys");
+        let file_ok = |file: usize| file_slot[file] != usize::MAX && on_disk[file_slot[file]];
+        let path_ok = |path: &str| path_slot.get(path).is_some_and(|&slot| on_disk[slot]);
+
+        let mut cached: Vec<bool> = (0..n)
+            .map(|local| {
+                if !keys[local] {
+                    return false;
+                }
+                let action = &self.graph.actions[self.closure[local]];
+                let Some(entry) = previous[local] else {
+                    return false;
+                };
+                action.inputs.iter().all(|&file| file_ok(file))
+                    && action.outputs.iter().all(|&file| file_ok(file))
+                    && entry.discovered.iter().all(|path| path_ok(path))
+                    && (action.output_dirs.is_empty()
+                        || entry.outputs.keys().all(|path| {
+                            !action
+                                .output_dirs
+                                .iter()
+                                .any(|directory| path_is_inside(directory, path))
+                                || path_ok(path)
+                        }))
+            })
+            .collect();
+
+        // An action whose producer will run cannot be certified: the producer
+        // may rewrite what it reads. Closure order is topological, so one
+        // forward pass settles a chain; the loop only repeats if a graph ever
+        // is not, and stops at the fixed point either way.
+        if cached.iter().any(|&certified| !certified) {
+            let closure_index: HashMap<ActionId, usize> = self
+                .closure
+                .iter()
+                .enumerate()
+                .map(|(local, &action_id)| (action_id, local))
+                .collect();
+            loop {
+                let mut changed = false;
+                for local in 0..n {
+                    if !cached[local] {
+                        continue;
+                    }
+                    let action = &self.graph.actions[self.closure[local]];
+                    let producer_runs = action
+                        .inputs
+                        .iter()
+                        .chain(&action.order_only_inputs)
+                        .filter_map(|&file| self.graph.files[file].producer)
+                        .filter_map(|producer| closure_index.get(&producer))
+                        .any(|&producer| !cached[producer]);
+                    if producer_runs {
+                        cached[local] = false;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
+        clock.lap("preflight.verdicts");
+        if cached.iter().all(|&certified| certified) && self.opts.write_fast_noop {
             let dynamic_env = self
                 .closure
                 .iter()
@@ -597,7 +808,7 @@ impl<'a> Engine<'a> {
                 || self.cache.matches_many(self.root, &expected),
             );
         }
-        Ok(cached)
+        Ok(Some(cached))
     }
 
     fn worker(&self, slot: usize) {
@@ -633,7 +844,9 @@ impl<'a> Engine<'a> {
                 });
             }
             let action_started = self.opts.progress.as_ref().map(|_| Instant::now());
+            let mut process_clock = Stopwatch::start();
             let outcome = self.process(local);
+            process_clock.lap("action.process");
             let elapsed_ms = action_started
                 .map(|started| started.elapsed().as_millis() as u64)
                 .unwrap_or(0);
@@ -819,6 +1032,7 @@ impl<'a> Engine<'a> {
             }
         }
 
+        let mut clock = Stopwatch::start();
         let inputs = match self.digest_all(&input_paths) {
             Ok(m) => m,
             Err(err) => {
@@ -828,7 +1042,9 @@ impl<'a> Engine<'a> {
                 }
             }
         };
+        clock.lap("action.digest_inputs");
         let key = self.action_key(action, &inputs);
+        clock.lap("action.key");
 
         if self.opts.no_cache && action.kind == ActionKind::Test {
             return self.execute(local, action, inputs, "test cache disabled".into());
@@ -856,7 +1072,9 @@ impl<'a> Engine<'a> {
 
         if let Some(prev) = &previous {
             if prev.key == key && self.recorded_outputs_match(action, prev) {
-                match self.outputs_intact(prev) {
+                let intact = self.outputs_intact(prev);
+                clock.lap("action.outputs_intact");
+                match intact {
                     Ok(None) => return Outcome::Cached,
                     Ok(Some(bad)) => {
                         if self.restore_outputs(action, prev).unwrap_or(false) {
@@ -947,6 +1165,7 @@ impl<'a> Engine<'a> {
         let retries = if runs > 1 { 0 } else { action.flaky_retries };
 
         let started = Instant::now();
+        let mut clock = Stopwatch::start();
         let mut batch = match self.run_action_commands(action, &inputs) {
             Ok(batch) => batch,
             Err(err) => {
@@ -1045,6 +1264,7 @@ impl<'a> Engine<'a> {
             }
         }
         let duration_ms = started.elapsed().as_millis() as u64;
+        clock.lap("action.run_commands");
         let mut captured = batch.captured;
 
         let discovered = match self.ingest_dependency_report(action, &mut captured, &mut inputs) {
@@ -1052,10 +1272,12 @@ impl<'a> Engine<'a> {
             Err(detail) => return Outcome::Failed { reason, detail },
         };
 
+        clock.lap("action.dependency_report");
         let (output_paths, outputs) = match self.collect_and_publish_outputs(action) {
             Ok(pair) => pair,
             Err(detail) => return Outcome::Failed { reason, detail },
         };
+        clock.lap("action.publish_outputs");
 
         if self.opts.check_determinism {
             if let Some(failure) =
@@ -1097,6 +1319,7 @@ impl<'a> Engine<'a> {
         // only if publication cannot affect this build: every upload failure is
         // counted and ignored.
         self.remote_publish(action, &entry);
+        clock.lap("action.key_and_remote");
         {
             let mut journal = self.journal.lock().unwrap();
             if let Err(err) = journal.record(self.root, journal_id(self.graph, action), entry) {
@@ -1106,6 +1329,7 @@ impl<'a> Engine<'a> {
                 };
             }
         }
+        clock.lap("action.journal_append");
 
         if let Some(progress) = &self.opts.progress {
             progress.emit(ProgressEvent::ActionOutput {

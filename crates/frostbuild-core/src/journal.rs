@@ -77,7 +77,8 @@ impl Journal {
             let mut bytes = Vec::new();
             if file.read_to_end(&mut bytes).is_ok() {
                 let valid_len;
-                (actions, valid_len) = decode_prefix(&bytes);
+                (actions, valid_len) =
+                    crate::phases::time("journal.decode", || decode_prefix(&bytes));
                 loaded = Some(Extent {
                     file_len: bytes.len() as u64,
                     valid_len: valid_len as u64,
@@ -213,10 +214,15 @@ fn frame(payload: &[u8]) -> Vec<u8> {
 /// the last record that decoded, or 0 when the magic itself is not this
 /// version's.
 fn decode_prefix(bytes: &[u8]) -> (BTreeMap<String, JournalEntry>, usize) {
+    use rayon::prelude::*;
+
     let mut actions = BTreeMap::new();
     if !bytes.starts_with(MAGIC) {
         return (actions, 0);
     }
+    // Frame boundaries first: reading a length prefix is cheap and serial by
+    // nature. A frame that runs past the end is the torn tail.
+    let mut frames = Vec::new();
     let mut cursor = MAGIC.len();
     while cursor + 4 + CHECK_LEN <= bytes.len() {
         let len = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
@@ -228,19 +234,32 @@ fn decode_prefix(bytes: &[u8]) -> (BTreeMap<String, JournalEntry>, usize) {
         if end > bytes.len() {
             break;
         }
-        let payload = &bytes[start..end];
-        if blake3::hash(payload).as_bytes()[..CHECK_LEN] != *check {
-            break;
-        }
-        match postcard::from_bytes::<Record>(payload) {
-            Ok(record) => {
-                actions.insert(record.id, record.entry);
-            }
-            Err(_) => break,
-        }
+        frames.push((check, &bytes[start..end], end));
         cursor = end;
     }
-    (actions, cursor)
+    // Checking and decoding are the expensive part — ten thousand records of
+    // string allocations on a 10k-action graph (#152) — and frames are
+    // independent, so they run in parallel. Application stays in file order
+    // and stops at the first frame that fails, so the result is exactly the
+    // serial decoder's: the validated prefix, later records replacing earlier
+    // ones, and the offset where that prefix ends.
+    let decoded: Vec<Option<Record>> = frames
+        .par_iter()
+        .map(|(check, payload, _)| {
+            (blake3::hash(payload).as_bytes()[..CHECK_LEN] == **check)
+                .then(|| postcard::from_bytes::<Record>(payload).ok())
+                .flatten()
+        })
+        .collect();
+    let mut valid = MAGIC.len();
+    for (record, (_, _, end)) in decoded.into_iter().zip(&frames) {
+        let Some(record) = record else {
+            break;
+        };
+        actions.insert(record.id, record.entry);
+        valid = *end;
+    }
+    (actions, valid)
 }
 
 #[cfg(test)]

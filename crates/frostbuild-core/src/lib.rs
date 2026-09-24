@@ -12,6 +12,7 @@ pub mod journal_export;
 pub mod lint;
 pub mod manifest;
 pub mod paths;
+pub mod phases;
 pub mod remote;
 pub mod stamp;
 pub mod visibility;
