@@ -5,8 +5,6 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
-## [0.15.2] - 2026-09-27
-
 ### Added
 
 - `frost import-dotnet <project-or-solution>` (#248): MSBuild's design-time
@@ -23,6 +21,10 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   and Windows with a pinned SDK (#250). A `frost-import` frontend in the
   `csharp` harness measures the product path, and a nightly `csharp-benchmark`
   job records the report (#249).
+
+## [0.15.2] - 2026-09-27
+
+### Added
 
 - A graph-shape comparison against Bazel (#159). `frost-bench run --suite
   standard --shape linear|wide|packages` builds every tool's manifest from one
