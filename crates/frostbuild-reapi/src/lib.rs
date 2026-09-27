@@ -32,7 +32,10 @@ pub mod proto {
             pub mod remote {
                 pub mod execution {
                     pub mod v2 {
-                        include!(concat!(env!("OUT_DIR"), "/build.bazel.remote.execution.v2.rs"));
+                        include!(concat!(
+                            env!("OUT_DIR"),
+                            "/build.bazel.remote.execution.v2.rs"
+                        ));
                     }
                 }
             }
@@ -51,6 +54,6 @@ pub mod proto {
     }
 }
 
-pub use client::{Capabilities, ReapiClient, ReapiConfig};
+pub use client::{trace_key_blobs, trace_key_digest, Capabilities, ReapiClient, ReapiConfig};
 pub use digest::{Digest, DigestFunction};
 pub use error::ReapiError;

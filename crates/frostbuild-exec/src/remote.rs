@@ -95,7 +95,11 @@ impl<'a> Engine<'a> {
                 continue;
             }
             let staged = staging.join(digest);
-            if !remote.stage_blob(digest, &staged) {
+            if !remote.stage_blob(
+                digest,
+                recorded.remote.get(digest).map(String::as_str),
+                &staged,
+            ) {
                 let _ = std::fs::remove_file(&staged);
                 return None;
             }
@@ -153,14 +157,18 @@ impl<'a> Engine<'a> {
                 None => return,
             }
         }
+        let mut remote_digests = BTreeMap::new();
         for (path, digest) in &entry.outputs {
-            remote.put_blob(digest, &self.root.join(path));
+            if let Some(remote_digest) = remote.put_blob(digest, &self.root.join(path)) {
+                remote_digests.insert(digest.clone(), remote_digest);
+            }
         }
         remote.put_action(
             &trace_key,
             &frostbuild_core::remote::RemoteAction {
                 discovered,
                 outputs: entry.outputs.clone(),
+                remote: remote_digests,
                 duration_ms: entry.duration_ms,
             },
         );

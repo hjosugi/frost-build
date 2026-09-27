@@ -110,3 +110,39 @@ is isolated to the v2 adapter:
 
 Remote execution can now be planned as an adapter over proven boundaries, not
 as a reason to weaken or redesign v1 correctness.
+
+## Adapter transport decision (issue #144)
+
+The adapter needs gRPC over HTTP/2 plus TLS. The workspace had no async runtime
+and `remote.rs` spoke HTTP/1.1 through a hand-rolled `TcpStream` client, so the
+transport was the first thing to settle. Three options were weighed:
+
+| option | cost | risk |
+|---|---|---|
+| (a) `tonic` + `prost` + `tokio` + `rustls` in an isolated crate | +50 crates, the first async runtime in the tree | lowest protocol risk; the same stack gives the in-process test server |
+| (b) hand-written HTTP/2 + HPACK + protobuf over `std::net` | still needs `rustls`/`ring` for HTTPS | large correctness surface: HPACK Huffman, flow control, `grpc-status` trailers, ByteStream chunking |
+| (c) out-of-process adapter (a `grpcio` sidecar) | no new Rust crates | a Python runtime and a second failure domain on the remote path |
+
+**(a) was chosen.** The protocol surface is where a remote cache must be boring,
+and correctness there is worth a dependency. The stack lives in its own crate,
+[`frostbuild-reapi`](../crates/frostbuild-reapi), so it cannot leak into the rest
+of the build, and the backend is behind the `reapi` cargo feature (on by
+default, droppable with `--no-default-features`) plus the runtime
+`--remote-cache` flag. The protocol definitions are the checked-in REAPI v2
+protos, with `protoc` from `protoc-bin-vendored` so no host install is assumed.
+
+## Implementation status (issue #144)
+
+| v2 gap | status |
+|---|---|
+| protobuf/gRPC, capabilities, ByteStream, batching | implemented and tested against an in-process server |
+| `FindMissingBlobs` upload reduction | measured: 1000 candidates, 500 present → 500 uploads instead of 1000 (`bench/baselines/2026-09-27-reapi-find-missing.json`) |
+| failure injection → local fallback | dropped stream, corrupt blob and short batch are typed errors; the backend counts them and the build runs locally |
+| default off | no `--remote-cache`, no connection; `grpc://` / `grpcs://` are opt-in |
+| `Execute` / `WaitExecution` client | `Execute` implemented and tested; `WaitExecution` declared |
+| verified trace to SHA-256 Merkle tree | the adapter maps a trace key to a deterministic synthetic `Action` digest for the Action Cache; a full build-action translation is the remaining executor work |
+| remote toolchain packaging and platform selection | not started |
+| `ActionResult` file/directory/symlink/mode/stdout translation | not started |
+| Build without the Bytes | deliberately out (v1 materializes fully) |
+| dynamic execution | deliberately out (see docs/31) |
+

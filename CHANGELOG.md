@@ -5,6 +5,39 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- A REAPI v2 remote cache. `crates/frostbuild-reapi` speaks REAPI over gRPC:
+  `GetCapabilities` negotiation, `FindMissingBlobs` batching,
+  `BatchUpdateBlobs`/`BatchReadBlobs` with a ByteStream split above the
+  negotiated batch limit, `Get`/`UpdateActionResult` and a minimal `Execute`.
+  The protocol definitions are the checked-in REAPI v2 protos and `protoc` comes
+  from `protoc-bin-vendored`, so the build needs no host protoc install.
+  `frost build --remote-cache grpc://host[:port][/instance][?authorization=…]`
+  (or `grpcs://` for TLS) publishes and consumes through it. REAPI addresses
+  blobs by SHA-256 while the local CAS is BLAKE3, so a published trace records
+  each output's SHA-256 beside the frost digest and both are checked before a
+  blob is staged; an entry without the SHA-256 falls back to local. The backend
+  connects lazily, so an unreachable server costs speed and nothing else, and
+  nothing connects unless the flag names an endpoint. An in-process server drives
+  the CAS/AC round trip, the large-blob ByteStream path and the
+  dropped-stream / corrupt-blob / short-batch failure injections; the preflight
+  cuts 1000 candidate uploads to 500
+  (`bench/baselines/2026-09-27-reapi-find-missing.json`). The transport decision
+  and the remaining adapter work are in
+  [docs/11](docs/11_remote_execution_study.md). The protocol stack (tonic,
+  tokio, rustls) is behind the `reapi` feature and can be dropped with
+  `--no-default-features`.
+
+### Changed
+
+- A remote trace entry gains an optional `remote` map from frost blob digest to
+  the backend-native name. It is `#[serde(default)]`, so entries written by an
+  older frost stay readable and directory/HTTP caches are unaffected.
+
+- Update dependencies: clap 4.6.7, clap_complete 4.6.11, toml 1.1.6,
+  toml_edit 0.25.15.
+
 ## [0.14.0] - 2026-09-24
 
 ### Added

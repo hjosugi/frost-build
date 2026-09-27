@@ -145,9 +145,9 @@ pub(crate) enum Cmd {
         #[arg(long, conflicts_with = "no_stamp")]
         stamp_optional: bool,
         /// Shared cache consulted when the local journal misses: a directory
-        /// path, file:///path, or http://host/prefix. Never required for
-        /// correctness — every response is verified and any failure falls back
-        /// to building locally
+        /// path, file:///path, http://host/prefix, or grpc://host/[instance]
+        /// (REAPI; grpcs:// for TLS). Never required for correctness — every
+        /// response is verified and any failure falls back to building locally
         #[arg(
             long,
             value_name = "ENDPOINT",
@@ -426,9 +426,9 @@ pub(crate) enum Cmd {
         #[arg(long, value_enum, default_value = "errors")]
         test_output: TestOutputArg,
         /// Shared cache consulted when the local journal misses: a directory
-        /// path, file:///path, or http://host/prefix. Never required for
-        /// correctness — every response is verified and any failure falls back
-        /// to building locally
+        /// path, file:///path, http://host/prefix, or grpc://host/[instance]
+        /// (REAPI; grpcs:// for TLS). Never required for correctness — every
+        /// response is verified and any failure falls back to building locally
         #[arg(
             long,
             value_name = "ENDPOINT",

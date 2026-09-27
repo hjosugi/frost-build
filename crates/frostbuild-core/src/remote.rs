@@ -11,6 +11,17 @@
 //! plain HTTP. Both address blobs by the digest the local CAS already uses, so
 //! the layout translates to REAPI's `ContentAddressableStorage` and
 //! `ActionCache` without changing what is stored.
+//!
+//! A third, `grpc://` / `grpcs://`, speaks REAPI v2 directly through
+//! `frostbuild-reapi`. REAPI addresses blobs by SHA-256, while the local CAS is
+//! BLAKE3-keyed, so a publication records each output's SHA-256 alongside its
+//! frost digest and a consumer asks for the SHA-256 name; both digests are then
+//! checked before anything is staged. REAPI has no "store this JSON under this
+//! key" call, so a frost trace entry travels as the `stdout_raw` of an
+//! `ActionResult` under a synthetic, deterministic `Action` digest derived from
+//! the trace key. That keeps the Action Cache's key/value contract and its
+//! `Get/UpdateActionResult` wire calls, without pretending the synthetic action
+//! is the build action (translating that is the executor's job, not a cache's).
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -21,6 +32,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "reapi")]
+use frostbuild_reapi::{Digest as ReapiDigest, ReapiClient, ReapiConfig};
 
 /// What one action produced, stored under a key over its *declared* inputs.
 ///
@@ -34,6 +48,11 @@ use serde::{Deserialize, Serialize};
 pub struct RemoteAction {
     pub discovered: BTreeMap<String, String>,
     pub outputs: BTreeMap<String, String>,
+    /// For a REAPI backend, the SHA-256 name of each output blob keyed by its
+    /// frost (BLAKE3) digest. A directory or HTTP backend leaves it empty, and
+    /// a reader from an older writer sees no entries rather than a bad one.
+    #[serde(default)]
+    pub remote: BTreeMap<String, String>,
     pub duration_ms: u64,
 }
 
@@ -63,7 +82,6 @@ pub struct RemoteSummary {
     pub errors: u64,
 }
 
-#[derive(Debug)]
 enum Backend {
     /// A shared directory. `frost-cache/{ac,cas}/…`.
     Directory(PathBuf),
@@ -72,9 +90,45 @@ enum Backend {
         /// Path prefix, without a trailing slash.
         prefix: String,
     },
+    #[cfg(feature = "reapi")]
+    Reapi(ReapiBackend),
 }
 
-#[derive(Debug)]
+/// A lazily connected REAPI backend.
+///
+/// `--remote-cache` is parsed before the build starts and must not connect
+/// then: an endpoint that is merely unreachable has to cost speed per request
+/// and nothing else, exactly as it does for the HTTP backend. The first use
+/// connects, and every later use reuses the channel; a failed connection is
+/// retried on the next request rather than cached as permanent.
+#[cfg(feature = "reapi")]
+struct ReapiBackend {
+    config: ReapiConfig,
+    client: std::sync::Mutex<Option<std::sync::Arc<ReapiClient>>>,
+}
+
+#[cfg(feature = "reapi")]
+impl ReapiBackend {
+    fn client(&self) -> Option<std::sync::Arc<ReapiClient>> {
+        let mut guard = self.client.lock().unwrap();
+        if let Some(client) = guard.as_ref() {
+            return Some(client.clone());
+        }
+        match ReapiClient::connect(self.config.clone()) {
+            Ok(client) => {
+                let client = std::sync::Arc::new(client);
+                *guard = Some(client.clone());
+                Some(client)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn display(&self) -> String {
+        self.config.endpoint.clone()
+    }
+}
+
 pub struct RemoteCache {
     backend: Backend,
     timeout: Duration,
@@ -82,8 +136,26 @@ pub struct RemoteCache {
     counters: RemoteCounters,
 }
 
+impl std::fmt::Debug for RemoteCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let backend = match &self.backend {
+            Backend::Directory(path) => format!("directory:{}", path.display()),
+            Backend::Http { authority, prefix } => format!("http://{authority}{prefix}"),
+            #[cfg(feature = "reapi")]
+            Backend::Reapi(backend) => backend.display(),
+        };
+        formatter
+            .debug_struct("RemoteCache")
+            .field("backend", &backend)
+            .field("timeout", &self.timeout)
+            .field("upload", &self.upload)
+            .finish()
+    }
+}
+
 impl RemoteCache {
-    /// Parse `--remote-cache`: `file:///path`, a bare path, or `http://host/prefix`.
+    /// Parse `--remote-cache`: `file:///path`, a bare path, `http://host/prefix`,
+    /// or, with the `reapi` feature, `grpc://host/[instance][?authorization=…]`.
     pub fn parse(spec: &str, timeout: Duration, upload: bool) -> Result<Self> {
         let backend = if let Some(rest) = spec.strip_prefix("http://") {
             let (authority, prefix) = match rest.split_once('/') {
@@ -105,10 +177,23 @@ impl RemoteCache {
             }
         } else if let Some(path) = spec.strip_prefix("file://") {
             Backend::Directory(PathBuf::from(path))
+        } else if spec.starts_with("grpc://") || spec.starts_with("grpcs://") {
+            #[cfg(feature = "reapi")]
+            {
+                Backend::Reapi(reapi_backend(spec, timeout)?)
+            }
+            #[cfg(not(feature = "reapi"))]
+            {
+                bail!(
+                    "this frost was built without the reapi feature, so {spec:?} \
+                     cannot be used; rebuild with default features"
+                );
+            }
         } else if spec.starts_with("https://") {
             // Silently downgrading to plaintext, or pretending to verify a
             // certificate frost cannot check, are both worse than saying so.
-            bail!("remote cache does not support https yet; terminate TLS locally and use http://");
+            // `grpcs://` is the TLS path for the REAPI backend.
+            bail!("remote cache does not support https yet; use grpcs:// for REAPI or terminate TLS locally and use http://");
         } else if spec.contains("://") {
             bail!("unsupported remote cache scheme: {spec:?}");
         } else {
@@ -143,6 +228,14 @@ impl RemoteCache {
     /// The recorded result for a trace key, or `None` for a miss, an
     /// unreadable entry or a transport failure.
     pub fn action(&self, key: &str) -> Option<RemoteAction> {
+        #[cfg(feature = "reapi")]
+        if let Backend::Reapi(backend) = &self.backend {
+            let Some(client) = backend.client() else {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
+            return self.reapi_action(&client, key);
+        }
         match self.get("ac", key) {
             Ok(Some(bytes)) => match serde_json::from_slice::<RemoteAction>(&bytes) {
                 Ok(action) => {
@@ -174,6 +267,30 @@ impl RemoteCache {
         let Ok(bytes) = serde_json::to_vec(action) else {
             return;
         };
+        #[cfg(feature = "reapi")]
+        if let Backend::Reapi(backend) = &self.backend {
+            let Some(client) = backend.client() else {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+            let (digest, blobs) = frostbuild_reapi::trace_key_blobs(key);
+            // Put the synthetic Action (and its Command) in the CAS first, so a
+            // server that validates an ActionResult against its action accepts
+            // the entry.
+            if client.upload_blobs(&blobs).is_err() {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            let result =
+                frostbuild_reapi::proto::build::bazel::remote::execution::v2::ActionResult {
+                    stdout_raw: bytes,
+                    ..Default::default()
+                };
+            if client.update_action_result(&digest, result).is_err() {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+            }
+            return;
+        }
         if self.put("ac", key, &bytes).is_err() {
             self.counters.errors.fetch_add(1, Ordering::Relaxed);
         }
@@ -186,14 +303,40 @@ impl RemoteCache {
     /// The mode is recovered rather than transported: a frost blob digest covers
     /// the executable bit alongside the content, so the digest that matches
     /// identifies the mode, and a blob whose neither mode matches is corrupt.
-    pub fn stage_blob(&self, digest: &str, destination: &Path) -> bool {
-        let bytes = match self.get("cas", digest) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => return false,
-            Err(_) => {
-                self.counters.errors.fetch_add(1, Ordering::Relaxed);
-                return false;
+    ///
+    /// `remote` is the backend-native name of the blob — for REAPI, the
+    /// `hash/size` of its SHA-256 — and is ignored by the directory and HTTP
+    /// backends, which address the blob by `digest` itself.
+    pub fn stage_blob(&self, digest: &str, remote: Option<&str>, destination: &Path) -> bool {
+        let bytes = match &self.backend {
+            #[cfg(feature = "reapi")]
+            Backend::Reapi(backend) => {
+                let Some(client) = backend.client() else {
+                    self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                    return false;
+                };
+                let Some(remote) = remote.and_then(ReapiDigest::parse) else {
+                    // A REAPI entry that does not name the SHA-256 of every
+                    // output cannot be fetched, so it is a miss, not a guess.
+                    self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                    return false;
+                };
+                match client.download_blob(&remote) {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                        return false;
+                    }
+                }
             }
+            _ => match self.get("cas", digest) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => return false,
+                Err(_) => {
+                    self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                    return false;
+                }
+            },
         };
         if std::fs::write(destination, &bytes).is_err() {
             self.counters.errors.fetch_add(1, Ordering::Relaxed);
@@ -218,13 +361,37 @@ impl RemoteCache {
         false
     }
 
-    pub fn put_blob(&self, digest: &str, source: &Path) {
+    /// Publish a blob. Returns the backend-native name it was stored under,
+    /// which a REAPI publication records so a consumer can fetch it by SHA-256;
+    /// the directory and HTTP backends return `None`.
+    pub fn put_blob(&self, digest: &str, source: &Path) -> Option<String> {
         if !self.upload {
-            return;
+            return None;
         }
         let Ok(bytes) = std::fs::read(source) else {
-            return;
+            return None;
         };
+        #[cfg(feature = "reapi")]
+        if let Backend::Reapi(backend) = &self.backend {
+            let Some(client) = backend.client() else {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
+            let remote = ReapiDigest::sha256(&bytes);
+            return match client.upload_blobs(&[(remote.clone(), bytes)]) {
+                Ok(()) => {
+                    self.counters.blobs_uploaded.fetch_add(1, Ordering::Relaxed);
+                    self.counters
+                        .bytes_uploaded
+                        .fetch_add(remote.size_bytes.max(0) as u64, Ordering::Relaxed);
+                    Some(remote.key())
+                }
+                Err(_) => {
+                    self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            };
+        }
         match self.put("cas", digest, &bytes) {
             Ok(()) => {
                 self.counters.blobs_uploaded.fetch_add(1, Ordering::Relaxed);
@@ -234,6 +401,36 @@ impl RemoteCache {
             }
             Err(_) => {
                 self.counters.errors.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        None
+    }
+
+    /// Read a trace entry through the REAPI Action Cache.
+    ///
+    /// A `NotFound` is a miss, unreadable JSON is a rejected entry, and any
+    /// transport error is an error — the same three outcomes the file and HTTP
+    /// backends distinguish, so the counters mean the same thing everywhere.
+    #[cfg(feature = "reapi")]
+    fn reapi_action(&self, client: &ReapiClient, key: &str) -> Option<RemoteAction> {
+        match client.get_action_result(&frostbuild_reapi::trace_key_digest(key)) {
+            Ok(Some(result)) => match serde_json::from_slice::<RemoteAction>(&result.stdout_raw) {
+                Ok(action) => {
+                    self.counters.action_hits.fetch_add(1, Ordering::Relaxed);
+                    Some(action)
+                }
+                Err(_) => {
+                    self.counters.rejected.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            },
+            Ok(None) => {
+                self.counters.action_misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+            Err(_) => {
+                self.counters.errors.fetch_add(1, Ordering::Relaxed);
+                None
             }
         }
     }
@@ -254,6 +451,10 @@ impl RemoteCache {
             Backend::Http { authority, prefix } => {
                 self.http(authority, "GET", &format!("{prefix}/{kind}/{name}"), None)
             }
+            // The REAPI backend answers `action` and `stage_blob` before this
+            // point; nothing else routes a REAPI address through here.
+            #[cfg(feature = "reapi")]
+            Backend::Reapi(_) => bail!("the reapi backend does not use the generic store"),
         }
     }
 
@@ -290,6 +491,8 @@ impl RemoteCache {
                     Some(bytes),
                 )
                 .map(|_| ()),
+            #[cfg(feature = "reapi")]
+            Backend::Reapi(_) => bail!("the reapi backend does not use the generic store"),
         }
     }
 
@@ -333,6 +536,87 @@ impl RemoteCache {
         let mut response = Vec::new();
         stream.read_to_end(&mut response)?;
         parse_http_response(&response)
+    }
+}
+
+/// Build a REAPI backend from `grpc://host[:port][/instance][?authorization=…]`.
+///
+/// The instance name is taken from the path so a multi-instance server needs no
+/// separate flag. `?authorization=` carries an auth header value verbatim; a
+/// deployment that needs a bearer token writes `?authorization=Bearer%20…`, and
+/// the value is percent-decoded so the space survives a shell. Nothing connects
+/// here; that is deferred to the first request.
+#[cfg(feature = "reapi")]
+fn reapi_backend(spec: &str, timeout: Duration) -> Result<ReapiBackend> {
+    let (base, query) = match spec.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (spec, None),
+    };
+    let (scheme, rest) = if let Some(rest) = base.strip_prefix("grpcs://") {
+        ("grpcs", rest)
+    } else if let Some(rest) = base.strip_prefix("grpc://") {
+        ("grpc", rest)
+    } else {
+        bail!("not a REAPI endpoint: {spec:?}");
+    };
+    let (authority, instance) = match rest.split_once('/') {
+        Some((authority, instance)) => (authority, instance.trim_matches('/').to_string()),
+        None => (rest, String::new()),
+    };
+    if authority.is_empty() {
+        bail!("remote cache URL has no host: {spec:?}");
+    }
+    let mut auth_header = None;
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                if key == "authorization" {
+                    auth_header = Some(percent_decode(value));
+                }
+            }
+        }
+    }
+    Ok(ReapiBackend {
+        config: ReapiConfig {
+            endpoint: format!("{scheme}://{authority}"),
+            instance_name: instance,
+            timeout,
+            auth_header,
+        },
+        client: std::sync::Mutex::new(None),
+    })
+}
+
+/// Decode the `%XX` escapes a URL uses, leaving anything else untouched. Only
+/// the auth-header value is decoded, so a malformed escape is not an error.
+#[cfg(feature = "reapi")]
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+            {
+                out.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(feature = "reapi")]
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -408,7 +692,11 @@ mod tests {
         assert!(RemoteCache::parse("http://cache.example", timeout, false).is_ok());
         // Pretending to have TLS would be worse than not having it.
         assert!(RemoteCache::parse("https://cache.example", timeout, false).is_err());
-        assert!(RemoteCache::parse("grpc://cache.example", timeout, false).is_err());
+        // A REAPI endpoint parses without connecting: an unreachable server is a
+        // per-request fallback, not a configuration error, so parse succeeds.
+        assert!(RemoteCache::parse("grpc://cache.example:50051", timeout, false).is_ok());
+        assert!(RemoteCache::parse("grpcs://cache.example/inst", timeout, false).is_ok());
+        assert!(RemoteCache::parse("grpc://", timeout, false).is_err());
         assert!(RemoteCache::parse("http:///frost", timeout, false).is_err());
     }
 
@@ -424,6 +712,7 @@ mod tests {
             discovered: BTreeMap::from([("include/util.h".into(), "digest".into())]),
             outputs: BTreeMap::from([("out/app".into(), "digest".into())]),
             duration_ms: 12,
+            ..Default::default()
         };
         cache.put_action(&key, &recorded);
         let read = cache.action(&key).expect("stored entry is found");
@@ -433,9 +722,9 @@ mod tests {
         let source = root.join("payload");
         std::fs::write(&source, b"artifact bytes").unwrap();
         let digest = crate::hashcache::hash_file(&source).unwrap();
-        cache.put_blob(&digest, &source);
+        let _ = cache.put_blob(&digest, &source);
         let destination = root.join("restored");
-        assert!(cache.stage_blob(&digest, &destination));
+        assert!(cache.stage_blob(&digest, None, &destination));
         assert_eq!(std::fs::read(&destination).unwrap(), b"artifact bytes");
 
         let summary = cache.summary();
@@ -453,14 +742,14 @@ mod tests {
         let source = root.join("payload");
         std::fs::write(&source, b"honest bytes").unwrap();
         let digest = crate::hashcache::hash_file(&source).unwrap();
-        cache.put_blob(&digest, &source);
+        let _ = cache.put_blob(&digest, &source);
 
         // Someone else's cache, a truncated upload, a damaged volume: the
         // remote no longer holds what this digest names.
         std::fs::write(root.join("cas").join(&digest), b"tampered bytes").unwrap();
         let destination = root.join("restored");
         assert!(
-            !cache.stage_blob(&digest, &destination),
+            !cache.stage_blob(&digest, None, &destination),
             "a blob that does not hash to its digest must not be staged"
         );
         assert!(!destination.exists(), "and must not be left behind");
@@ -480,10 +769,10 @@ mod tests {
         std::fs::write(&source, b"#!/bin/sh\nexit 0\n").unwrap();
         set_executable(&source, true).unwrap();
         let digest = crate::hashcache::hash_file(&source).unwrap();
-        cache.put_blob(&digest, &source);
+        let _ = cache.put_blob(&digest, &source);
 
         let destination = root.join("restored-tool");
-        assert!(cache.stage_blob(&digest, &destination));
+        assert!(cache.stage_blob(&digest, None, &destination));
         // The digest covers the mode, so a staged blob that verifies has it.
         assert_eq!(
             crate::hashcache::hash_file(&destination).unwrap(),
@@ -567,6 +856,7 @@ mod tests {
             discovered: BTreeMap::new(),
             outputs: BTreeMap::from([("out/app".into(), "digest".into())]),
             duration_ms: 7,
+            ..Default::default()
         };
         cache.put_action(&key, &recorded);
         assert_eq!(
@@ -575,6 +865,44 @@ mod tests {
         );
         server.join().unwrap();
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    #[cfg(feature = "reapi")]
+    fn a_reapi_backend_round_trips_actions_and_blobs() {
+        let server = frostbuild_reapi::testing::TestServer::start();
+        let cache = RemoteCache::parse(server.endpoint(), Duration::from_secs(5), true).unwrap();
+        let key = "c".repeat(64);
+
+        assert!(cache.action(&key).is_none(), "an empty server misses");
+        let recorded = RemoteAction {
+            discovered: BTreeMap::new(),
+            outputs: BTreeMap::from([("out/app".into(), "placeholder".into())]),
+            duration_ms: 12,
+            ..Default::default()
+        };
+        cache.put_action(&key, &recorded);
+        let read = cache.action(&key).expect("stored entry is found");
+        assert_eq!(read.outputs, recorded.outputs);
+
+        // A REAPI blob is addressed remotely by SHA-256 but verified locally by
+        // the frost digest, so a wrong remote answer is still refused.
+        let source = std::env::temp_dir().join(format!("frost-reapi-{}", std::process::id()));
+        std::fs::write(&source, b"artifact bytes").unwrap();
+        let digest = crate::hashcache::hash_file(&source).unwrap();
+        let remote = cache
+            .put_blob(&digest, &source)
+            .expect("reapi names the stored blob");
+        assert!(remote.contains('/'), "the name is a hash/size pair");
+        let destination = source.with_extension("restored");
+        assert!(cache.stage_blob(&digest, Some(&remote), &destination));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"artifact bytes");
+        assert!(
+            !cache.stage_blob(&digest, None, &destination),
+            "without a remote name the REAPI backend cannot fetch it"
+        );
+        let _ = std::fs::remove_file(&source);
+        let _ = std::fs::remove_file(&destination);
     }
 
     #[test]

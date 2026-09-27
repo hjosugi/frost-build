@@ -53,7 +53,12 @@ fn cas_round_trips_and_a_downloaded_blob_verifies() {
     let blobs = blobs(3);
 
     let missing = client
-        .find_missing_blobs(&blobs.iter().map(|(digest, _)| digest.clone()).collect::<Vec<_>>())
+        .find_missing_blobs(
+            &blobs
+                .iter()
+                .map(|(digest, _)| digest.clone())
+                .collect::<Vec<_>>(),
+        )
         .expect("preflight");
     assert_eq!(missing.len(), 3, "an empty CAS is missing every blob");
 
@@ -61,7 +66,12 @@ fn cas_round_trips_and_a_downloaded_blob_verifies() {
     assert_eq!(server.cas_count(), 3);
 
     let after = client
-        .find_missing_blobs(&blobs.iter().map(|(digest, _)| digest.clone()).collect::<Vec<_>>())
+        .find_missing_blobs(
+            &blobs
+                .iter()
+                .map(|(digest, _)| digest.clone())
+                .collect::<Vec<_>>(),
+        )
         .expect("preflight");
     assert!(after.is_empty(), "everything just uploaded is present");
 
@@ -81,7 +91,11 @@ fn find_missing_blobs_reduces_uploads_to_only_what_is_absent() {
 
     let candidates: Vec<Digest> = all.iter().map(|(digest, _)| digest.clone()).collect();
     let missing = client.find_missing_blobs(&candidates).expect("preflight");
-    assert_eq!(missing.len(), absent.len(), "only the absent half is missing");
+    assert_eq!(
+        missing.len(),
+        absent.len(),
+        "only the absent half is missing"
+    );
     assert_eq!(
         server.batch_update_calls(),
         1,
@@ -123,7 +137,11 @@ fn a_blob_larger_than_the_batch_limit_uses_bytestream() {
     client
         .upload_blobs(&[(digest.clone(), data.clone())])
         .expect("large upload");
-    assert_eq!(server.bytestream_writes(), 1, "the large blob used ByteStream");
+    assert_eq!(
+        server.bytestream_writes(),
+        1,
+        "the large blob used ByteStream"
+    );
 
     let downloaded = client.download_blob(&digest).expect("large download");
     assert_eq!(downloaded, data);
@@ -171,7 +189,9 @@ fn execute_returns_the_servers_result() {
     let response = client
         .execute(&action_digest, true)
         .expect("execute must complete");
-    let result = response.result.expect("the response carries an ActionResult");
+    let result = response
+        .result
+        .expect("the response carries an ActionResult");
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout_raw, b"hello");
 }
@@ -239,4 +259,34 @@ fn only_the_two_grpc_schemes_are_accepted() {
     assert!(ReapiClient::connect(ReapiConfig::new("https://cache.example")).is_err());
     assert!(ReapiClient::connect(ReapiConfig::new("unix:///run/cache.sock")).is_err());
     assert!(ReapiClient::connect(ReapiConfig::new("cache.example:50051")).is_err());
+}
+
+#[test]
+fn an_authorization_header_is_sent_when_configured() {
+    let server = TestServer::start_with(Faults {
+        require_auth: Some("Bearer token".into()),
+        ..Faults::default()
+    });
+    assert!(
+        ReapiClient::connect(ReapiConfig::new(server.endpoint())).is_err(),
+        "a server that requires auth must refuse a client without it"
+    );
+    let client = ReapiClient::connect(ReapiConfig {
+        endpoint: server.endpoint().to_string(),
+        instance_name: String::new(),
+        timeout: Duration::from_secs(10),
+        auth_header: Some("Bearer token".into()),
+    })
+    .expect("the header is sent and accepted");
+    assert!(client.capabilities().cas_enabled);
+}
+
+#[test]
+fn a_trace_key_maps_to_one_stable_digest() {
+    let first = frostbuild_reapi::trace_key_digest("a".repeat(64).as_str());
+    let second = frostbuild_reapi::trace_key_digest("a".repeat(64).as_str());
+    let other = frostbuild_reapi::trace_key_digest("b".repeat(64).as_str());
+    assert_eq!(first, second, "the same key must address the same entry");
+    assert_ne!(first, other, "different keys must not collide");
+    assert_eq!(first.hash.len(), 64, "it is a SHA-256");
 }

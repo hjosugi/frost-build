@@ -1,0 +1,72 @@
+name: REAPI
+
+# The external interoperability gate. The in-process tests in `cargo test`
+# prove the client against its own server; this job proves the wire types
+# against BuildGrid, the OSS executor the certificate in
+# `bench/baselines/2026-07-28-buildgrid-reapi-poc.json` was recorded on, with a
+# real BuildBox worker for `Execute`.
+#
+# It is scheduled and manual rather than on every push because it builds
+# BuildGrid from source and starts BuildBox, which is minutes of container work
+# for a surface that changes rarely. Add a `pull_request` trigger with a `paths`
+# filter on `crates/frostbuild-reapi/**` and `scripts/reapi_poc.py` once this is
+# green on the runner.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buildgrid:
+    name: CAS/AC round trip and Execute against BuildGrid 0.8.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+
+      # The certified server, at the commit the certificate names.
+      - name: Check out BuildGrid
+        run: |
+          git clone --filter=blob:none https://gitlab.com/BuildGrid/buildgrid.git "$RUNNER_TEMP/buildgrid"
+          git -C "$RUNNER_TEMP/buildgrid" checkout ed56c818e162ee5af82f470b09a9bff35816ec5d
+
+      - name: Start BuildGrid and a BuildBox worker
+        working-directory: ${{ runner.temp }}/buildgrid
+        run: |
+          docker compose build
+          docker compose up -d --scale controller=1 --scale bots=1
+          for attempt in $(seq 1 60); do
+            if docker compose exec -T controller grpc_health_probe -addr=:50051; then
+              echo "BuildGrid is ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "BuildGrid did not become healthy" >&2
+          docker compose logs
+          exit 1
+
+      # The certificate client runs inside the BuildGrid image, which carries the
+      # generated REAPI Python modules and grpcio, with this repository mounted.
+      - name: Run the Python certificate
+        working-directory: ${{ runner.temp }}/buildgrid
+        run: |
+          docker compose run --rm --no-deps \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            controller python3 scripts/reapi_poc.py \
+              --remote http://nginx:50051 \
+              --input-root tests/fixtures/reapi \
+              --timeout 60 \
+              --platform OSFamily=linux \
+              --platform ISA=x86-64
+
+      - name: Rust CAS/Action Cache round trip
+        env:
+          FROST_REAPI_ENDPOINT: grpc://127.0.0.1:50051
+        run: cargo test --locked -p frostbuild-reapi --test buildgrid -- --nocapture

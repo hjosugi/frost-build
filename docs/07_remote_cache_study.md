@@ -83,12 +83,13 @@ shared cache in 2 ms with 5 hits and nothing executed.
 
 Deliberately not implemented yet:
 
-- REAPI protobuf/gRPC, ByteStream, `FindMissingBlobs` batching and compressor
-  negotiation. The layout is digest-addressed so it translates, but the wire
-  format is not REAPI yet
-- HTTPS. Rather than pretend to verify a certificate, `https://` is refused with
-  the suggestion to terminate TLS locally
-- chunk-level transfer (#82). Whole blobs move today; the chunk layer belongs on
-  top of a calibrated cost model rather than under an uncalibrated one
+- compressor negotiation (zstd/deflate transfer) and chunk-level transfer (#82).
+  Whole blobs move today; the chunk layer belongs on top of a calibrated cost
+  model rather than under an uncalibrated one. The REAPI protobuf/gRPC data
+  plane, ByteStream and `FindMissingBlobs` batching were added under #144 — see
+  [docs/11](11_remote_execution_study.md)
+- `https://`. Rather than pretend to verify a certificate, the HTTP backend
+  refuses `https://` with the suggestion to terminate TLS locally; TLS is carried
+  by REAPI's `grpcs://` instead
 - remote execution (#64), which needs this data plane first
 

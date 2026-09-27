@@ -172,6 +172,7 @@ frost -C myrepo query somepath app //libs/util:util
 # Shared cache across machines/CI: verified, optional, never load-bearing
 frost -C myrepo build --remote-cache http://cache.internal/frost
 frost -C myrepo build --remote-cache /mnt/shared/frost-cache --remote-upload
+frost -C myrepo build --remote-cache grpc://buildgrid.internal:50051 --remote-upload
 
 # IDE, trace and persistent service
 frost -C myrepo compdb
@@ -217,11 +218,13 @@ frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
   publication and positioned private-file restoration use the bounded Rayon
   pool without weakening the final digest gate
 - optional shared cache (`--remote-cache`, `--remote-upload`) over a shared
-  directory or plain HTTP: keyed by declared inputs with the producing run's
-  discovered inputs recorded as a verified trace, so a workspace with no journal
-  reuses compiles whose real inputs it has never read. Every response is digest
-  verified, executable mode is recovered from the digest, and any miss,
-  corruption or transport failure falls back to building locally
+  directory, plain HTTP or a REAPI v2 endpoint (`grpc://` / `grpcs://`): keyed
+  by declared inputs with the producing run's discovered inputs recorded as a
+  verified trace, so a workspace with no journal reuses compiles whose real
+  inputs it has never read. Every response is digest verified — a REAPI blob by
+  SHA-256 and again by the frost digest before it is staged — executable mode is
+  recovered from the digest, and any miss, corruption or transport failure falls
+  back to building locally
 - early cutoff, affected test selection and opt-in determinism checking;
   `frost test --coverage` adds a separate GCC/gcov configuration with
   content-keyed raw counters and deterministic per-test lcov output
@@ -390,7 +393,7 @@ guesses: a hand-written hook is left alone, and PowerShell/Nushell profiles —
 whose location depends on the host — print the snippet to paste instead.
 
 Beyond targets, profiles and platforms, `--remote-cache` completes the
-`file://`/`http://`/`https://` schemes and directories, `import-npm --script`
+`file://`/`grpc://`/`grpcs://`/`http://`/`https://` schemes and directories, `import-npm --script`
 reads the script names out of `package.json`, `frost info` completes its key
 names, and every path argument declares whether it wants a file, a directory
 or an executable. A unit test walks the whole command tree and fails when an

@@ -154,13 +154,13 @@ pub(crate) fn complete_profile(current: &OsStr) -> Vec<CompletionCandidate> {
     candidates(current, values)
 }
 
-/// A shared cache is a directory, a `file://` directory or an HTTP prefix.
-/// Offering the schemes turns "what can I even type here?" into a keystroke,
-/// and a path-looking value falls through to directory candidates.
+/// A shared cache is a directory, a `file://` directory, an HTTP prefix or a
+/// REAPI endpoint. Offering the schemes turns "what can I even type here?" into
+/// a keystroke, and a path-looking value falls through to directory candidates.
 pub(crate) fn complete_remote_cache(current: &OsStr) -> Vec<CompletionCandidate> {
     let text = current.to_string_lossy();
-    if text.is_empty() || ["f", "h"].iter().any(|start| text.starts_with(start)) {
-        let schemes = ["file://", "http://", "https://"]
+    if text.is_empty() || ["f", "h", "g"].iter().any(|start| text.starts_with(start)) {
+        let schemes = ["file://", "grpc://", "grpcs://", "http://", "https://"]
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();

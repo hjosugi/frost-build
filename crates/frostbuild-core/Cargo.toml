@@ -9,9 +9,18 @@ description = "Core graph, manifest, hashing, journal, and CAS types for FrostBu
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = ["reapi"]
+# The REAPI v2 gRPC client. It carries a large protocol stack (tonic, tokio,
+# rustls), so it can be dropped entirely with `--no-default-features`; the
+# `grpc://` / `grpcs://` backends then refuse the endpoint with a message that
+# names the feature rather than failing obscurely.
+reapi = ["dep:frostbuild-reapi"]
+
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+frostbuild-reapi = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -26,3 +35,4 @@ ignore.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+frostbuild-reapi.workspace = true

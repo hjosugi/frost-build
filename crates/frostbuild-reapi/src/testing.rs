@@ -35,6 +35,8 @@ pub struct Faults {
     pub disconnect_execute: bool,
     /// `FindMissingBlobs` claims every blob is missing, even present ones.
     pub always_missing: bool,
+    /// When set, every call must carry this exact `authorization` header.
+    pub require_auth: Option<String>,
 }
 
 #[derive(Default)]
@@ -78,9 +80,13 @@ impl TestServer {
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("server address");
-        listener.set_nonblocking(true).expect("nonblocking listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
         let (shutdown, receiver) = tokio::sync::oneshot::channel();
-        let service = State { inner: inner.clone() };
+        let service = State {
+            inner: inner.clone(),
+        };
         let handle = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -88,9 +94,7 @@ impl TestServer {
                 .expect("test server runtime");
             runtime.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).expect("tokio listener");
-                let incoming = tokio_stream::wrappers::TcpListenerStream::new(
-                    listener,
-                );
+                let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
                 let services = (
                     repb::capabilities_server::CapabilitiesServer::new(service.clone()),
                     repb::content_addressable_storage_server::ContentAddressableStorageServer::new(
@@ -142,7 +146,10 @@ impl TestServer {
     }
 
     pub fn find_missing_calls(&self) -> u64 {
-        self.inner.counters.find_missing_calls.load(Ordering::Relaxed)
+        self.inner
+            .counters
+            .find_missing_calls
+            .load(Ordering::Relaxed)
     }
 
     pub fn batch_read_calls(&self) -> u64 {
@@ -150,11 +157,17 @@ impl TestServer {
     }
 
     pub fn batch_update_calls(&self) -> u64 {
-        self.inner.counters.batch_update_calls.load(Ordering::Relaxed)
+        self.inner
+            .counters
+            .batch_update_calls
+            .load(Ordering::Relaxed)
     }
 
     pub fn bytestream_writes(&self) -> u64 {
-        self.inner.counters.bytestream_writes.load(Ordering::Relaxed)
+        self.inner
+            .counters
+            .bytestream_writes
+            .load(Ordering::Relaxed)
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -195,8 +208,17 @@ fn digest_key(digest: &repb::Digest) -> String {
 impl repb::capabilities_server::Capabilities for State {
     async fn get_capabilities(
         &self,
-        _request: Request<repb::GetCapabilitiesRequest>,
+        request: Request<repb::GetCapabilitiesRequest>,
     ) -> Result<Response<repb::ServerCapabilities>, Status> {
+        if let Some(expected) = &self.inner.faults.require_auth {
+            let got = request
+                .metadata()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok());
+            if got != Some(expected.as_str()) {
+                return Err(Status::unauthenticated("authorization header required"));
+            }
+        }
         Ok(Response::new(repb::ServerCapabilities {
             cache_capabilities: Some(repb::CacheCapabilities {
                 digest_functions: vec![1],
@@ -321,14 +343,18 @@ impl repb::content_addressable_storage_server::ContentAddressableStorage for Sta
         &self,
         _request: Request<repb::GetTreeRequest>,
     ) -> Result<Response<Self::GetTreeStream>, Status> {
-        Err(Status::unimplemented("GetTree is not exercised by these tests"))
+        Err(Status::unimplemented(
+            "GetTree is not exercised by these tests",
+        ))
     }
 
     async fn split_blob(
         &self,
         _request: Request<repb::SplitBlobRequest>,
     ) -> Result<Response<repb::SplitBlobResponse>, Status> {
-        Err(Status::unimplemented("SplitBlob is not exercised by these tests"))
+        Err(Status::unimplemented(
+            "SplitBlob is not exercised by these tests",
+        ))
     }
 
     async fn get_chunk_mapping(
@@ -344,7 +370,9 @@ impl repb::content_addressable_storage_server::ContentAddressableStorage for Sta
         &self,
         _request: Request<repb::SpliceBlobRequest>,
     ) -> Result<Response<repb::SpliceBlobResponse>, Status> {
-        Err(Status::unimplemented("SpliceBlob is not exercised by these tests"))
+        Err(Status::unimplemented(
+            "SpliceBlob is not exercised by these tests",
+        ))
     }
 
     async fn register_chunk_mapping(
@@ -422,9 +450,9 @@ impl repb::execution_server::Execution for State {
                 done: false,
                 ..Default::default()
             };
-            return Ok(Response::new(Box::pin(tokio_stream::iter(
-                vec![Ok(unfinished)],
-            ))));
+            return Ok(Response::new(Box::pin(tokio_stream::iter(vec![Ok(
+                unfinished,
+            )]))));
         }
         let result = self
             .inner
@@ -450,9 +478,9 @@ impl repb::execution_server::Execution for State {
             })),
             ..Default::default()
         };
-        Ok(Response::new(Box::pin(tokio_stream::iter(
-            vec![Ok(operation)],
-        ))))
+        Ok(Response::new(Box::pin(tokio_stream::iter(vec![Ok(
+            operation,
+        )]))))
     }
 
     async fn wait_execution(
@@ -494,9 +522,9 @@ impl crate::proto::google::bytestream::byte_stream_server::ByteStream for State 
         let cas = self.inner.cas.lock().unwrap();
         let data = cas.get(&key).cloned().unwrap_or_default();
         let response = crate::proto::google::bytestream::ReadResponse { data };
-        Ok(Response::new(Box::pin(tokio_stream::iter(
-            vec![Ok(response)],
-        ))))
+        Ok(Response::new(Box::pin(tokio_stream::iter(vec![Ok(
+            response,
+        )]))))
     }
 
     async fn write(

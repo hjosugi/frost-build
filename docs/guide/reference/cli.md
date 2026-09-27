@@ -242,7 +242,7 @@ Options:
           A failing [stamp] command leaves the values empty instead of failing the build. Off by default: a status script that stopped working should be noticed, not silently ship a binary with no version in it
 
       --remote-cache <ENDPOINT>
-          Shared cache consulted when the local journal misses: a directory path, file:///path, or http://host/prefix. Never required for correctness — every response is verified and any failure falls back to building locally
+          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). Never required for correctness — every response is verified and any failure falls back to building locally
 
       --remote-upload
           Also publish what this build produces to --remote-cache
@@ -1967,7 +1967,7 @@ Options:
           [default: errors]
 
       --remote-cache <ENDPOINT>
-          Shared cache consulted when the local journal misses: a directory path, file:///path, or http://host/prefix. Never required for correctness — every response is verified and any failure falls back to building locally
+          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). Never required for correctness — every response is verified and any failure falls back to building locally
 
       --remote-upload
           Also publish what this build produces to --remote-cache

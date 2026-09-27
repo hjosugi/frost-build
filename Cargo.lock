@@ -624,6 +624,7 @@ dependencies = [
  "frostbuild-core",
  "frostbuild-daemon",
  "frostbuild-exec",
+ "frostbuild-reapi",
  "glob",
  "libc",
  "notify",
@@ -644,6 +645,7 @@ version = "0.14.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "frostbuild-reapi",
  "glob",
  "ignore",
  "memmap2",

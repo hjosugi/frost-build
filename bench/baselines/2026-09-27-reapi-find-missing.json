@@ -1,0 +1,12 @@
+{
+  "schema": "frost-reapi-find-missing-v1",
+  "captured_on": "2026-09-27",
+  "command": "cargo run -p frostbuild-reapi --example measure_find_missing",
+  "server": "in-process tonic",
+  "note": "Upload-set reduction from a FindMissingBlobs preflight, reproducing acceptance criterion 2 of issue #144. The shape depends only on how many candidates are already present, so the in-process server keeps the measurement free of network variance.",
+  "candidates": 1000,
+  "already_present": 500,
+  "uploads_without_preflight": 1000,
+  "uploads_with_preflight": 500,
+  "reduction_percent": 50.0
+}

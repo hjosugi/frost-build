@@ -65,10 +65,15 @@ pub struct ReapiClient {
 /// Request header `authorization` is carried per call rather than through a
 /// generic interceptor, so the client types stay concrete and the auth is
 /// visible at each call site.
-fn request<T>(auth: Option<&MetadataValue<tonic::metadata::Ascii>>, payload: T) -> tonic::Request<T> {
+fn request<T>(
+    auth: Option<&MetadataValue<tonic::metadata::Ascii>>,
+    payload: T,
+) -> tonic::Request<T> {
     let mut request = tonic::Request::new(payload);
     if let Some(value) = auth {
-        request.metadata_mut().insert("authorization", value.clone());
+        request
+            .metadata_mut()
+            .insert("authorization", value.clone());
     }
     request
 }
@@ -181,7 +186,9 @@ impl ReapiClient {
             let response = self
                 .runtime
                 .block_on(async {
-                    client.find_missing_blobs(request(auth.as_ref(), payload)).await
+                    client
+                        .find_missing_blobs(request(auth.as_ref(), payload))
+                        .await
                 })
                 .map_err(|status| ReapiError::from_status(&status))?
                 .into_inner();
@@ -226,7 +233,9 @@ impl ReapiClient {
             let response = self
                 .runtime
                 .block_on(async {
-                    client.batch_update_blobs(request(auth.as_ref(), payload)).await
+                    client
+                        .batch_update_blobs(request(auth.as_ref(), payload))
+                        .await
                 })
                 .map_err(|status| ReapiError::from_status(&status))?
                 .into_inner();
@@ -274,17 +283,17 @@ impl ReapiClient {
             let response = self
                 .runtime
                 .block_on(async {
-                    client.batch_read_blobs(request(auth.as_ref(), payload)).await
+                    client
+                        .batch_read_blobs(request(auth.as_ref(), payload))
+                        .await
                 })
                 .map_err(|status| ReapiError::from_status(&status))?
                 .into_inner();
-            let answer = response
-                .responses
-                .into_iter()
-                .next()
-                .ok_or_else(|| ReapiError::PartialResponse {
+            let answer = response.responses.into_iter().next().ok_or_else(|| {
+                ReapiError::PartialResponse {
                     digest: digest.key(),
-                })?;
+                }
+            })?;
             if let Some(status) = &answer.status {
                 if status.code != 0 {
                     return Err(ReapiError::BlobRejected {
@@ -307,8 +316,7 @@ impl ReapiClient {
         &self,
         action_digest: &Digest,
     ) -> Result<Option<repb::ActionResult>, ReapiError> {
-        let mut client =
-            repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
+        let mut client = repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
         let auth = self.auth();
         let payload = repb::GetActionResultRequest {
             instance_name: self.config.instance_name.clone(),
@@ -319,7 +327,9 @@ impl ReapiClient {
             digest_function: self.capabilities.digest_function.reapi_value(),
         };
         let result = self.runtime.block_on(async {
-            client.get_action_result(request(auth.as_ref(), payload)).await
+            client
+                .get_action_result(request(auth.as_ref(), payload))
+                .await
         });
         match result {
             Ok(response) => Ok(Some(response.into_inner())),
@@ -333,8 +343,7 @@ impl ReapiClient {
         action_digest: &Digest,
         result: repb::ActionResult,
     ) -> Result<(), ReapiError> {
-        let mut client =
-            repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
+        let mut client = repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
         let auth = self.auth();
         let payload = repb::UpdateActionResultRequest {
             instance_name: self.config.instance_name.clone(),
@@ -345,7 +354,9 @@ impl ReapiClient {
         };
         self.runtime
             .block_on(async {
-                client.update_action_result(request(auth.as_ref(), payload)).await
+                client
+                    .update_action_result(request(auth.as_ref(), payload))
+                    .await
             })
             .map_err(|status| ReapiError::from_status(&status))?;
         Ok(())
@@ -401,9 +412,10 @@ impl ReapiClient {
     }
 
     fn read_bytestream(&self, digest: &Digest) -> Result<Vec<u8>, ReapiError> {
-        let mut client = crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
-            self.channel.clone(),
-        );
+        let mut client =
+            crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
+                self.channel.clone(),
+            );
         let auth = self.auth();
         let payload = crate::proto::google::bytestream::ReadRequest {
             resource_name: self.resource_name(digest, false),
@@ -421,9 +433,7 @@ impl ReapiClient {
                 let mut stream = response;
                 while let Some(chunk) = tokio::time::timeout(timeout, stream.message())
                     .await
-                    .map_err(|_| {
-                        tonic::Status::deadline_exceeded("ByteStream read timed out")
-                    })??
+                    .map_err(|_| tonic::Status::deadline_exceeded("ByteStream read timed out"))??
                 {
                     data.extend_from_slice(&chunk.data);
                 }
@@ -433,9 +443,10 @@ impl ReapiClient {
     }
 
     fn write_bytestream(&self, digest: &Digest, data: &[u8]) -> Result<(), ReapiError> {
-        let mut client = crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
-            self.channel.clone(),
-        );
+        let mut client =
+            crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
+                self.channel.clone(),
+            );
         let auth = self.auth();
         let resource = self.resource_name(digest, true);
         let chunk_size = 1024 * 1024;
@@ -449,9 +460,8 @@ impl ReapiClient {
         let timeout = self.config.timeout;
         self.runtime
             .block_on(async {
-                let (sender, receiver) = tokio::sync::mpsc::channel::<
-                    crate::proto::google::bytestream::WriteRequest,
-                >(1);
+                let (sender, receiver) =
+                    tokio::sync::mpsc::channel::<crate::proto::google::bytestream::WriteRequest>(1);
                 let resource = resource.clone();
                 let producer = tokio::spawn(async move {
                     let mut offset = 0i64;
@@ -472,7 +482,9 @@ impl ReapiClient {
                 let stream = tokio_stream::wrappers::ReceiverStream::new(receiver);
                 let mut message = tonic::Request::new(stream);
                 if let Some(value) = auth.as_ref() {
-                    message.metadata_mut().insert("authorization", value.clone());
+                    message
+                        .metadata_mut()
+                        .insert("authorization", value.clone());
                 }
                 let response = tokio::time::timeout(timeout, client.write(message)).await;
                 let _ = producer.await;
@@ -511,9 +523,9 @@ fn finish_execution(
     operations: Vec<crate::proto::google::longrunning::Operation>,
 ) -> Result<repb::ExecuteResponse, ReapiError> {
     use crate::proto::google::longrunning::operation::Result as OperationResult;
-    let last = operations
-        .last()
-        .ok_or_else(|| ReapiError::Transport("the Execute stream ended before an operation".into()))?;
+    let last = operations.last().ok_or_else(|| {
+        ReapiError::Transport("the Execute stream ended before an operation".into())
+    })?;
     if !last.done {
         return Err(ReapiError::Transport(
             "the Execute stream ended before the operation completed".into(),
@@ -524,14 +536,45 @@ fn finish_execution(
             code: status.code,
             message: status.message.clone(),
         }),
-        Some(OperationResult::Response(any)) => {
-            prost::Message::decode(any.value.as_slice())
-                .map_err(|error| ReapiError::Other(error.to_string()))
-        }
+        Some(OperationResult::Response(any)) => prost::Message::decode(any.value.as_slice())
+            .map_err(|error| ReapiError::Other(error.to_string())),
         _ => Err(ReapiError::PartialResponse {
             digest: last.name.clone(),
         }),
     }
+}
+
+/// A deterministic REAPI `Action` digest for a frost trace key, with the
+/// `Command` and `Action` blobs it references.
+///
+/// A REAPI Action Cache is addressed by an `Action` digest, but a frost trace
+/// entry is keyed by a key over the action's declared inputs, not by a
+/// serialized build action. This builds the smallest valid, deterministic
+/// `Action` whose identity is the key, so an entry can be read and written
+/// through the real `Get/UpdateActionResult` calls. The blobs are returned so a
+/// publisher can put them in the CAS first, which a server that validates an
+/// `ActionResult` against its action requires. The action is never executed.
+pub fn trace_key_blobs(key: &str) -> (Digest, Vec<(Digest, Vec<u8>)>) {
+    use prost::Message;
+    let command_bytes = repb::Command::default().encode_to_vec();
+    let command_digest = Digest::sha256(&command_bytes);
+    let action = repb::Action {
+        command_digest: Some(to_proto_digest(&command_digest)),
+        input_root_digest: Some(to_proto_digest(&Digest::sha256(key.as_bytes()))),
+        ..Default::default()
+    };
+    let action_bytes = action.encode_to_vec();
+    let action_digest = Digest::sha256(&action_bytes);
+    let blobs = vec![
+        (command_digest, command_bytes),
+        (action_digest.clone(), action_bytes),
+    ];
+    (action_digest, blobs)
+}
+
+/// The `Action` digest `trace_key_blobs` names, for a lookup.
+pub fn trace_key_digest(key: &str) -> Digest {
+    trace_key_blobs(key).0
 }
 
 /// Translate `grpc://` / `grpcs://` into the `http`/`https` scheme tonic needs.

@@ -1662,6 +1662,56 @@ fn a_shared_cache_builds_a_cold_workspace_without_executing_anything() {
     std::fs::remove_dir_all(shared).ok();
 }
 
+/// The same cold-workspace contract as the shared-directory test, but through
+/// the REAPI v2 gRPC backend: a producer publishes CAS blobs and an Action
+/// Cache entry to an in-process server, and a second workspace takes everything
+/// from it without executing anything.
+#[test]
+fn a_reapi_shared_cache_builds_a_cold_workspace_without_executing_anything() {
+    let server = frostbuild_reapi::testing::TestServer::start();
+    let endpoint = server.endpoint().to_string();
+
+    let producer = Workspace::new("reapi-producer");
+    let (ok, out) = producer.frost(&[
+        "build",
+        "--remote-cache",
+        &endpoint,
+        "--remote-upload",
+        "--explain",
+    ]);
+    assert!(ok, "producing build failed:\n{out}");
+    assert!(
+        !out.contains("0 up ("),
+        "the producing build must publish:\n{out}"
+    );
+    assert!(
+        server.cas_count() > 0,
+        "the REAPI CAS must receive the produced blobs"
+    );
+
+    let consumer = Workspace::new("reapi-consumer");
+    let (ok, out) = consumer.frost(&["build", "--remote-cache", &endpoint, "--explain"]);
+    assert!(ok, "consuming build failed:\n{out}");
+    assert!(
+        !out.contains(" ran "),
+        "a cold workspace must not execute anything with a warm REAPI cache:\n{out}"
+    );
+    assert_eq!(
+        consumer.run_app(),
+        "frost: 42\n",
+        "and must produce the binary"
+    );
+
+    // An unreachable endpoint is a per-request fallback, exactly as for HTTP:
+    // the build succeeds and only the counters show the cost.
+    let stale = Workspace::new("reapi-unreachable");
+    let (ok, out) = stale.frost(&["build", "--remote-cache", "grpc://127.0.0.1:1"]);
+    assert!(
+        ok,
+        "an unreachable REAPI cache must not fail the build:\n{out}"
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn pty_command_line(workspace: &Path, args: &[&str]) -> String {
     let command = std::iter::once(frost_bin().to_string())
