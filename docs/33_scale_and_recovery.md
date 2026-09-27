@@ -136,6 +136,11 @@ rather than the first sample: the run fails if the last tenth holds more than
 8 descriptors above the baseline, or a median RSS more than 1.5× the baseline
 plus 32 MiB, or if the journal ever exceeds twice its compaction threshold.
 
+`frost watch` runs each build in a child of the watcher, so the watcher's own
+resident set is one watcher plus one build rather than the allocator high-water
+of every build it has run. That is what keeps the soak's watcher bounded; the
+daemon is already bounded the same way, because it runs each request as a child.
+
 The `soak` job of `quality.yml` runs this for 45 minutes nightly; its report is
 checked in beside the other baselines once a run on `main` completes.
 

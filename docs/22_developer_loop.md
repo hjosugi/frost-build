@@ -47,6 +47,13 @@ events, `.git`, Frost's internal tree, declared outputs and owned clean
 directories. That prevents executed tool wrappers, builds and the action
 materializer from retriggering the watch loop themselves.
 
+Each rebuild runs in a child of the watcher, as the same binary with the same
+request. A watcher is long-lived and a build allocates far more than the watcher
+itself holds, so isolating every build keeps a watch that runs for hours at the
+memory of one build rather than growing with every edit (#149); a build that
+crashes cannot take the watcher down with it either. Stdio is inherited, so
+per-action progress stays live.
+
 `--run` is direct argv, not a shell string. Frost keeps the last successful
 development process alive while a later build is broken, and replaces it only
 after a successful rebuild. Restart stops the complete child process tree, not

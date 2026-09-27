@@ -5,6 +5,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- `frost watch` (and `frost dev`) runs each rebuild in a child of the watcher.
+  A long-lived watcher used to accumulate the in-process build's allocator
+  high-water, growing with the number of edits; the nightly soak in
+  `quality.yml` measured roughly 100 KiB per build and failed the memory gate.
+  The watcher now holds one build's memory rather than every build's, a build
+  that crashes cannot take the watcher down, and stdio is inherited so
+  per-action progress stays live.
+
 ## [0.15.1] - 2026-09-27
 
 ### Added

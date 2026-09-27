@@ -20,8 +20,6 @@ use anyhow::Result;
 use notify::RecursiveMode;
 use notify::Watcher;
 
-use crate::build::{run_build, BuildRequest};
-use crate::cli::{EstimatorArg, SchedulerArg, TestOutputArg};
 use crate::graph::{load_graph, resolve_targets};
 use crate::launch::{runtime_argv, target_runtime_output};
 
@@ -45,48 +43,6 @@ pub(crate) struct AutoRun {
 pub(crate) struct WatchExclusions {
     pub(crate) outputs: BTreeSet<PathBuf>,
     pub(crate) clean_dirs: Vec<PathBuf>,
-}
-
-fn watch_build_request(request: &WatchRequest) -> BuildRequest {
-    BuildRequest {
-        targets: request.targets.clone(),
-        jobs: request.jobs,
-        local_cpu_resources: None,
-        local_ram_resources: None,
-        local_test_jobs: None,
-        keep_going: true,
-        explain: false,
-        verbose: false,
-        profile: request.profile.clone(),
-        platform: request.platform.clone(),
-        no_cache: false,
-        sandbox: false,
-        hermetic: false,
-        materialize: crate::cli::MaterializeArg::Auto,
-        check_determinism: false,
-        trace: None,
-        report: None,
-        stats: false,
-        remote_cache: None,
-        remote_upload: false,
-        remote_timeout: 10,
-        no_tui: false,
-        timeout: None,
-        test_mode: false,
-        test_options: Default::default(),
-        runs_per_test: 1,
-        test_output: TestOutputArg::Errors,
-        build_event_json: None,
-        no_stamp: false,
-        stamp_optional: false,
-        daemon: false,
-        affected: false,
-        predictive: false,
-        all: false,
-        scheduler: SchedulerArg::CriticalPath,
-        estimator: EstimatorArg::Journal,
-        coverage: false,
-    }
 }
 
 fn watch_exclusions(root: &Path, profile: &str, platform: &str) -> WatchExclusions {
@@ -256,6 +212,35 @@ pub(crate) fn run_dev(
     )
 }
 
+/// Run one watched build in a child of this process.
+///
+/// `watch` is long-lived, and a build allocates and frees far more than the
+/// watcher itself holds. Running it in-process accumulated allocator and
+/// per-build high-water memory across edits — the soak gate in #149 measured
+/// the watcher growing with the number of builds. A child returns all of it on
+/// exit, so a watcher that runs for hours holds one build's memory, not every
+/// build's. The child is this same binary with the same flags, so the build is
+/// identical to the one `run_build` would have produced; only the isolation
+/// changes. Stdio is inherited, so per-action progress stays live.
+fn run_watch_build(root: &Path, request: &WatchRequest) -> Result<i32> {
+    let executable = std::env::current_exe().context("resolving the frost executable")?;
+    let mut command = Command::new(executable);
+    command.arg("-C").arg(root).arg("build");
+    command.args(&request.targets);
+    command.args(["--profile", &request.profile]);
+    command.args(["--platform", &request.platform]);
+    // `watch` builds the whole requested closure and keeps going: a failing
+    // target must not stop the rest from being rebuilt on the next edit.
+    command.arg("--keep-going");
+    if let Some(jobs) = request.jobs {
+        command.args(["-j", &jobs.to_string()]);
+    }
+    let status = command
+        .status()
+        .with_context(|| format!("failed to start a build for {}", root.display()))?;
+    Ok(status.code().unwrap_or(1))
+}
+
 pub(crate) fn run_watch(root: &Path, request: WatchRequest) -> Result<i32> {
     let (sender, receiver) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |event| {
@@ -271,7 +256,7 @@ pub(crate) fn run_watch(root: &Path, request: WatchRequest) -> Result<i32> {
     );
     println!("|-- initial build");
     let mut child = None;
-    match run_build(root, watch_build_request(&request)) {
+    match run_watch_build(root, &request) {
         Ok(0) => {
             let argv = watch_run_argv(root, &request);
             if let Err(error) = argv.and_then(|argv| restart_dev_process(root, &argv, &mut child)) {
@@ -351,7 +336,7 @@ pub(crate) fn run_watch(root: &Path, request: WatchRequest) -> Result<i32> {
             println!("    … and {} more", changed.len() - 4);
         }
 
-        match run_build(root, watch_build_request(&request)) {
+        match run_watch_build(root, &request) {
             Ok(0) => {
                 exclusions = watch_exclusions(root, &request.profile, &request.platform);
                 let argv = watch_run_argv(root, &request);
