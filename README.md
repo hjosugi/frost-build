@@ -463,6 +463,7 @@ python3 -m unittest discover -s tests
 ./frost-bench run --suite standard \
   --tools frost,ninja,make --sizes 1000,10000 --iterations 5 --jobs 8
 
+# Every graph shape against Bazel, with the disk cache and the Frost daemon:
 BAZEL_BIN=/path/to/bazel scripts/compare_bazel.sh
 
 FROST_BIN=target/release/frost GRADLE_BIN=/path/to/gradle \
@@ -514,6 +515,15 @@ before timing. On the recorded E14 run, Frost was 3.17x faster for no-op and
 2.89x faster for a leaf-only rebuild. This is a workload-specific local result,
 not a universal speed claim; the report also records a high starting load
 average and that Bazel had no external CAS configured.
+
+The current comparison (`bench/baselines/2026-09-27-issue-159-frost-bazel-*`)
+re-ran Frost against Bazel across `linear`, `wide` and `packages` shapes at
+1,000 and 2,000 targets, with Bazel's `--disk_cache` and `frost-daemon` both
+measured, recorded by the nightly `graph-shapes` job. Typical recorded shapes:
+Frost's no-op and one-leaf rebuilds stay in single-digit and tens of
+milliseconds while Bazel's are hundreds; a cold Bazel build is the slowest row,
+dominated by Bazelisk and server startup on the runner, which the report records
+rather than hides.
 
 The checked one-target warm no-op report rotates all paths over 31 samples:
 standalone CLI measured 2.043 ms, end-to-end daemon CLI 1.711 ms and the daemon

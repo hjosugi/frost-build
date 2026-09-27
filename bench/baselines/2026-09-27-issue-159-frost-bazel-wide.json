@@ -1,0 +1,743 @@
+{
+  "config": {
+    "iterations": 3,
+    "jobs": 4,
+    "scenarios": [
+      "clean",
+      "noop",
+      "incremental_leaf",
+      "hot_header",
+      "cache_hit_rebuild"
+    ],
+    "shape": "wide",
+    "sizes": [
+      1000,
+      2000
+    ],
+    "tools": [
+      "frost",
+      "frost-daemon",
+      "ninja",
+      "make",
+      "bazel"
+    ]
+  },
+  "digest": "ecee725c1d52a7e59c7dfea8c3c483d764f28904b1a4821b1496bcfcaf95e5de",
+  "environment": {
+    "captured_at": "2026-09-27T11:21:46Z",
+    "cpu_count": 4,
+    "cpu_governor": null,
+    "hostname": "runnervmtr4k5",
+    "load_avg": [
+      2.4736328125,
+      1.9990234375,
+      1.0888671875
+    ],
+    "machine": "x86_64",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python": "3.12.3",
+    "turbo": null
+  },
+  "generated_at": "2026-09-27T11:25:27Z",
+  "results": [
+    {
+      "graph": {
+        "action_count": 1034,
+        "dependency_edge_count": 1033,
+        "edge_digest_sha256": "b2cc43aa51f61ccafc7637adf351337537d45c1953b13f5299cc874b2872fcb2",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 6.269,
+          "median_ms": 6.108,
+          "min_ms": 6.062,
+          "samples_ms": [
+            6.269,
+            6.108,
+            6.062
+          ]
+        },
+        "clean": {
+          "max_ms": 928.178,
+          "median_ms": 922.067,
+          "min_ms": 918.47,
+          "samples_ms": [
+            928.178,
+            922.067,
+            918.47
+          ]
+        },
+        "hot_header": {
+          "max_ms": 919.204,
+          "median_ms": 911.036,
+          "min_ms": 903.008,
+          "samples_ms": [
+            919.204,
+            903.008,
+            911.036
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 30.943,
+          "median_ms": 29.145,
+          "min_ms": 28.048,
+          "samples_ms": [
+            29.145,
+            28.048,
+            30.943
+          ]
+        },
+        "noop": {
+          "max_ms": 6.289,
+          "median_ms": 6.275,
+          "min_ms": 6.203,
+          "samples_ms": [
+            6.289,
+            6.203,
+            6.275
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "frost",
+      "version": "frost 0.15.1"
+    },
+    {
+      "graph": {
+        "action_count": 1034,
+        "dependency_edge_count": 1033,
+        "edge_digest_sha256": "b2cc43aa51f61ccafc7637adf351337537d45c1953b13f5299cc874b2872fcb2",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 24.186,
+          "median_ms": 24.063,
+          "min_ms": 23.84,
+          "samples_ms": [
+            24.186,
+            24.063,
+            23.84
+          ]
+        },
+        "clean": {
+          "max_ms": 1012.528,
+          "median_ms": 1007.967,
+          "min_ms": 1004.442,
+          "samples_ms": [
+            1004.442,
+            1007.967,
+            1012.528
+          ]
+        },
+        "hot_header": {
+          "max_ms": 993.167,
+          "median_ms": 990.917,
+          "min_ms": 983.679,
+          "samples_ms": [
+            983.679,
+            990.917,
+            993.167
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 35.912,
+          "median_ms": 34.524,
+          "min_ms": 33.326,
+          "samples_ms": [
+            35.912,
+            33.326,
+            34.524
+          ]
+        },
+        "noop": {
+          "max_ms": 24.671,
+          "median_ms": 23.949,
+          "min_ms": 23.859,
+          "samples_ms": [
+            24.671,
+            23.859,
+            23.949
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "frost-daemon",
+      "version": "frost 0.15.1"
+    },
+    {
+      "graph": {
+        "action_count": 1034,
+        "dependency_edge_count": 1033,
+        "edge_digest_sha256": "b2cc43aa51f61ccafc7637adf351337537d45c1953b13f5299cc874b2872fcb2",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "applicable": false,
+          "reason": "ninja has no content-addressed action cache in this harness"
+        },
+        "clean": {
+          "max_ms": 289.775,
+          "median_ms": 288.379,
+          "min_ms": 286.833,
+          "samples_ms": [
+            289.775,
+            286.833,
+            288.379
+          ]
+        },
+        "hot_header": {
+          "max_ms": 332.718,
+          "median_ms": 327.062,
+          "min_ms": 299.47,
+          "samples_ms": [
+            299.47,
+            327.062,
+            332.718
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 11.142,
+          "median_ms": 10.472,
+          "min_ms": 10.455,
+          "samples_ms": [
+            10.472,
+            11.142,
+            10.455
+          ]
+        },
+        "noop": {
+          "max_ms": 7.78,
+          "median_ms": 7.623,
+          "min_ms": 7.507,
+          "samples_ms": [
+            7.78,
+            7.623,
+            7.507
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "ninja",
+      "version": "1.13.2"
+    },
+    {
+      "graph": {
+        "action_count": 1034,
+        "dependency_edge_count": 1033,
+        "edge_digest_sha256": "b2cc43aa51f61ccafc7637adf351337537d45c1953b13f5299cc874b2872fcb2",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "applicable": false,
+          "reason": "make has no content-addressed action cache in this harness"
+        },
+        "clean": {
+          "max_ms": 543.753,
+          "median_ms": 530.281,
+          "min_ms": 529.31,
+          "samples_ms": [
+            530.281,
+            529.31,
+            543.753
+          ]
+        },
+        "hot_header": {
+          "max_ms": 553.951,
+          "median_ms": 553.165,
+          "min_ms": 526.382,
+          "samples_ms": [
+            526.382,
+            553.165,
+            553.951
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 201.6,
+          "median_ms": 201.208,
+          "min_ms": 197.961,
+          "samples_ms": [
+            197.961,
+            201.6,
+            201.208
+          ]
+        },
+        "noop": {
+          "max_ms": 197.296,
+          "median_ms": 196.201,
+          "min_ms": 195.181,
+          "samples_ms": [
+            197.296,
+            196.201,
+            195.181
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "make",
+      "version": "GNU Make 4.3"
+    },
+    {
+      "graph": {
+        "action_count": 1034,
+        "dependency_edge_count": 1033,
+        "edge_digest_sha256": "b2cc43aa51f61ccafc7637adf351337537d45c1953b13f5299cc874b2872fcb2",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 5666.634,
+          "median_ms": 5636.313,
+          "min_ms": 5582.807,
+          "samples_ms": [
+            5636.313,
+            5582.807,
+            5666.634
+          ]
+        },
+        "clean": {
+          "max_ms": 9315.136,
+          "median_ms": 7619.203,
+          "min_ms": 7447.428,
+          "samples_ms": [
+            9315.136,
+            7447.428,
+            7619.203
+          ]
+        },
+        "hot_header": {
+          "max_ms": 3045.77,
+          "median_ms": 2767.564,
+          "min_ms": 2625.772,
+          "samples_ms": [
+            3045.77,
+            2767.564,
+            2625.772
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 475.459,
+          "median_ms": 442.963,
+          "min_ms": 404.251,
+          "samples_ms": [
+            475.459,
+            442.963,
+            404.251
+          ]
+        },
+        "noop": {
+          "max_ms": 436.03,
+          "median_ms": 394.47,
+          "min_ms": 368.57,
+          "samples_ms": [
+            436.03,
+            368.57,
+            394.47
+          ]
+        }
+      },
+      "size": 1000,
+      "status": "ok",
+      "target_count": 1000,
+      "tool": "bazel",
+      "version": "bazel 9.2.0"
+    },
+    {
+      "graph": {
+        "action_count": 2067,
+        "dependency_edge_count": 2066,
+        "edge_digest_sha256": "734652364ecb3c8ec99820cb05a0bf7c9963599c25c14fd3ac10cec1d6f6263a",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 10.1,
+          "median_ms": 9.905,
+          "min_ms": 9.814,
+          "samples_ms": [
+            9.814,
+            9.905,
+            10.1
+          ]
+        },
+        "clean": {
+          "max_ms": 1831.204,
+          "median_ms": 1828.837,
+          "min_ms": 1826.048,
+          "samples_ms": [
+            1826.048,
+            1831.204,
+            1828.837
+          ]
+        },
+        "hot_header": {
+          "max_ms": 1883.19,
+          "median_ms": 1805.293,
+          "min_ms": 1790.691,
+          "samples_ms": [
+            1790.691,
+            1805.293,
+            1883.19
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 47.781,
+          "median_ms": 46.556,
+          "min_ms": 45.622,
+          "samples_ms": [
+            47.781,
+            46.556,
+            45.622
+          ]
+        },
+        "noop": {
+          "max_ms": 9.662,
+          "median_ms": 9.609,
+          "min_ms": 9.346,
+          "samples_ms": [
+            9.662,
+            9.609,
+            9.346
+          ]
+        }
+      },
+      "size": 2000,
+      "status": "ok",
+      "target_count": 2000,
+      "tool": "frost",
+      "version": "frost 0.15.1"
+    },
+    {
+      "graph": {
+        "action_count": 2067,
+        "dependency_edge_count": 2066,
+        "edge_digest_sha256": "734652364ecb3c8ec99820cb05a0bf7c9963599c25c14fd3ac10cec1d6f6263a",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 45.265,
+          "median_ms": 44.815,
+          "min_ms": 44.736,
+          "samples_ms": [
+            45.265,
+            44.815,
+            44.736
+          ]
+        },
+        "clean": {
+          "max_ms": 1994.787,
+          "median_ms": 1991.995,
+          "min_ms": 1985.174,
+          "samples_ms": [
+            1985.174,
+            1991.995,
+            1994.787
+          ]
+        },
+        "hot_header": {
+          "max_ms": 1954.384,
+          "median_ms": 1950.509,
+          "min_ms": 1934.046,
+          "samples_ms": [
+            1934.046,
+            1950.509,
+            1954.384
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 51.732,
+          "median_ms": 47.998,
+          "min_ms": 46.695,
+          "samples_ms": [
+            51.732,
+            46.695,
+            47.998
+          ]
+        },
+        "noop": {
+          "max_ms": 45.963,
+          "median_ms": 44.59,
+          "min_ms": 44.562,
+          "samples_ms": [
+            45.963,
+            44.59,
+            44.562
+          ]
+        }
+      },
+      "size": 2000,
+      "status": "ok",
+      "target_count": 2000,
+      "tool": "frost-daemon",
+      "version": "frost 0.15.1"
+    },
+    {
+      "graph": {
+        "action_count": 2067,
+        "dependency_edge_count": 2066,
+        "edge_digest_sha256": "734652364ecb3c8ec99820cb05a0bf7c9963599c25c14fd3ac10cec1d6f6263a",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "applicable": false,
+          "reason": "ninja has no content-addressed action cache in this harness"
+        },
+        "clean": {
+          "max_ms": 568.749,
+          "median_ms": 566.632,
+          "min_ms": 565.433,
+          "samples_ms": [
+            566.632,
+            565.433,
+            568.749
+          ]
+        },
+        "hot_header": {
+          "max_ms": 661.358,
+          "median_ms": 658.398,
+          "min_ms": 595.973,
+          "samples_ms": [
+            595.973,
+            658.398,
+            661.358
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 18.058,
+          "median_ms": 17.115,
+          "min_ms": 16.571,
+          "samples_ms": [
+            17.115,
+            18.058,
+            16.571
+          ]
+        },
+        "noop": {
+          "max_ms": 14.411,
+          "median_ms": 13.629,
+          "min_ms": 13.178,
+          "samples_ms": [
+            14.411,
+            13.629,
+            13.178
+          ]
+        }
+      },
+      "size": 2000,
+      "status": "ok",
+      "target_count": 2000,
+      "tool": "ninja",
+      "version": "1.13.2"
+    },
+    {
+      "graph": {
+        "action_count": 2067,
+        "dependency_edge_count": 2066,
+        "edge_digest_sha256": "734652364ecb3c8ec99820cb05a0bf7c9963599c25c14fd3ac10cec1d6f6263a",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "applicable": false,
+          "reason": "make has no content-addressed action cache in this harness"
+        },
+        "clean": {
+          "max_ms": 1091.406,
+          "median_ms": 1080.569,
+          "min_ms": 1079.63,
+          "samples_ms": [
+            1080.569,
+            1091.406,
+            1079.63
+          ]
+        },
+        "hot_header": {
+          "max_ms": 1121.93,
+          "median_ms": 1113.631,
+          "min_ms": 1082.499,
+          "samples_ms": [
+            1082.499,
+            1121.93,
+            1113.631
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 399.972,
+          "median_ms": 397.613,
+          "min_ms": 396.189,
+          "samples_ms": [
+            396.189,
+            399.972,
+            397.613
+          ]
+        },
+        "noop": {
+          "max_ms": 394.139,
+          "median_ms": 393.503,
+          "min_ms": 393.103,
+          "samples_ms": [
+            393.503,
+            394.139,
+            393.103
+          ]
+        }
+      },
+      "size": 2000,
+      "status": "ok",
+      "target_count": 2000,
+      "tool": "make",
+      "version": "GNU Make 4.3"
+    },
+    {
+      "graph": {
+        "action_count": 2067,
+        "dependency_edge_count": 2066,
+        "edge_digest_sha256": "734652364ecb3c8ec99820cb05a0bf7c9963599c25c14fd3ac10cec1d6f6263a",
+        "manifests_verified_equivalent": true,
+        "per_action_source_inputs": [
+          "<package>/src/nodeNNNNN.txt",
+          "include/hot.h"
+        ],
+        "shape": "wide"
+      },
+      "iterations": 3,
+      "jobs": 4,
+      "scenarios": {
+        "cache_hit_rebuild": {
+          "max_ms": 7182.09,
+          "median_ms": 7123.27,
+          "min_ms": 7116.523,
+          "samples_ms": [
+            7182.09,
+            7116.523,
+            7123.27
+          ]
+        },
+        "clean": {
+          "max_ms": 12656.959,
+          "median_ms": 10736.999,
+          "min_ms": 10732.543,
+          "samples_ms": [
+            12656.959,
+            10736.999,
+            10732.543
+          ]
+        },
+        "hot_header": {
+          "max_ms": 5519.027,
+          "median_ms": 4991.304,
+          "min_ms": 4852.593,
+          "samples_ms": [
+            5519.027,
+            4991.304,
+            4852.593
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 456.976,
+          "median_ms": 427.336,
+          "min_ms": 425.524,
+          "samples_ms": [
+            456.976,
+            425.524,
+            427.336
+          ]
+        },
+        "noop": {
+          "max_ms": 467.166,
+          "median_ms": 413.351,
+          "min_ms": 412.944,
+          "samples_ms": [
+            467.166,
+            412.944,
+            413.351
+          ]
+        }
+      },
+      "size": 2000,
+      "status": "ok",
+      "target_count": 2000,
+      "tool": "bazel",
+      "version": "bazel 9.2.0"
+    }
+  ],
+  "schema": "frost-bench-standard-v2",
+  "suite": "standard"
+}

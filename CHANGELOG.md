@@ -5,6 +5,17 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- A graph-shape comparison against Bazel (#159). `frost-bench run --suite
+  standard --shape linear|wide|packages` builds every tool's manifest from one
+  node model and rejects a generated manifest whose edges drift from it,
+  `frost-daemon` measures the daemon path beside plain `frost`, and Bazel runs
+  with `--disk_cache` so the cache-hit scenario is measured rather than marked
+  unavailable. A nightly `graph-shapes` Performance job installs Bazelisk and
+  records all three shapes at 1,000 and 2,000 targets; the reports are checked
+  in under `bench/baselines/2026-09-27-issue-159-*` and cited in docs/05.
+
 ### Fixed
 
 - `frost watch` (and `frost dev`) runs each rebuild in a child of the watcher.

@@ -170,10 +170,12 @@ During focused iteration, pass a comma-separated subset such as
 scenario list is recorded in the JSON; omitting the option still runs the
 complete standard suite above.
 
-`cache_hit_rebuild` is marked not applicable for Ninja, Make, and local Bazel
-because this harness does not add an external content-addressed action cache to
-those tools. That keeps the report honest while preserving the scenario slot
-for FrostBuild and future remote-cache runners.
+`cache_hit_rebuild` is marked not applicable for Ninja and Make because this
+harness does not add an external content-addressed action cache to those tools.
+Bazel is measured with `--disk_cache` and `bazel clean --expunge` between
+samples, so its action cache is compared on equal terms with Frost's. That keeps
+the report honest while preserving the scenario slot for future remote-cache
+runners.
 
 Reports include host, platform, Python version, CPU count, load average, CPU
 governor, and turbo state. Environment metadata is captured before measured
@@ -211,6 +213,66 @@ For this generated local workload, the measured Bazel/Frost ratios were 3.33x
 clean, 3.17x no-op, 2.89x leaf-only incremental, and 2.84x shared-header
 rebuild. Bazel ran without an external CAS, so no remote-cache comparison is
 claimed.
+
+### Frost / Bazel across graph shapes (#159)
+
+The comparison above measured one linear chain on a loaded host; #159 re-ran
+current Frost against current Bazel across shapes, with Bazel's disk cache and
+Frost's daemon on and off. `--shape linear|wide|packages` selects the graph. The
+three new shapes come from one node model, so every tool emits the same node set
+and edges, and the generator rejects a manifest whose edges drift from it.
+`wide` is a broad fan-out joined by a bounded-fanout tree; `packages` is eight
+nested packages chained within and across package boundaries. `frost-daemon`
+measures the `build --daemon` path beside plain `frost`, and Bazel runs with
+`--disk_cache` so `cache_hit_rebuild` is measured rather than marked
+unavailable.
+
+```bash
+BAZEL_BIN=/path/to/bazel scripts/compare_bazel.sh
+# or one shape directly:
+./frost-bench run --suite standard --shape wide \
+  --tools frost,frost-daemon,ninja,make,bazel \
+  --sizes 1000,2000 --iterations 3 --jobs 4 \
+  --out bench/baselines/<date>-issue-159-frost-bazel-wide.json
+```
+
+The reports are checked in as
+[`2026-09-27-issue-159-frost-bazel-{linear,wide,packages}.json`](../bench/baselines/)
+and are produced by the nightly `graph-shapes` Performance job. They were
+captured on a clean 4-CPU GitHub runner whose starting load average is recorded
+in each report (2.47 linear, 4.20 linear/2000, 6.89 packages). Median
+milliseconds at 1,000 targets:
+
+```text
+linear     tool          clean   noop   leaf   header   cache hit
+           frost           800      5     15      692         144
+           frost-daemon    911     24     16      759         191
+           ninja           684      7      8      806         n/a
+           make            902    196    193     1028         n/a
+           bazel (disk)   9802    447    410     4804        6629
+
+wide
+           frost           922      6     29      911           6
+           frost-daemon   1008     24     35      991          24
+           ninja           288      8     10      327         n/a
+           make            530    196    201      553         n/a
+           bazel (disk)   7619    394    443     2768        5636
+
+packages
+           frost          1952      6     26     1926           6
+           frost-daemon   2089     28     31     2049          28
+           ninja           676      8     10      794         n/a
+           make            910    232    239     1038         n/a
+           bazel (disk)  10548    412    429     5581        6409
+```
+
+Recorded, not spun: Bazel's absolute numbers include Bazelisk and server startup
+per invocation and a cold analysis, and its disk cache is a local one, so its
+clean and header rows are dominated by startup rather than compilation. Frost's
+no-op and one-leaf rebuilds are the rows it is designed for; the daemon path is
+slightly slower than the in-process path here at these sizes. Nothing here is a
+new performance claim, and the linear shape at 2,000 targets is in the reports
+beside the 1,000-target numbers.
 
 The committed `bench/baselines/2026-07-05-E14.json` was captured on
 2026-07-05 with 8 jobs, CPU governor `performance`, and turbo enabled.
