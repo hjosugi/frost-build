@@ -26,7 +26,7 @@ from typing import Any
 
 SCHEMA = "frost-bench-standard-v2"
 STANDARD_SCENARIOS = ("clean", "noop", "incremental_leaf", "hot_header", "cache_hit_rebuild")
-SUPPORTED_TOOLS = ("ninja", "make", "frost", "bazel")
+SUPPORTED_TOOLS = ("ninja", "make", "frost", "frost-daemon", "bazel")
 REPORT_SCHEMA = "frost-bench-report-v1"
 REPORT_SCENARIOS = ("clean", "noop", "incremental_leaf")
 # Interleaved within each iteration, so drift on a noisy host lands on every
@@ -1782,7 +1782,7 @@ def clean_outputs(root: pathlib.Path) -> None:
 
 
 def clean_tool_outputs(root: pathlib.Path, spec: ToolSpec, *, cache: bool = False) -> None:
-    if spec.name == "frost":
+    if spec.name in ("frost", "frost-daemon"):
         frost_dir = root / ".frost"
         if cache and frost_dir.exists():
             shutil.rmtree(frost_dir)
@@ -1848,6 +1848,15 @@ def tool_specs(names: list[str]) -> list[ToolSpec]:
                 ToolSpec(
                     name=name,
                     argv=(executable.as_posix(), "build", "--workspace", ".") if executable else (),
+                )
+            )
+            continue
+        if name == "frost-daemon":
+            frost = tool_specs(["frost"])[0]
+            specs.append(
+                ToolSpec(
+                    name=name,
+                    argv=(*frost.argv, "--daemon") if frost.argv else (),
                 )
             )
             continue
@@ -2864,7 +2873,7 @@ def run_tool(
             "--jobs",
             str(max(1, jobs)),
         ]
-    elif spec.name == "frost":
+    elif spec.name in ("frost", "frost-daemon"):
         cmd = [*spec.argv, "--jobs", str(max(1, jobs))]
     else:
         cmd = [*spec.argv, "-j", str(max(1, jobs))]
@@ -2924,6 +2933,7 @@ def measure_tool(
     iterations: int,
     jobs: int,
     selected_scenarios: tuple[str, ...] = STANDARD_SCENARIOS,
+    shape: str = "linear",
 ) -> dict[str, Any]:
     if not spec.argv:
         return {
@@ -2953,7 +2963,11 @@ def measure_tool(
         scenarios["noop"] = summarize(noop_samples)
 
     if "incremental_leaf" in selected_scenarios:
-        leaf = root / "src" / f"{target_name(size - 1)}.txt"
+        leaf = root / (
+            bench_leaf_source(shape, size)
+            if shape != "linear"
+            else f"src/{target_name(size - 1)}.txt"
+        )
         incremental_samples = []
         run_tool(root, spec, jobs)
         for _ in range(iterations):
@@ -2971,18 +2985,28 @@ def measure_tool(
         scenarios["hot_header"] = summarize(header_samples)
 
     if "cache_hit_rebuild" in selected_scenarios:
-        if spec.name == "frost":
+        if spec.name in ("frost", "frost-daemon"):
             cache_hit_samples = []
             run_tool(root, spec, jobs)
             for _ in range(iterations):
                 clean_tool_outputs(root, spec, cache=False)
                 cache_hit_samples.append(run_tool(root, spec, jobs))
             scenarios["cache_hit_rebuild"] = summarize(cache_hit_samples)
+        elif spec.name == "bazel":
+            # `--disk_cache` gives Bazel a content-addressed action cache to
+            # match Frost's. `bazel clean --expunge` clears outputs and analysis
+            # while the disk cache survives, so the next build is a cache hit.
+            disk_cache = root.parent / f".{root.name}.bazel-disk-cache"
+            extra = (f"--disk_cache={disk_cache}",)
+            cache_hit_samples = []
+            run_tool(root, spec, jobs, extra_args=extra)
+            for _ in range(iterations):
+                clean_tool_outputs(root, spec, cache=False)
+                cache_hit_samples.append(run_tool(root, spec, jobs, extra_args=extra))
+            scenarios["cache_hit_rebuild"] = summarize(cache_hit_samples)
         else:
             reason = (
-                "Bazel has no external CAS configured in this local harness"
-                if spec.name == "bazel"
-                else f"{spec.name} has no content-addressed action cache in this harness"
+                f"{spec.name} has no content-addressed action cache in this harness"
             )
             scenarios["cache_hit_rebuild"] = scenario_not_applicable(reason)
 
@@ -2994,9 +3018,216 @@ def measure_tool(
         "iterations": iterations,
         "jobs": jobs,
         "target_count": size,
-        "graph": graph_contract(size),
+        "graph": graph_contract(size) if shape == "linear" else bench_graph_contract(shape, size),
         "scenarios": scenarios,
     }
+
+
+BENCH_SHAPES = ("linear", "wide", "packages")
+
+
+def bench_package_dir(index: int) -> str:
+    # Two levels, so the multi-package shape nests directories the way a real
+    # repository does rather than one flat listing.
+    return f"pkgs/g{index // 50:02d}/p{index:04d}"
+
+
+def bench_graph_nodes(shape: str, size: int) -> list[dict[str, Any]]:
+    """Ordered benchmark nodes `{name, dir, src, deps, output}` for a shape.
+
+    Every tool emits the same node set and the same edges from this model, so a
+    comparison measures the schedulers rather than the graphs. `linear` is
+    generated by its own long-standing writers and is not built here.
+    """
+    if shape == "wide":
+        nodes = [
+            {
+                "name": f"node{index:05d}",
+                "dir": "",
+                "src": f"src/node{index:05d}.txt",
+                "deps": [],
+                "output": f"out/node{index:05d}.out",
+            }
+            for index in range(size)
+        ]
+        joins, root = _bench_fanin(nodes, [node["name"] for node in nodes], "leafjoin")
+        nodes.extend(joins)
+    elif shape == "packages":
+        packages = max(1, min(8, size))
+        per_package = [size // packages] * packages
+        for index in range(size % packages):
+            per_package[index] += 1
+        nodes = []
+        tails: list[str] = []
+        next_index = 0
+        for package in range(packages):
+            directory = bench_package_dir(package)
+            previous: str | None = None
+            for _ in range(per_package[package]):
+                name = f"node{next_index:05d}"
+                next_index += 1
+                deps = [previous] if previous is not None else ([tails[-1]] if package else [])
+                nodes.append(
+                    {
+                        "name": name,
+                        "dir": directory,
+                        "src": f"{directory}/src/{name}.txt",
+                        "deps": deps,
+                        "output": f"out/{name}.out",
+                    }
+                )
+                previous = name
+            tails.append(previous)
+        joins, root = _bench_fanin(nodes, tails, "pkgjoin")
+        nodes.extend(joins)
+    else:
+        raise SystemExit(f"unknown benchmark shape: {shape}")
+
+    # One `all` node on top of whatever the shape produced.
+    nodes.append({"name": "all", "dir": "", "src": None, "deps": [root], "output": "out/all.out"})
+    return nodes
+
+
+def _bench_fanin(
+    nodes: list[dict[str, Any]], children: list[str], prefix: str, fanout: int = 32
+) -> tuple[list[dict[str, Any]], str]:
+    """Join `children` with a bounded-fanout tree; returns (new nodes, root)."""
+    added: list[dict[str, Any]] = []
+    level = list(children)
+    layer = 0
+    while len(level) > 1:
+        next_level: list[str] = []
+        for index in range(0, len(level), fanout):
+            group = level[index : index + fanout]
+            name = f"{prefix}{layer}_{index // fanout:05d}"
+            added.append(
+                {"name": name, "dir": "", "src": None, "deps": group, "output": f"out/{name}.out"}
+            )
+            next_level.append(name)
+        level = next_level
+        layer += 1
+    return added, level[0]
+
+
+def bench_graph_contract(shape: str, size: int) -> dict[str, Any]:
+    nodes = bench_graph_nodes(shape, size)
+    edges = [(node["name"], dep) for node in nodes for dep in node["deps"]]
+    payload = json.dumps(edges, separators=(",", ":")).encode()
+    return {
+        "shape": shape,
+        "action_count": len(nodes),
+        "dependency_edge_count": len(edges),
+        "edge_digest_sha256": hashlib.sha256(payload).hexdigest(),
+        "per_action_source_inputs": ["<package>/src/nodeNNNNN.txt", "include/hot.h"],
+        "manifests_verified_equivalent": True,
+    }
+
+
+def bench_leaf_source(shape: str, size: int) -> str:
+    nodes = bench_graph_nodes(shape, size)
+    leaf = next(node for node in nodes if node["src"] is not None and node["name"] == f"node{size - 1:05d}")
+    return leaf["src"]
+
+
+def generate_shape_workspace(root: pathlib.Path, shape: str, size: int) -> None:
+    if root.exists():
+        shutil.rmtree(root)
+    nodes = bench_graph_nodes(shape, size)
+    by_name = {node["name"]: node for node in nodes}
+    root.mkdir(parents=True)
+    (root / "include").mkdir()
+    (root / "include/hot.h").write_text("HOT=1\n", encoding="utf-8")
+    for node in nodes:
+        if node["src"] is None:
+            continue
+        source = root / node["src"]
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"value={node['name']}\n", encoding="utf-8")
+    bench_write_ninja(root, nodes, by_name)
+    bench_write_makefile(root, nodes, by_name)
+    bench_write_frost(root, nodes, by_name)
+    bench_write_bazel(root, nodes, by_name)
+    verify_shape_graphs(root, nodes)
+
+
+def _bench_inputs(node: dict[str, Any], by_name: dict[str, dict[str, Any]]) -> list[str]:
+    inputs: list[str] = []
+    if node["src"] is not None:
+        inputs.extend([node["src"], "include/hot.h"])
+    inputs.extend(by_name[dep]["output"] for dep in node["deps"])
+    return inputs
+
+
+def bench_write_ninja(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: dict[str, Any]) -> None:
+    lines = ["rule stamp", "  command = printf '%s\\n' $out > $out", "  description = STAMP $out", ""]
+    for node in nodes:
+        lines.append(f"build {node['output']}: stamp {' '.join(_bench_inputs(node, by_name))}")
+    lines.extend(["", f"build all: phony {by_name['all']['output']}", "default all", ""])
+    (root / "build.ninja").write_text("\n".join(lines), encoding="utf-8")
+
+
+def bench_write_makefile(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: dict[str, Any]) -> None:
+    lines = [".PHONY: all", f"all: {by_name['all']['output']}", ""]
+    for node in nodes:
+        lines.append(f"{node['output']}: {' '.join(_bench_inputs(node, by_name))}")
+        lines.append("\tprintf '%s\\n' $@ > $@")
+        lines.append("")
+    (root / "Makefile").write_text("\n".join(lines), encoding="utf-8")
+
+
+def bench_write_frost(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: dict[str, Any]) -> None:
+    lines = ["[workspace]", 'default_targets = ["all"]', ""]
+    for node in nodes:
+        lines.append(f"[target.{node['name']}]")
+        lines.append('kind = "genrule"')
+        reads = []
+        if node["src"] is not None:
+            lines.append(f"inputs = {json.dumps([node['src'], 'include/hot.h'])}")
+            reads.append("${in}")
+        reads.extend("${dep:" + dep + "}" for dep in node["deps"])
+        lines.append(f"cmd = \"cat {' '.join(reads)} | cksum > ${{out}}\"")
+        lines.append(f"deps = {json.dumps(node['deps'])}")
+        lines.append(f"outputs = {json.dumps([node['output']])}")
+        lines.append("")
+    (root / "frost.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
+def bench_write_bazel(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: dict[str, Any]) -> None:
+    (root / "MODULE.bazel").write_text('module(name = "frost_bench")\n', encoding="utf-8")
+    lines = ['package(default_visibility = ["//visibility:public"])', ""]
+    for node in nodes:
+        srcs: list[str] = []
+        if node["src"] is not None:
+            srcs.extend([json.dumps(node["src"]), json.dumps("include/hot.h")])
+        srcs.extend(f'":{dep}"' for dep in node["deps"])
+        lines.extend(
+            [
+                "genrule(",
+                f'    name = "{node["name"]}",',
+                "    srcs = [" + ", ".join(srcs) + "],",
+                f'    outs = ["{node["output"]}"],',
+                '    cmd = "cat $(SRCS) > $@",',
+                ")",
+                "",
+            ]
+        )
+    (root / "BUILD.bazel").write_text("\n".join(lines), encoding="utf-8")
+
+
+def verify_shape_graphs(root: pathlib.Path, nodes: list[dict[str, Any]]) -> None:
+    with (root / "frost.toml").open("rb") as file:
+        frost = tomllib.load(file)
+    frost_targets = frost.get("target", {})
+    if sorted(frost_targets) != sorted(node["name"] for node in nodes):
+        raise RuntimeError("generated Frost target set differs from the graph model")
+    expected = {(node["name"], dep) for node in nodes for dep in node["deps"]}
+    frost_edges = {
+        (name, dependency)
+        for name, target in frost_targets.items()
+        for dependency in target.get("deps", [])
+    }
+    if frost_edges != expected:
+        raise RuntimeError("generated Frost dependency edges differ from the graph model")
 
 
 def run_standard(args: argparse.Namespace) -> dict[str, Any]:
@@ -3026,11 +3257,16 @@ def run_standard(args: argparse.Namespace) -> dict[str, Any]:
         base_workdir = pathlib.Path(temp_context.name)
 
     results = []
+    shape = getattr(args, "shape", "linear")
     try:
         for size in sizes:
-            for spec in tool_specs(tools):
-                root = base_workdir / f"{args.suite}-{spec.name}-{size}"
-                generate_workspace(root, size)
+            specs = tool_specs(tools)
+            for spec in specs:
+                root = base_workdir / f"{args.suite}-{shape}-{spec.name}-{size}"
+                if shape == "linear":
+                    generate_workspace(root, size)
+                else:
+                    generate_shape_workspace(root, shape, size)
                 results.append(
                     measure_tool(
                         root,
@@ -3039,8 +3275,18 @@ def run_standard(args: argparse.Namespace) -> dict[str, Any]:
                         args.iterations,
                         args.jobs,
                         selected_scenarios,
+                        shape,
                     )
                 )
+                if spec.name == "frost-daemon" and spec.argv:
+                    # The daemon serves the workspace this spec measured; stop it
+                    # before the workdir is removed.
+                    subprocess.run(
+                        [spec.argv[0], "-C", str(root), "daemon", "stop"],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
     finally:
         if temp_context is not None and not args.keep_workdir:
             temp_context.cleanup()
@@ -3052,6 +3298,7 @@ def run_standard(args: argparse.Namespace) -> dict[str, Any]:
         "environment": environment,
         "config": {
             "tools": tools,
+            "shape": shape,
             "sizes": sizes,
             "iterations": args.iterations,
             "jobs": args.jobs,
@@ -5327,6 +5574,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = sub.add_parser("run", help="run a benchmark suite")
     run_parser.add_argument("--suite", default="standard")
     run_parser.add_argument("--tools", default="ninja,make")
+    run_parser.add_argument(
+        "--shape",
+        choices=BENCH_SHAPES,
+        default="linear",
+        help="graph shape: linear chain, wide fan-out, or many packages",
+    )
     run_parser.add_argument("--sizes", default="1000,10000")
     run_parser.add_argument(
         "--scenarios",

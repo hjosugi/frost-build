@@ -34,6 +34,43 @@ jobs:
           name: benchmark-${{ github.sha }}
           path: bench-result.json
 
+  # #159: current Frost against current Bazel across graph shapes, with Bazel's
+  # disk cache and Frost's daemon on and off. Too long for every pull request,
+  # so it runs nightly and on demand. The report is the baseline docs/05 cites.
+  graph-shapes:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install Bazelisk
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/bazel" \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  $RUNNER_TEMP/bazel" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bazel"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: cargo build --release --locked -p frostbuild-cli
+      - name: Compare every shape
+        run: |
+          mkdir -p shapes
+          for shape in linear wide packages; do
+            ./frost-bench run --suite standard --shape "$shape" \
+              --tools frost,frost-daemon,ninja,make,bazel \
+              --sizes 1000,5000 --iterations 3 --jobs 4 \
+              --out "shapes/frost-bazel-$shape.json"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success() || failure()
+        with:
+          name: graph-shapes-${{ github.sha }}
+          path: shapes/*.json
+
   # #152: the 10k daemon graph against Ninja — no-op and one-leaf change,
   # median of 31 with alternating order, the leaf change attributed by phase
   # and checked to have run exactly one action. Too long for every PR, so it
