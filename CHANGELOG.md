@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-09-27
+
 ### Added
 
 - A graph-shape comparison against Bazel (#159). `frost-bench run --suite
