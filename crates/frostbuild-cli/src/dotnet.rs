@@ -550,6 +550,9 @@ fn translate_arguments(
 )> {
     let project_dir = project.parent().unwrap_or(root);
     let obj = root.join(".dotnet/obj");
+    let root_n = normalized(root);
+    let obj_n = normalized(&obj);
+    let info_root_n = normalized(&info.root);
     let mut args = Vec::new();
     let mut sources = BTreeSet::new();
     let mut dependencies = Vec::new();
@@ -567,16 +570,18 @@ fn translate_arguments(
         // `C:\...` absolute paths, quoted when they contain spaces.
         let as_path = Path::new(argument);
         if as_path.is_file() && (argument.starts_with('/') || as_path.is_absolute()) {
-            let path = as_path
-                .canonicalize()
-                .unwrap_or_else(|_| as_path.to_path_buf());
-            if path.starts_with(&obj) {
+            let path = normalized(
+                &as_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| as_path.to_path_buf()),
+            );
+            if path.starts_with(&obj_n) {
                 let relative = generated_relative(name, &path, &mut generated);
                 sources.insert(relative.clone());
                 args.push(relative);
-            } else if path.starts_with(root) {
+            } else if path.starts_with(&root_n) {
                 let relative = path
-                    .strip_prefix(root)
+                    .strip_prefix(&root_n)
                     .expect("checked prefix")
                     .to_string_lossy()
                     .replace('\\', "/");
@@ -592,17 +597,19 @@ fn translate_arguments(
         match option {
             "/out" | "/refout" => continue,
             "/reference" | "/analyzer" | "/analyzerconfig" => {
-                let path = Path::new(value)
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from(value));
-                if path.starts_with(&info.root) {
+                let path = normalized(
+                    &Path::new(value)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(value)),
+                );
+                if path.starts_with(&info_root_n) {
                     sdk_files.insert(path.clone());
-                    let relative =
-                        Path::new(SDK_BUNDLE).join(path.strip_prefix(&info.root).expect("checked"));
+                    let relative = Path::new(SDK_BUNDLE)
+                        .join(path.strip_prefix(&info_root_n).expect("checked"));
                     args.push(format!("{option}:{}", path_string(&relative)));
-                } else if option == "/reference" && path.starts_with(&obj) {
+                } else if option == "/reference" && path.starts_with(&obj_n) {
                     let reference = path
-                        .strip_prefix(&obj)
+                        .strip_prefix(&obj_n)
                         .expect("checked")
                         .components()
                         .next()
@@ -618,7 +625,7 @@ fn translate_arguments(
                     args.push(format!(
                         "/reference:.frost/out/${{config}}/api/{reference}.dll"
                     ));
-                } else if option == "/analyzerconfig" && path.starts_with(&obj) {
+                } else if option == "/analyzerconfig" && path.starts_with(&obj_n) {
                     let relative = generated_relative(name, &path, &mut generated);
                     args.push(format!("/analyzerconfig:{relative}"));
                 } else {
@@ -634,12 +641,12 @@ fn translate_arguments(
             _ => {
                 // A source path relative to the project directory.
                 let path = project_dir.join(argument);
-                let path = path.canonicalize().unwrap_or(path);
-                if path.starts_with(&obj) {
+                let path = normalized(&path.canonicalize().unwrap_or(path));
+                if path.starts_with(&obj_n) {
                     let relative = generated_relative(name, &path, &mut generated);
                     sources.insert(relative.clone());
                     args.push(relative);
-                } else if path.starts_with(root) {
+                } else if path.starts_with(&root_n) {
                     let relative = path
                         .strip_prefix(root)
                         .expect("checked prefix")
@@ -667,6 +674,17 @@ fn split_option(argument: &str) -> (&str, &str) {
     match argument.split_once(':') {
         Some((option, value)) => (option, value),
         None => (argument, ""),
+    }
+}
+
+/// Windows `canonicalize` returns a `\\?\` verbatim path while MSBuild prints a
+/// plain `C:\…` one, so a lexical prefix comparison between them fails. Strip
+/// the prefix before classifying a path; other platforms are unchanged.
+fn normalized(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path.to_path_buf(),
     }
 }
 
