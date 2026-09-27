@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package google.longrunning;
+
+import "google/protobuf/any.proto";
+import "google/rpc/status.proto";
+
+// The subset of google.longrunning.Operation that REAPI v2 Execute and
+// WaitExecution return. Only the fields the adapter reads are declared;
+// field numbers match the upstream definition so the wire form is identical.
+message Operation {
+  string name = 1;
+  google.protobuf.Any metadata = 2;
+  bool done = 3;
+  oneof result {
+    google.rpc.Status error = 4;
+    google.protobuf.Any response = 5;
+  }
+}

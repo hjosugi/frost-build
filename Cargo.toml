@@ -6,6 +6,7 @@ members = [
     "crates/frostbuild-store",
     "crates/frostbuild-daemon",
     "crates/frostbuild-bench",
+    "crates/frostbuild-reapi",
 ]
 resolver = "2"
 
@@ -51,6 +52,7 @@ frostbuild-exec = { version = "0.14.0", path = "crates/frostbuild-exec" }
 frostbuild-store = { version = "0.14.0", path = "crates/frostbuild-store" }
 frostbuild-daemon = { version = "0.14.0", path = "crates/frostbuild-daemon" }
 frostbuild-bench = { version = "0.14.0", path = "crates/frostbuild-bench" }
+frostbuild-reapi = { version = "0.14.0", path = "crates/frostbuild-reapi" }
 
 [profile.release]
 lto = "thin"
