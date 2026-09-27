@@ -62,7 +62,7 @@ jobs:
           for shape in linear wide packages; do
             ./frost-bench run --suite standard --shape "$shape" \
               --tools frost,frost-daemon,ninja,make,bazel \
-              --sizes 1000,5000 --iterations 3 --jobs 4 \
+              --sizes 1000,2000 --iterations 3 --jobs 4 \
               --out "shapes/frost-bazel-$shape.json"
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -2879,7 +2879,19 @@ def run_tool(
         cmd = [*spec.argv, "-j", str(max(1, jobs))]
     cmd.extend(extra_args)
     start = time.perf_counter()
-    subprocess.run(cmd, cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    completed = subprocess.run(
+        cmd,
+        cwd=root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        tail = "\n".join(completed.stderr.splitlines()[-30:])
+        raise RuntimeError(
+            f"{' '.join(cmd)} failed with exit {completed.returncode}:\n{tail}"
+        )
     return (time.perf_counter() - start) * 1000
 
 
