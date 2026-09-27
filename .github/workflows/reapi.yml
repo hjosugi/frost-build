@@ -30,6 +30,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
+      # A BuildGrid image, BuildBox, PostgreSQL and Redis leave little room on a
+      # stock runner's ~14 GB disk; the preinstalled SDKs are not used here.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
+          df -h /
+
       # The certified server, at the commit the certificate names.
       - name: Check out BuildGrid
         run: |
