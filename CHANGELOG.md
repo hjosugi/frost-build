@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-27
+
 ### Added
 
 - A REAPI v2 remote cache. `crates/frostbuild-reapi` speaks REAPI over gRPC:
