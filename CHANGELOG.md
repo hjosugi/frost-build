@@ -5,6 +5,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- An external REAPI interoperability job (`.github/workflows/reapi.yml`) that
+  starts BuildGrid 0.8.4 and a BuildBox worker, runs the Python certificate
+  (CAS upload, missing-blob probe, `Execute`, Action Cache hit) and a Rust
+  CAS/Action Cache round trip, and is now green on a runner; it also runs on a
+  pull request that touches the adapter.
+
+### Fixed
+
+- The REAPI cache accepted only identity-encoded responses. A server configured
+  to compress its CAS — BuildGrid 0.8.4 ships `grpc-compression: Gzip` — now
+  works, and the in-process test server compresses too so the path is covered
+  by the ordinary suite.
+
 ## [0.15.0] - 2026-09-27
 
 ### Added

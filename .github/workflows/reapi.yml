@@ -6,15 +6,20 @@ name: REAPI
 # `bench/baselines/2026-07-28-buildgrid-reapi-poc.json` was recorded on, with a
 # real BuildBox worker for `Execute`.
 #
-# It is scheduled and manual rather than on every push because it builds
-# BuildGrid from source and starts BuildBox, which is minutes of container work
-# for a surface that changes rarely. Add a `pull_request` trigger with a `paths`
-# filter on `crates/frostbuild-reapi/**` and `scripts/reapi_poc.py` once this is
-# green on the runner.
+# It is scheduled, on demand, and on a pull request that touches the adapter,
+# because it builds BuildGrid from source and starts BuildBox: minutes of
+# container work for a surface that changes rarely.
 on:
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
+  pull_request:
+    paths:
+      - "crates/frostbuild-reapi/**"
+      - "crates/frostbuild-core/src/remote.rs"
+      - "scripts/reapi_poc.py"
+      - "tests/fixtures/reapi/**"
+      - ".github/workflows/reapi.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
