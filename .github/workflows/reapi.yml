@@ -47,18 +47,26 @@ jobs:
       - name: Start BuildGrid and a BuildBox worker
         working-directory: ${{ runner.temp }}/buildgrid
         run: |
+          # Pin the worker to the digest the certificate was recorded with;
+          # `:nightly` moves, and a newer BuildBox may not speak to 0.8.4.
+          sed -i 's|buildbox:nightly|buildbox:nightly@sha256:14d5c8129023a687d4f0093eb92d3d5ff03b76b84942910b66456549ab5cf295|' docker-compose.yml
           docker compose build
           docker compose up -d --scale controller=1 --scale bots=1
           for attempt in $(seq 1 60); do
             if docker compose exec -T controller grpc_health_probe -addr=:50051; then
               echo "BuildGrid is ready"
-              exit 0
+              break
             fi
             sleep 5
+            if [ "$attempt" = "60" ]; then
+              echo "BuildGrid did not become healthy" >&2
+              docker compose logs
+              exit 1
+            fi
           done
-          echo "BuildGrid did not become healthy" >&2
-          docker compose logs
-          exit 1
+          # The worker registers asynchronously, after the controller is healthy.
+          sleep 45
+          docker compose logs --tail=60 bots
 
       # The certificate client runs inside the BuildGrid image, which carries the
       # generated REAPI Python modules and grpcio, with this repository mounted.
@@ -73,7 +81,7 @@ jobs:
             controller scripts/reapi_poc.py \
               --remote http://nginx:50051 \
               --input-root tests/fixtures/reapi \
-              --timeout 60 \
+              --timeout 180 \
               --platform OSFamily=linux \
               --platform ISA=x86-64
 
