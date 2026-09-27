@@ -44,6 +44,12 @@ build/
 dist/
 *.egg-info/
 
+# The REAPI protos are vendored under their upstream package path, which is
+# `build/bazel/…`. That collides with the generic Python `build/` rule above, so
+# the vendored tree is re-included explicitly rather than force-added.
+!crates/frostbuild-reapi/proto/build/
+!crates/frostbuild-reapi/proto/build/**
+
 # Virtual environments
 .venv/
 venv/
