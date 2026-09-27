@@ -37,6 +37,7 @@ Options that change what is built (`--profile`, `--platform`, `--sandbox`,
 - [`frost graph`](#frost-graph)
 - [`frost ide`](#frost-ide)
 - [`frost import-bazel`](#frost-import-bazel)
+- [`frost import-dotnet`](#frost-import-dotnet)
 - [`frost import-ninja`](#frost-import-ninja)
 - [`frost import-npm`](#frost-import-npm)
 - [`frost info`](#frost-info)
@@ -97,6 +98,7 @@ Commands:
   import-ninja   Convert the supported Ninja rule/build subset to frost.toml
   import-bazel   Import a conservative native C/C++ subset from Bazel query XML
   import-npm     Import npm workspace validation gates and explicit Vite build boundaries
+  import-dotnet  Import MSBuild's evaluated C# compiler invocations as csc actions
   bazel-dev      Watch, incrementally build, and restart a Bazel runnable target
   pack-jar       Pack a directory into a deterministic compressed Java archive
   pack-wheel     Pack a pure-Python source tree into a deterministic standards-compliant wheel
@@ -983,6 +985,45 @@ Options:
 
       --dry-run
           Print every generated manifest without writing
+
+      --no-frostrc
+          Ignore `.frostrc` entirely, so only the command line and built-in defaults apply
+
+      --build-event-json <FILE>
+          Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+  -h, --help
+          Print help
+```
+
+## `frost import-dotnet`
+
+```text
+Import MSBuild's evaluated C# compiler invocations as csc actions
+
+Usage: frost import-dotnet [OPTIONS] [PROJECT]
+
+Arguments:
+  [PROJECT]
+          Project or solution to import (defaults to the only .csproj found)
+
+Options:
+  -C, --workspace <WORKSPACE>
+          Workspace root (frost.toml for Frost commands; Bazel workspace for bazel-dev)
+
+          [default: .]
+
+      --dotnet <DOTNET>
+          dotnet executable (defaults to DOTNET_BIN, then PATH)
+
+      --config <NAME>
+          Apply a named `[config.NAME]` section from `.frostrc`. Repeatable; applied in the order given
+
+      --output <OUTPUT>
+          Manifest path to write, relative to the workspace
+
+      --dry-run
+          Print the manifest to stdout instead of writing it
 
       --no-frostrc
           Ignore `.frostrc` entirely, so only the command line and built-in defaults apply

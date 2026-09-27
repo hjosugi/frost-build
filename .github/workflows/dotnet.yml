@@ -1,0 +1,52 @@
+name: C#/.NET
+
+# #248/#250: `frost import-dotnet` on every supported host. MSBuild's own
+# evaluation is the input, so this must run where a real SDK runs, and the
+# three hosts differ in more than argv quoting (apphost names, path
+# separators, response files). The E2E requires byte-identical assemblies, the
+# reference-assembly early cutoff, const propagation and the stale-import
+# refusal; it skips cleanly when no SDK is present rather than passing silently.
+on:
+  pull_request:
+    paths:
+      - "crates/frostbuild-cli/src/dotnet.rs"
+      - "crates/frostbuild-cli/src/cli.rs"
+      - "scripts/check_import_dotnet.py"
+      - "frost_bench_csharp.py"
+      - ".github/workflows/dotnet.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  import-dotnet:
+    name: import-dotnet (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: python3
+          - os: macos-latest
+            python: python3
+          - os: windows-latest
+            python: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+      - run: cargo build --release --locked -p frostbuild-cli
+      - name: Import, build and compare
+        shell: bash
+        env:
+          FROST_BIN: ${{ runner.os == 'Windows' && 'target/release/frost.exe' || 'target/release/frost' }}
+        run: ${{ matrix.python }} scripts/check_import_dotnet.py

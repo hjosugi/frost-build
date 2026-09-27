@@ -9,6 +9,18 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ### Added
 
+- `frost import-dotnet <project-or-solution>` (#248): MSBuild's design-time
+  evaluation becomes one `kind = "command"` csc action per project. The Roslyn
+  closure, reference assemblies, analyzers and generated files are bundled and
+  declared; projects meet at `/refout` reference assemblies so an
+  implementation-only edit early-cuts dependents while a `const` edit reaches
+  consumers; and a `.csproj` or `Directory.Build.props` change after import
+  fails the generated `import_check` action (through `frost import-check`)
+  instead of linking stale argv. `scripts/check_import_dotnet.py` proves
+  byte-identical assemblies, early cutoff, const propagation and the
+  stale-import refusal, and the new `C#/.NET` workflow runs it on Linux, macOS
+  and Windows with a pinned SDK (#250).
+
 - A graph-shape comparison against Bazel (#159). `frost-bench run --suite
   standard --shape linear|wide|packages` builds every tool's manifest from one
   node model and rejects a generated manifest whose edges drift from it,

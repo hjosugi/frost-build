@@ -445,7 +445,7 @@ mod completion_contract_tests {
                 undeclared.push(id);
             }
         }
-        for sub in command.get_subcommands() {
+        for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set()) {
             walk(sub, &format!("{path} {}", sub.get_name()), undeclared);
         }
     }

@@ -723,6 +723,33 @@ pub(crate) enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Import MSBuild's evaluated C# compiler invocations as csc actions
+    ImportDotnet {
+        /// Project or solution to import (defaults to the only .csproj found)
+        #[arg(value_hint = ValueHint::FilePath)]
+        project: Option<PathBuf>,
+        /// dotnet executable (defaults to DOTNET_BIN, then PATH)
+        #[arg(long, value_hint = ValueHint::ExecutablePath)]
+        dotnet: Option<PathBuf>,
+        /// Manifest path to write, relative to the workspace
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        output: Option<PathBuf>,
+        /// Print the manifest to stdout instead of writing it
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Verify a generated .NET import is current (used by generated manifests)
+    #[command(hide = true)]
+    ImportCheck {
+        /// Recorded digest of the evaluated project files
+        #[arg(long)]
+        digest: String,
+        /// Output file to stamp on success
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        out: Option<PathBuf>,
+        /// Evaluated project files
+        files: Vec<PathBuf>,
+    },
     /// Watch, incrementally build, and restart a Bazel runnable target
     BazelDev {
         /// Canonical Bazel runnable label, for example //app:server

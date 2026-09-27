@@ -198,6 +198,39 @@ deterministically.
   `cargo metadata`, `go list`, TypeScript project references, Gradle Tooling API
   or Maven reactor metadata remain native-adapter work.
 
+## C#/.NET: `frost import-dotnet`
+
+C#/.NET is the first ecosystem whose boundary Frost generates itself rather
+than being handed by a user. `frost import-dotnet <project-or-solution>` asks
+MSBuild for the compiler command line it would use — a design-time build with
+`SkipCompilerExecution` and `ProvideCommandLineArgs` — and rewrites that argv
+into one `kind = "command"` csc action per project. Nothing is inferred: the
+sources, the generated files, the reference assemblies, analyzers and the
+Roslyn closure MSBuild passed all become declared inputs, and an argument the
+import cannot classify is an error rather than a silent omission.
+
+Three properties make it correct rather than merely fast:
+
+- **The closure is bundled.** The csc apphost is a launcher; the compiler that
+  decides the bytes is `csc.dll` plus the `Microsoft.CodeAnalysis` assemblies
+  beside it, and a source generator writes code into the assembly. All of it is
+  hard-linked into `.dotnet-sdk/` and declared, so a toolchain swap invalidates.
+- **Projects meet at their reference assemblies.** A dependent compiles against
+  the producer's `/refout`, copied to an `api` target. An implementation-only
+  edit leaves those bytes unchanged and early cutoff stops the rebuild there;
+  a `const` edit changes them and every consumer recompiles. This is MSBuild's
+  `ProduceReferenceAssembly` avoidance expressed as a content-addressed edge.
+- **A stale import fails the build.** The evaluated `.csproj` and
+  `Directory.Build.props` files are hashed at import; the generated manifest's
+  `import_check` action recomputes that digest (through `frost import-check`,
+  so no shell is needed) and fails with "re-run it" rather than compiling stale
+  argv.
+
+The workspace is generated with `scripts/check_import_dotnet.py`, which also
+proves the assemblies are byte-identical to `dotnet build`, the early cutoff
+and const propagation, and the stale-import refusal. The `C#/.NET` workflow runs
+it on Linux, macOS and Windows with a pinned SDK.
+
 ## Evaluated, not supported
 
 [32_language_expansion.md](32_language_expansion.md) compares Kotlin/JVM,

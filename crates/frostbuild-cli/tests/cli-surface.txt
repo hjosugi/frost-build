@@ -9,7 +9,6 @@ frost completions <shell> --dry-run --install
 frost coverage-lcov --gcda=VALUE --gcov=VALUE --objects=VALUE --output=VALUE
 frost daemon
 frost daemon restart
-frost daemon serve
 frost daemon start
 frost daemon status --json
 frost daemon stop
@@ -22,6 +21,7 @@ frost fmt --check
 frost graph --dot --platform=VALUE --profile=VALUE
 frost ide <target> --dry-run --output=VALUE --platform=VALUE --profile=VALUE -j/--jobs=VALUE
 frost import-bazel --bazel=VALUE --dry-run --query=VALUE
+frost import-dotnet <project> --dotnet=VALUE --dry-run --output=VALUE
 frost import-ninja <ninja> --output=VALUE
 frost import-npm --dry-run --node=VALUE --npm=VALUE --script=VALUE --vite-builds
 frost info <key> --json --platform=VALUE --profile=VALUE

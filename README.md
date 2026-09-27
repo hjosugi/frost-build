@@ -184,6 +184,9 @@ frost -C myrepo cache stats
 # Preview a conservative Bazel native-C/C++ migration (never overwrites)
 frost -C bazelrepo import-bazel --dry-run
 
+# Import MSBuild's own C# compiler invocations as csc actions
+frost -C dotnetrepo import-dotnet src/App/App.csproj
+
 # Keep Bazel authoritative while adding success-only hot restart
 frost -C bazelrepo bazel-dev //apps/server:server -- --port 3000
 ```

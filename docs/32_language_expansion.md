@@ -277,6 +277,13 @@ issue, per the #153 acceptance criteria:
 | #249 | `frost-bench csharp` nightly on a pinned SDK, measured against `frost import-dotnet` output, quiet-host baseline | #248 |
 | #250 | C# E2E on Linux, macOS and Windows runners; `skipped` when no SDK | #248 |
 
+The implementation (#248) and the platform gate (#250) have landed:
+`frost import-dotnet` evaluates each project once, bundles the csc closure,
+meets projects at their reference assemblies and refuses a stale import, and the
+`C#/.NET` workflow runs `scripts/check_import_dotnet.py` on all three hosts. The
+nightly benchmark (#249) still measures the older `frost-bench csharp`
+generator and remains open.
+
 Kotlin and Swift get no implementation issue. Kotlin's native-rule question
 reopens with #145's decision; Swift reopens only with a concrete polyglot
 user who needs more than a `swift build` wrapper.

@@ -28,6 +28,7 @@ mod completions;
 mod coverage;
 mod daemon;
 mod doctor;
+mod dotnet;
 mod events;
 mod explain;
 mod fetch;
@@ -562,6 +563,21 @@ fn run(cli: Cli) -> Result<i32> {
             node,
             dry_run,
         } => npm::run_import(&root, &scripts, vite_builds, &npm, &node, dry_run),
+        Cmd::ImportDotnet {
+            project,
+            dotnet,
+            output,
+            dry_run,
+        } => dotnet::run_import(
+            &root,
+            project.as_deref(),
+            dotnet.as_deref(),
+            output.as_deref(),
+            dry_run,
+        ),
+        Cmd::ImportCheck { digest, out, files } => {
+            dotnet::run_check(&root, &digest, out.as_deref(), &files)
+        }
         Cmd::BazelDev {
             target,
             bazel,
@@ -683,7 +699,10 @@ mod cli_surface_tests {
         }
         out.push_str(&line);
         out.push('\n');
-        let mut subcommands: Vec<&clap::Command> = command.get_subcommands().collect();
+        let mut subcommands: Vec<&clap::Command> = command
+            .get_subcommands()
+            .filter(|sub| !sub.is_hide_set())
+            .collect();
         subcommands.sort_by_key(|sub| sub.get_name());
         for sub in subcommands {
             render(sub, &format!("{path} {}", sub.get_name()), out);
