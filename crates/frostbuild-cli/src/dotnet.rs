@@ -580,9 +580,7 @@ fn translate_arguments(
                 sources.insert(relative.clone());
                 args.push(relative);
             } else if path.starts_with(&root_n) {
-                let relative = path
-                    .strip_prefix(&root_n)
-                    .expect("checked prefix")
+                let relative = relative_after(&path, &root_n)?
                     .to_string_lossy()
                     .replace('\\', "/");
                 sources.insert(relative.clone());
@@ -604,13 +602,10 @@ fn translate_arguments(
                 );
                 if path.starts_with(&info_root_n) {
                     sdk_files.insert(path.clone());
-                    let relative = Path::new(SDK_BUNDLE)
-                        .join(path.strip_prefix(&info_root_n).expect("checked"));
+                    let relative = Path::new(SDK_BUNDLE).join(relative_after(&path, &info_root_n)?);
                     args.push(format!("{option}:{}", path_string(&relative)));
                 } else if option == "/reference" && path.starts_with(&obj_n) {
-                    let reference = path
-                        .strip_prefix(&obj_n)
-                        .expect("checked")
+                    let reference = relative_after(&path, &obj_n)?
                         .components()
                         .next()
                         .map(|component| component.as_os_str().to_string_lossy().into_owned())
@@ -686,6 +681,19 @@ fn normalized(path: &Path) -> PathBuf {
         Some(rest) => PathBuf::from(rest),
         None => path.to_path_buf(),
     }
+}
+
+/// The tail of `path` after `ancestor`, by component count. `Path::strip_prefix`
+/// can disagree with `Path::starts_with` on Windows when the two spellings of a
+/// prefix differ in case; skipping the same number of components cannot.
+fn relative_after(path: &Path, ancestor: &Path) -> Result<PathBuf> {
+    let mut components = path.components();
+    for _ in ancestor.components() {
+        components
+            .next()
+            .context("path is not under its ancestor")?;
+    }
+    Ok(components.as_path().to_path_buf())
 }
 
 fn generated_relative(project: &str, path: &Path, generated: &mut Vec<String>) -> String {
