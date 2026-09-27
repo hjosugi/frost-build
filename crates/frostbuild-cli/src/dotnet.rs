@@ -200,6 +200,28 @@ pub(crate) fn run_check(
     Ok(0)
 }
 
+/// `frost copy`: the generated boundary's file copy, so no external `cp` (which
+/// a Windows host need not have) is required.
+pub(crate) fn run_copy(root: &Path, from: &Path, to: &Path) -> Result<i32> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let from = if from.is_absolute() {
+        from.to_path_buf()
+    } else {
+        root.join(from)
+    };
+    let to = if to.is_absolute() {
+        to.to_path_buf()
+    } else {
+        root.join(to)
+    };
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&from, &to)
+        .with_context(|| format!("copying {} to {}", from.display(), to.display()))?;
+    Ok(0)
+}
+
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -806,7 +828,6 @@ fn render_manifest(
         String::new(),
         "[toolchain.tools]".to_string(),
         format!("csc = {}", toml_string(&csc)),
-        "cp = \"cp\"".to_string(),
         "frost = \"frost\"".to_string(),
         String::new(),
         // A stale import must fail the build rather than link stale argv. This
@@ -922,7 +943,7 @@ fn render_manifest(
         lines.push(format!("args = {}", toml_array(&argv)));
         if entry_executable && action.project == entry {
             lines.push(format!(
-                "steps = [{{ tool = \"cp\", args = [{}, {}] }}]",
+                "steps = [{{ tool = \"frost\", args = [\"copy\", {}, {}] }}]",
                 toml_string(&format!(
                     "{GENERATED_DIR}/{entry}/{entry}.runtimeconfig.json"
                 )),
@@ -941,10 +962,10 @@ fn render_manifest(
         if !(entry_executable && action.project == entry) {
             lines.push(format!("[target.{}_api]", action.name));
             lines.push("kind = \"command\"".to_string());
-            lines.push("tool = \"cp\"".to_string());
+            lines.push("tool = \"frost\"".to_string());
             lines.push(format!("deps = [{}]", toml_string(&action.name)));
             lines.push(format!(
-                "args = [{}, \"${{out}}\"]",
+                "args = [\"copy\", {}, \"${{out}}\"]",
                 toml_string(&format!(
                     ".frost/out/${{config}}/ref/{}.dll",
                     action.project

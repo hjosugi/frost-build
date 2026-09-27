@@ -750,6 +750,14 @@ pub(crate) enum Cmd {
         /// Evaluated project files
         files: Vec<PathBuf>,
     },
+    /// Copy a file (used by generated manifests)
+    #[command(hide = true)]
+    Copy {
+        /// Source path, workspace-relative or absolute
+        from: PathBuf,
+        /// Destination path, workspace-relative or absolute
+        to: PathBuf,
+    },
     /// Watch, incrementally build, and restart a Bazel runnable target
     BazelDev {
         /// Canonical Bazel runnable label, for example //app:server

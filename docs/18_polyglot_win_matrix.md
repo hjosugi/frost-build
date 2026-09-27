@@ -45,7 +45,7 @@ incumbent and skips an unchanged project boundary cheaply.
 | TypeScript project / solution | Byte-identical single-project JS; byte-identical 416-file eight-reference solution; exact Node execution after every sample; native compiler declaration closure declared | Frost beats native `tsc` no-op 16.7x for one project and 2.05x for the solution, but loses clean/change; project action fan-out helps without overcoming shared-process `tsc --build` | no-op boundaries won; compiler and ecosystem gates open |
 | Python pure wheel | Same 101 source names/bytes; Name/Version/tag; fully verified `RECORD`; exact execution after every sample | Frost beats `uv build` clean/no-op/change by 15.35x/111.86x/37.25x and `python -m build` by more | minimal pure-wheel contract won; PEP 517 ecosystem/pytest open |
 | Gradle/Maven/npm project boundary | Direct-argv, fingerprinted artifact boundary | fast Frost boundary no-op is not inner-language speed | integration only |
-| C# assemblies (prototype only) | Four-project SDK graph; the generated `csc` actions produce assemblies byte-identical to MSBuild's; application output checked after every sample; a public-constant change and a compiler-closure change both rebuild what they must | On a heavily loaded host, median-of-7 against `dotnet build`: generated actions 33.5x no-op, 2.14x leaf change, 1.52x shared-dependency change, clean within noise; with Roslyn's compiler server as a worker 22.1x / 6.78x / 6.77x and 2.08x clean; wrapping `dotnet build` wins only no-op and loses both changes | not supported: #248 implements, #249 benchmarks, #250 gates three OSes |
+| C# assemblies (`frost import-dotnet`) | Four-project SDK graph; MSBuild's own evaluation becomes the `csc` actions, which produce assemblies byte-identical to MSBuild's; application output checked after every sample; a public-constant change and a compiler-closure change both rebuild what they must | The `frost-import` frontend in the `csharp` harness measures the product path; the nightly `csharp-benchmark` job records the baseline docs/32 cites | supported: #248 implements, #249 benchmarks nightly, #250 gates Linux, macOS and Windows |
 | Kotlin / Swift | Compared on paper and, for Kotlin, a cold-compiler probe; no prototype graph | Kotlin: a cold `kotlinc` compile of a 25-class library took 3.83x `javac`'s; Swift: not run (toolchain absent) | Kotlin stays a Gradle boundary until #145; Swift not scheduled |
 
 ## Micro-partition policy
@@ -96,7 +96,7 @@ because its tool was missing. The prototype suites record a missing tool as
 
 | Language | Linux | macOS | Windows | Reported `skipped` when |
 |---|---|---|---|---|
-| C#/.NET | required (prototype ran here) | required (#250) | required (#250); the prototype's `cp` steps must become a built-in first (#248) | no `dotnet` is found through `DOTNET_BIN` or `PATH`, or the SDK has no Roslyn `csc.dll`; the SDK, Roslyn and targeting-pack versions are recorded so a different SDK is visible |
+| C#/.NET | required | required | required; the generated copy steps use the built-in `frost copy`, not an external `cp` | no `dotnet` is found through `DOTNET_BIN` or `PATH`, or the SDK has no Roslyn `csc.dll`; the SDK, Roslyn and targeting-pack versions are recorded so a different SDK is visible |
 | Kotlin/JVM | cold-compiler probe only | not run | not run | `kotlinc` or `javac` is not found through `KOTLINC_BIN` / `JAVAC_BIN` or `PATH` |
 | Swift | not run | not run | not run | always, until the decision in docs/32 changes |
 

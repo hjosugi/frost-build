@@ -16,10 +16,13 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   implementation-only edit early-cuts dependents while a `const` edit reaches
   consumers; and a `.csproj` or `Directory.Build.props` change after import
   fails the generated `import_check` action (through `frost import-check`)
-  instead of linking stale argv. `scripts/check_import_dotnet.py` proves
-  byte-identical assemblies, early cutoff, const propagation and the
+  instead of linking stale argv, and the copy steps run the built-in
+  `frost copy`, so no external `cp` is needed. `scripts/check_import_dotnet.py`
+  proves byte-identical assemblies, early cutoff, const propagation and the
   stale-import refusal, and the new `C#/.NET` workflow runs it on Linux, macOS
-  and Windows with a pinned SDK (#250).
+  and Windows with a pinned SDK (#250). A `frost-import` frontend in the
+  `csharp` harness measures the product path, and a nightly `csharp-benchmark`
+  job records the report (#249).
 
 - A graph-shape comparison against Bazel (#159). `frost-bench run --suite
   standard --shape linear|wide|packages` builds every tool's manifest from one

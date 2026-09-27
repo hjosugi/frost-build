@@ -578,6 +578,7 @@ fn run(cli: Cli) -> Result<i32> {
         Cmd::ImportCheck { digest, out, files } => {
             dotnet::run_check(&root, &digest, out.as_deref(), &files)
         }
+        Cmd::Copy { from, to } => dotnet::run_copy(&root, &from, &to),
         Cmd::BazelDev {
             target,
             bazel,
