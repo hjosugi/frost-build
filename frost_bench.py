@@ -1821,8 +1821,16 @@ def tool_specs(names: list[str]) -> list[ToolSpec]:
         if name == "frost":
             repo = pathlib.Path(__file__).resolve().parent
             configured = os.environ.get("FROST_BIN")
+            configured_path = None
+            if configured:
+                # CI passes `target/release/frost`; commands run from a
+                # generated workspace, so a relative path is relative to the
+                # repository, not to the workspace.
+                configured_path = pathlib.Path(configured)
+                if not configured_path.is_absolute():
+                    configured_path = repo / configured_path
             candidates = [
-                pathlib.Path(configured) if configured else None,
+                configured_path,
                 repo / "target/release/frost",
                 repo / "target/debug/frost",
             ]
