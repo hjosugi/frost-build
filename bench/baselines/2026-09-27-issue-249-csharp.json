@@ -1,0 +1,1225 @@
+{
+  "config": {
+    "clean_policy": "delete bin/ and the configuration's obj/ tree (and .frost for Frost frontends); restore results are kept and every timed build is --no-restore",
+    "execution_order": "round-robin; reverse frontend order on every measured iteration",
+    "generated_boundary_policy": "frost-csc: one MSBuild design-time Compile per project (SkipCompilerExecution + ProvideCommandLineArgs) yields the exact csc argv; the compiler, reference assemblies, analyzers and source generators are copied into .dotnet-sdk and declared as inputs; consumers compile against a copied reference assembly so implementation-only edits stop at early cutoff. The one-time import cost is reported separately, never folded into a timed build",
+    "iterations": 7,
+    "jobs": 4,
+    "scenarios": [
+      "clean",
+      "noop",
+      "incremental_leaf",
+      "incremental_shared"
+    ],
+    "size": 25,
+    "toolchain": {
+      "configuration": "Release",
+      "roslyn": "5.9.0-1.26423.113 (e34a38d2ae1fc26406a317517196e55c68ff83ab)",
+      "runtimes": [
+        "10.0.11",
+        "10.0.12",
+        "10.0.8",
+        "8.0.22",
+        "8.0.31",
+        "8.0.6",
+        "9.0.20",
+        "9.0.6"
+      ],
+      "sdk_version": "10.0.401",
+      "target_framework": "net10.0",
+      "targeting_packs": [
+        "10.0.11",
+        "10.0.12",
+        "10.0.8",
+        "8.0.22",
+        "8.0.31",
+        "8.0.6",
+        "9.0.20",
+        "9.0.6"
+      ]
+    },
+    "tools": [
+      "frost-import",
+      "frost-dotnet",
+      "dotnet"
+    ],
+    "warm_policy": "one untimed build per frontend before sampling; MSBuild node reuse and the Roslyn compiler server (VBCSCompiler) stay enabled for dotnet and frost-dotnet, which share one warm server; frost-csc runs each compile in a fresh csc process"
+  },
+  "digest": "f289dc18701d9590c2f4ef089428fe9bdf87600c4b0de11eef056dddad8f0bc6",
+  "environment": {
+    "captured_at": "2026-09-27T13:53:20Z",
+    "cpu_count": 4,
+    "cpu_governor": null,
+    "hostname": "runnervmtr4k5",
+    "load_avg": [
+      4.5302734375,
+      1.8955078125,
+      0.7138671875
+    ],
+    "load_avg_after": [
+      1.93408203125,
+      1.89990234375,
+      0.9375
+    ],
+    "machine": "x86_64",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python": "3.12.3",
+    "turbo": null
+  },
+  "generated_at": "2026-09-27T13:56:20Z",
+  "graph": {
+    "contract_sha256": "f17ca33bc22f9e6da8b8c343b3b1cd888fba7d9acd918bbffccb2a96e575cb49",
+    "incremental_leaf": "one method body in the top App project changes",
+    "incremental_shared": "one method body in the bottom Core project changes; its public API (reference assembly) does not",
+    "initial_expected_stdout": "151200",
+    "language": "C#",
+    "project_count": 4,
+    "project_reference_edges": 4,
+    "same_source_graph": true,
+    "shape": "four-project diamond (App -> Service -> Model -> Core, Service -> Core)",
+    "source_count": 105,
+    "value_files_per_project": 25
+  },
+  "jvm_startup_probe": null,
+  "output_equivalence": {
+    "assembly_set_digests": {
+      "dotnet": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6",
+      "frost-dotnet": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6",
+      "frost-import": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6"
+    },
+    "byte_identical_assemblies": true,
+    "comparison_unit": "application stdout after every timed build, the exact assembly set, SHA-256 of every assembly, and runtimeconfig.json content",
+    "semantic_digests": {
+      "dotnet": "0eab3b4028bb92100456d184af8e7761cb46f2feee8376c57dd2ec3e72f8e473",
+      "frost-dotnet": "0eab3b4028bb92100456d184af8e7761cb46f2feee8376c57dd2ec3e72f8e473",
+      "frost-import": "6c9abb2d83e33c06544820be1276acec468fae2b5d4496433918cb04d02f3f59"
+    },
+    "semantic_equal": false,
+    "validated_after_every_timed_build": true
+  },
+  "results": [
+    {
+      "artifact": {
+        "assemblies_sha256": {
+          "App.dll": "11f88ce50a373e78f44813dad44e77d1b635903ab06087262498b41d8646606d",
+          "Core.dll": "3e3b3f3c7f39b93a0b2722ed39224d9194cbaa8f6a4ce9ef9c541dcf77d57f16",
+          "Model.dll": "2cf483a410f45b32ce5176513cbcba143b47d0673a611e89c82fa97874f7ac24",
+          "Service.dll": "a4f2abe9c087b43b77aecf8867598c4a29b923480dc58cbcc22a20bd7be0b366"
+        },
+        "assembly_set_sha256": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6",
+        "extra_files": [],
+        "semantic_sha256": "6c9abb2d83e33c06544820be1276acec468fae2b5d4496433918cb04d02f3f59",
+        "stdout": "151214"
+      },
+      "configuration": {
+        "authored_msbuild_bytes": 1322,
+        "authored_msbuild_lines": 36,
+        "configuration_bytes": 16282,
+        "configuration_lines": 516,
+        "files": [
+          "Directory.Build.props",
+          "src/Core/Core.csproj",
+          "src/Model/Model.csproj",
+          "src/Service/Service.csproj",
+          "src/App/App.csproj",
+          "frost.toml"
+        ],
+        "frost_manifest_bytes": 14960,
+        "frost_manifest_is_generated": true,
+        "frost_manifest_lines": 480,
+        "generated_toolchain_bundle_excluded_from_configuration_size": [
+          ".dotnet-sdk",
+          ".dotnet-gen"
+        ]
+      },
+      "import": {
+        "import_ms": 6082.9
+      },
+      "iterations": 7,
+      "jobs": 4,
+      "probes": {
+        "dependency_api_change": {
+          "observed": {
+            "cached_actions": 2,
+            "executed_action_ms": 5957,
+            "executed_actions": [
+              "RUN app [csc]",
+              "RUN core [csc]",
+              "RUN core_api [frost]",
+              "RUN model [csc]",
+              "RUN model_api [frost]",
+              "RUN service [csc]"
+            ],
+            "frost_elapsed_ms": 5967
+          },
+          "status": "passed",
+          "stdout": "151219"
+        },
+        "toolchain_closure_change": {
+          "changed_file": ".dotnet-sdk/sdk/10.0.401/Sdks/Microsoft.NET.Sdk/analyzers/build/config/analysislevel_10_default.globalconfig",
+          "compile_actions_rerun": 4,
+          "observed": {
+            "cached_actions": 4,
+            "executed_action_ms": 5964,
+            "executed_actions": [
+              "RUN app [csc]",
+              "RUN core [csc]",
+              "RUN model [csc]",
+              "RUN service [csc]"
+            ],
+            "frost_elapsed_ms": 5970
+          },
+          "status": "passed"
+        }
+      },
+      "scenarios": {
+        "clean": {
+          "frost_boundary_overhead_median_ms": 49.714,
+          "inner_action_median_ms": 5891,
+          "max_ms": 6374.041,
+          "median_ms": 5940.714,
+          "min_ms": 5864.325,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 6312,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 6346
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 5965,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 5991
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 5844,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 5864
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 6311,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 6342
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 5891,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 5913
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 5823,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 5844
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 5816,
+              "executed_actions": [
+                "RUN app [csc]",
+                "RUN core [csc]",
+                "RUN core_api [frost]",
+                "RUN import_check [frost]",
+                "RUN model [csc]",
+                "RUN model_api [frost]",
+                "RUN service [csc]",
+                "RUN service_api [frost]"
+              ],
+              "frost_elapsed_ms": 5837
+            }
+          ],
+          "samples_ms": [
+            6374.041,
+            6019.568,
+            5892.301,
+            6371.433,
+            5940.714,
+            5871.06,
+            5864.325
+          ]
+        },
+        "incremental_leaf": {
+          "frost_boundary_overhead_median_ms": 11.142,
+          "inner_action_median_ms": 1468,
+          "max_ms": 1490.299,
+          "median_ms": 1480.405,
+          "min_ms": 1457.116,
+          "observed": [
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1447,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1450
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1466,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1469
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1446,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1449
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1474,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1476
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1479,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1482
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1474,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1478
+            },
+            {
+              "cached_actions": 7,
+              "executed_action_ms": 1468,
+              "executed_actions": [
+                "RUN app [csc]"
+              ],
+              "frost_elapsed_ms": 1471
+            }
+          ],
+          "samples_ms": [
+            1457.116,
+            1476.917,
+            1457.142,
+            1484.397,
+            1490.299,
+            1486.45,
+            1480.405
+          ]
+        },
+        "incremental_shared": {
+          "frost_boundary_overhead_median_ms": 13.338,
+          "inner_action_median_ms": 1470,
+          "max_ms": 1526.813,
+          "median_ms": 1482.835,
+          "min_ms": 1439.559,
+          "observed": [
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1469,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1473
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1474,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1478
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1426,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1431
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1473,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1478
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1470,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1474
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1464,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1468
+            },
+            {
+              "cached_actions": 6,
+              "executed_action_ms": 1512,
+              "executed_actions": [
+                "RUN core [csc]",
+                "RUN core_api [frost]"
+              ],
+              "frost_elapsed_ms": 1517
+            }
+          ],
+          "samples_ms": [
+            1481.887,
+            1486.871,
+            1439.559,
+            1486.338,
+            1482.835,
+            1477.621,
+            1526.813
+          ]
+        },
+        "noop": {
+          "frost_boundary_overhead_median_ms": 4.87,
+          "inner_action_median_ms": 0,
+          "max_ms": 6.932,
+          "median_ms": 4.87,
+          "min_ms": 4.737,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 2
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 2
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1
+            }
+          ],
+          "samples_ms": [
+            6.932,
+            4.87,
+            4.737,
+            4.915,
+            4.832,
+            5.076,
+            4.84
+          ]
+        }
+      },
+      "size": 25,
+      "status": "ok",
+      "tool": "frost-import",
+      "version": "frost 0.15.2"
+    },
+    {
+      "artifact": {
+        "assemblies_sha256": {
+          "App.dll": "11f88ce50a373e78f44813dad44e77d1b635903ab06087262498b41d8646606d",
+          "Core.dll": "3e3b3f3c7f39b93a0b2722ed39224d9194cbaa8f6a4ce9ef9c541dcf77d57f16",
+          "Model.dll": "2cf483a410f45b32ce5176513cbcba143b47d0673a611e89c82fa97874f7ac24",
+          "Service.dll": "a4f2abe9c087b43b77aecf8867598c4a29b923480dc58cbcc22a20bd7be0b366"
+        },
+        "assembly_set_sha256": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6",
+        "extra_files": [
+          "App.deps.json",
+          "Core.deps.json",
+          "Model.deps.json",
+          "Service.deps.json"
+        ],
+        "semantic_sha256": "0eab3b4028bb92100456d184af8e7761cb46f2feee8376c57dd2ec3e72f8e473",
+        "stdout": "151214"
+      },
+      "configuration": {
+        "authored_msbuild_bytes": 1322,
+        "authored_msbuild_lines": 36,
+        "configuration_bytes": 2133,
+        "configuration_lines": 68,
+        "files": [
+          "Directory.Build.props",
+          "src/Core/Core.csproj",
+          "src/Model/Model.csproj",
+          "src/Service/Service.csproj",
+          "src/App/App.csproj",
+          "frost.toml"
+        ],
+        "frost_manifest_bytes": 811,
+        "frost_manifest_is_generated": false,
+        "frost_manifest_lines": 32
+      },
+      "import": {},
+      "iterations": 7,
+      "jobs": 4,
+      "probes": {
+        "dependency_api_change": {
+          "observed": {
+            "cached_actions": 0,
+            "executed_action_ms": 1283,
+            "executed_actions": [
+              "RUN app [dotnet]"
+            ],
+            "frost_elapsed_ms": 1285,
+            "msbuild_compiled_projects": [
+              "App",
+              "Core",
+              "Model",
+              "Service"
+            ]
+          },
+          "status": "passed",
+          "stdout": "151219"
+        }
+      },
+      "scenarios": {
+        "clean": {
+          "frost_boundary_overhead_median_ms": 11.564,
+          "inner_action_median_ms": 1384,
+          "max_ms": 1973.564,
+          "median_ms": 1402.09,
+          "min_ms": 1236.001,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1395,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1397,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1417,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1420,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1962,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1964,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1384,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1388,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1326,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1328,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1225,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1227,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1269,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1271,
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1406.659,
+            1429.341,
+            1973.564,
+            1402.09,
+            1336.995,
+            1236.001,
+            1280.047
+          ]
+        },
+        "incremental_leaf": {
+          "frost_boundary_overhead_median_ms": 8.603,
+          "inner_action_median_ms": 1137,
+          "max_ms": 1225.914,
+          "median_ms": 1145.181,
+          "min_ms": 1137.474,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1129,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1131,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1137,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1139,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1134,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1137,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1142,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1144,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1131,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1133,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1216,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1219,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1159,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1162,
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1137.474,
+            1145.181,
+            1142.762,
+            1150.603,
+            1139.247,
+            1225.914,
+            1168.112
+          ]
+        },
+        "incremental_shared": {
+          "frost_boundary_overhead_median_ms": 8.765,
+          "inner_action_median_ms": 1136,
+          "max_ms": 1165.167,
+          "median_ms": 1144.573,
+          "min_ms": 1108.975,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1149,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1151,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1136,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1138,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1138,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1140,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1100,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1102,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1106,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1109,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1121,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1123,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 1156,
+              "executed_actions": [
+                "RUN app [dotnet]"
+              ],
+              "frost_elapsed_ms": 1158,
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1157.174,
+            1144.573,
+            1146.585,
+            1108.975,
+            1115.737,
+            1129.765,
+            1165.167
+          ]
+        },
+        "noop": {
+          "frost_boundary_overhead_median_ms": 4.19,
+          "inner_action_median_ms": 0,
+          "max_ms": 6.176,
+          "median_ms": 4.19,
+          "min_ms": 4.063,
+          "observed": [
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            },
+            {
+              "cached_actions": 0,
+              "executed_action_ms": 0,
+              "executed_actions": [],
+              "frost_elapsed_ms": 1,
+              "msbuild_compiled_projects": []
+            }
+          ],
+          "samples_ms": [
+            6.176,
+            4.063,
+            4.199,
+            4.19,
+            4.177,
+            4.586,
+            4.19
+          ]
+        }
+      },
+      "size": 25,
+      "status": "ok",
+      "tool": "frost-dotnet",
+      "version": "frost 0.15.2"
+    },
+    {
+      "artifact": {
+        "assemblies_sha256": {
+          "App.dll": "11f88ce50a373e78f44813dad44e77d1b635903ab06087262498b41d8646606d",
+          "Core.dll": "3e3b3f3c7f39b93a0b2722ed39224d9194cbaa8f6a4ce9ef9c541dcf77d57f16",
+          "Model.dll": "2cf483a410f45b32ce5176513cbcba143b47d0673a611e89c82fa97874f7ac24",
+          "Service.dll": "a4f2abe9c087b43b77aecf8867598c4a29b923480dc58cbcc22a20bd7be0b366"
+        },
+        "assembly_set_sha256": "58c379e249aa096555ad905a5464eb5c9debdbcac3212392f6f728a1d9ad4cb6",
+        "extra_files": [
+          "App.deps.json"
+        ],
+        "semantic_sha256": "0eab3b4028bb92100456d184af8e7761cb46f2feee8376c57dd2ec3e72f8e473",
+        "stdout": "151214"
+      },
+      "configuration": {
+        "authored_msbuild_bytes": 1322,
+        "authored_msbuild_lines": 36,
+        "configuration_bytes": 1322,
+        "configuration_lines": 36,
+        "files": [
+          "Directory.Build.props",
+          "src/Core/Core.csproj",
+          "src/Model/Model.csproj",
+          "src/Service/Service.csproj",
+          "src/App/App.csproj"
+        ]
+      },
+      "import": {},
+      "iterations": 7,
+      "jobs": 4,
+      "probes": {
+        "dependency_api_change": {
+          "observed": {
+            "msbuild_compiled_projects": [
+              "App",
+              "Core",
+              "Model",
+              "Service"
+            ]
+          },
+          "status": "passed",
+          "stdout": "151219"
+        }
+      },
+      "scenarios": {
+        "clean": {
+          "max_ms": 1767.439,
+          "median_ms": 1333.081,
+          "min_ms": 1253.707,
+          "observed": [
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App",
+                "Core",
+                "Model",
+                "Service"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1567.169,
+            1333.081,
+            1532.456,
+            1767.439,
+            1253.707,
+            1275.173,
+            1278.16
+          ]
+        },
+        "incremental_leaf": {
+          "max_ms": 1062.113,
+          "median_ms": 1023.137,
+          "min_ms": 1007.729,
+          "observed": [
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "App"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1046.608,
+            1023.137,
+            1062.113,
+            1040.972,
+            1007.729,
+            1017.95,
+            1013.644
+          ]
+        },
+        "incremental_shared": {
+          "max_ms": 1072.959,
+          "median_ms": 1002.446,
+          "min_ms": 975.279,
+          "observed": [
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            },
+            {
+              "msbuild_compiled_projects": [
+                "Core"
+              ]
+            }
+          ],
+          "samples_ms": [
+            1014.005,
+            990.405,
+            1002.446,
+            992.614,
+            975.279,
+            1037.463,
+            1072.959
+          ]
+        },
+        "noop": {
+          "max_ms": 1062.678,
+          "median_ms": 1004.41,
+          "min_ms": 976.861,
+          "observed": [
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            },
+            {
+              "msbuild_compiled_projects": []
+            }
+          ],
+          "samples_ms": [
+            1062.678,
+            1027.13,
+            976.861,
+            990.886,
+            1012.123,
+            1003.977,
+            1004.41
+          ]
+        }
+      },
+      "size": 25,
+      "status": "ok",
+      "tool": "dotnet",
+      "version": "dotnet SDK 10.0.401"
+    }
+  ],
+  "schema": "frost-bench-csharp-v1",
+  "suite": "csharp"
+}

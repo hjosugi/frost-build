@@ -193,6 +193,33 @@ reference goes through the shared response file; the wrapper's hand-written
 `frost.toml` is 32 lines. The generated manifest is generated: its size is a
 readability cost, not an authoring cost.
 
+### Product baseline (`frost import-dotnet`, #249)
+
+The prototype generator has been replaced by the product importer. A
+`frost-import` frontend runs `frost import-dotnet` once and then measures
+`frost build`; the checked report is
+[`2026-09-27-issue-249-csharp.json`](../bench/baselines/2026-09-27-issue-249-csharp.json),
+recorded by the nightly `csharp-benchmark` job on a clean 4-CPU runner (starting
+load average 4.53), .NET SDK 10.0.401, `--jobs 4`, median-of-7 in alternating
+order. All three frontends produced the same four assemblies, byte for byte
+(`assembly_set_sha256` matches across tools).
+
+| Scenario (median ms) | `frost-import` | `frost-dotnet` | `dotnet build` |
+|---|---:|---:|---:|
+| clean | 5,941 | 1,402 | 1,333 |
+| warmed no-op | 4.9 | 4.2 | 1,004 |
+| one leaf changed | 1,480 | 1,145 | 1,023 |
+| shared dependency changed | 1,483 | 1,145 | 1,002 |
+
+`frost-import`'s clean build is slower than `dotnet build` here: it runs one
+`csc` apphost per project — four process startups and four toolchain-closure
+hashes — where MSBuild keeps one node. Its no-op is roughly 200x faster, and the
+two changed scenarios are within about 0.5x of `dotnet build` on this small
+25-value graph. Both correctness probes pass: a public-constant change
+recompiles its consumers, and changing one byte of the bundled compiler closure
+reruns all four compile actions. Recorded, not claimed; the larger prototype
+comparison above remains the reference for the compiler-server variants.
+
 ### Correctness probes
 
 Run once per frontend after the timed samples, and recorded in the report:
@@ -277,12 +304,12 @@ issue, per the #153 acceptance criteria:
 | #249 | `frost-bench csharp` nightly on a pinned SDK, measured against `frost import-dotnet` output, quiet-host baseline | #248 |
 | #250 | C# E2E on Linux, macOS and Windows runners; `skipped` when no SDK | #248 |
 
-The implementation (#248) and the platform gate (#250) have landed:
-`frost import-dotnet` evaluates each project once, bundles the csc closure,
-meets projects at their reference assemblies and refuses a stale import, and the
-`C#/.NET` workflow runs `scripts/check_import_dotnet.py` on all three hosts. The
-nightly benchmark (#249) still measures the older `frost-bench csharp`
-generator and remains open.
+The implementation (#248), the platform gate (#250) and the benchmark (#249)
+have landed: `frost import-dotnet` evaluates each project once, bundles the csc
+closure, meets projects at their reference assemblies and refuses a stale
+import; the `C#/.NET` workflow runs `scripts/check_import_dotnet.py` on all
+three hosts; and the nightly `csharp-benchmark` job records the report docs/32
+cites.
 
 Kotlin and Swift get no implementation issue. Kotlin's native-rule question
 reopens with #145's decision; Swift reopens only with a concrete polyglot
