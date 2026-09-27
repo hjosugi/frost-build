@@ -725,12 +725,18 @@ struct Bundle {
 /// Hard-link (or copy) the Roslyn closure and every referenced SDK file.
 fn bundle_toolchain(root: &Path, info: &DotnetInfo, files: &BTreeSet<PathBuf>) -> Result<Bundle> {
     let bundle = root.join(SDK_BUNDLE);
+    // `files` holds paths normalized out of the Windows verbatim form; the
+    // Roslyn walk holds canonical ones. Normalize both before taking the
+    // relative path, or a `strip_prefix` that silently fails would drop SDK
+    // files from the bundle and the compiler would report them missing.
+    let sdk_root = normalized(&info.root);
     let mut count = 0;
     for source in std::iter::once(&info.roslyn_dir)
         .flat_map(|directory| walk_files(directory))
         .chain(files.iter().cloned())
     {
-        let Ok(relative) = source.strip_prefix(&info.root) else {
+        let relative = normalized(&source);
+        let Ok(relative) = relative_after(&relative, &sdk_root) else {
             continue;
         };
         link_or_copy(&source, &bundle.join(relative))?;
