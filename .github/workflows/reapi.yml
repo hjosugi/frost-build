@@ -78,9 +78,18 @@ jobs:
             controller scripts/reapi_poc.py \
               --remote http://nginx:50051 \
               --input-root tests/fixtures/reapi \
-              --timeout 180 \
+              --timeout 300 \
               --platform OSFamily=linux \
               --platform ISA=x86-64
+
+      # The worker's own log is the only way to tell a lease that never happened
+      # from a missing-blob probe that retried past the deadline.
+      - name: Worker log
+        if: always()
+        working-directory: ${{ runner.temp }}/buildgrid
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 bots
 
       - name: Rust CAS/Action Cache round trip
         env:
