@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use tonic::codec::CompressionEncoding;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, Endpoint};
 
@@ -60,6 +61,37 @@ pub struct ReapiClient {
     channel: Channel,
     config: ReapiConfig,
     capabilities: Capabilities,
+}
+
+// BuildGrid's storage service is configured with `grpc-compression: Gzip`, so
+// its CAS responses arrive gzip-encoded. Every client accepts gzip, so a server
+// that compresses is usable without the caller opting in.
+
+type CasClient = repb::content_addressable_storage_client::ContentAddressableStorageClient<Channel>;
+type CapabilitiesClient = repb::capabilities_client::CapabilitiesClient<Channel>;
+type ActionCacheClient = repb::action_cache_client::ActionCacheClient<Channel>;
+type ExecutionClient = repb::execution_client::ExecutionClient<Channel>;
+type ByteStreamClient =
+    crate::proto::google::bytestream::byte_stream_client::ByteStreamClient<Channel>;
+
+fn cas_client(channel: Channel) -> CasClient {
+    CasClient::new(channel).accept_compressed(CompressionEncoding::Gzip)
+}
+
+fn capabilities_client(channel: Channel) -> CapabilitiesClient {
+    CapabilitiesClient::new(channel).accept_compressed(CompressionEncoding::Gzip)
+}
+
+fn action_cache_client(channel: Channel) -> ActionCacheClient {
+    ActionCacheClient::new(channel).accept_compressed(CompressionEncoding::Gzip)
+}
+
+fn execution_client(channel: Channel) -> ExecutionClient {
+    ExecutionClient::new(channel).accept_compressed(CompressionEncoding::Gzip)
+}
+
+fn byte_stream_client(channel: Channel) -> ByteStreamClient {
+    ByteStreamClient::new(channel).accept_compressed(CompressionEncoding::Gzip)
 }
 
 /// Request header `authorization` is carried per call rather than through a
@@ -126,7 +158,7 @@ impl ReapiClient {
     }
 
     fn negotiate(&mut self) -> Result<Capabilities, ReapiError> {
-        let mut client = repb::capabilities_client::CapabilitiesClient::new(self.channel.clone());
+        let mut client = capabilities_client(self.channel.clone());
         let auth = self.auth();
         let response = self
             .runtime
@@ -173,10 +205,7 @@ impl ReapiClient {
     pub fn find_missing_blobs(&self, digests: &[Digest]) -> Result<Vec<Digest>, ReapiError> {
         let mut missing = Vec::new();
         for chunk in batch(digests, self.capabilities.max_batch_total_size) {
-            let mut client =
-                repb::content_addressable_storage_client::ContentAddressableStorageClient::new(
-                    self.channel.clone(),
-                );
+            let mut client = cas_client(self.channel.clone());
             let auth = self.auth();
             let payload = repb::FindMissingBlobsRequest {
                 instance_name: self.config.instance_name.clone(),
@@ -212,10 +241,7 @@ impl ReapiClient {
             }
         }
         for chunk in batch_pairs(&small, self.capabilities.max_batch_total_size) {
-            let mut client =
-                repb::content_addressable_storage_client::ContentAddressableStorageClient::new(
-                    self.channel.clone(),
-                );
+            let mut client = cas_client(self.channel.clone());
             let auth = self.auth();
             let payload = repb::BatchUpdateBlobsRequest {
                 instance_name: self.config.instance_name.clone(),
@@ -269,10 +295,7 @@ impl ReapiClient {
         let data = if digest.size_bytes > self.capabilities.max_batch_total_size {
             self.read_bytestream(digest)?
         } else {
-            let mut client =
-                repb::content_addressable_storage_client::ContentAddressableStorageClient::new(
-                    self.channel.clone(),
-                );
+            let mut client = cas_client(self.channel.clone());
             let auth = self.auth();
             let payload = repb::BatchReadBlobsRequest {
                 instance_name: self.config.instance_name.clone(),
@@ -316,7 +339,7 @@ impl ReapiClient {
         &self,
         action_digest: &Digest,
     ) -> Result<Option<repb::ActionResult>, ReapiError> {
-        let mut client = repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
+        let mut client = action_cache_client(self.channel.clone());
         let auth = self.auth();
         let payload = repb::GetActionResultRequest {
             instance_name: self.config.instance_name.clone(),
@@ -343,7 +366,7 @@ impl ReapiClient {
         action_digest: &Digest,
         result: repb::ActionResult,
     ) -> Result<(), ReapiError> {
-        let mut client = repb::action_cache_client::ActionCacheClient::new(self.channel.clone());
+        let mut client = action_cache_client(self.channel.clone());
         let auth = self.auth();
         let payload = repb::UpdateActionResultRequest {
             instance_name: self.config.instance_name.clone(),
@@ -370,7 +393,7 @@ impl ReapiClient {
         action_digest: &Digest,
         skip_cache_lookup: bool,
     ) -> Result<repb::ExecuteResponse, ReapiError> {
-        let mut client = repb::execution_client::ExecutionClient::new(self.channel.clone());
+        let mut client = execution_client(self.channel.clone());
         let auth = self.auth();
         let payload = repb::ExecuteRequest {
             instance_name: self.config.instance_name.clone(),
@@ -412,10 +435,7 @@ impl ReapiClient {
     }
 
     fn read_bytestream(&self, digest: &Digest) -> Result<Vec<u8>, ReapiError> {
-        let mut client =
-            crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
-                self.channel.clone(),
-            );
+        let mut client = byte_stream_client(self.channel.clone());
         let auth = self.auth();
         let payload = crate::proto::google::bytestream::ReadRequest {
             resource_name: self.resource_name(digest, false),
@@ -443,10 +463,7 @@ impl ReapiClient {
     }
 
     fn write_bytestream(&self, digest: &Digest, data: &[u8]) -> Result<(), ReapiError> {
-        let mut client =
-            crate::proto::google::bytestream::byte_stream_client::ByteStreamClient::new(
-                self.channel.clone(),
-            );
+        let mut client = byte_stream_client(self.channel.clone());
         let auth = self.auth();
         let resource = self.resource_name(digest, true);
         let chunk_size = 1024 * 1024;

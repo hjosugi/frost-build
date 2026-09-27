@@ -97,9 +97,13 @@ impl TestServer {
                 let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
                 let services = (
                     repb::capabilities_server::CapabilitiesServer::new(service.clone()),
+                    // BuildGrid's storage compresses its CAS responses; the test
+                    // server does too, so the client's gzip path is exercised.
                     repb::content_addressable_storage_server::ContentAddressableStorageServer::new(
                         service.clone(),
-                    ),
+                    )
+                    .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
+                    .send_compressed(tonic::codec::CompressionEncoding::Gzip),
                     repb::action_cache_server::ActionCacheServer::new(service.clone()),
                     repb::execution_server::ExecutionServer::new(service.clone()),
                     crate::proto::google::bytestream::byte_stream_server::ByteStreamServer::new(

@@ -18,7 +18,7 @@ sha2.workspace = true
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "sync"] }
 tokio-stream = { version = "0.1", features = ["net"] }
-tonic = { version = "0.14", features = ["transport", "codegen", "tls-ring", "tls-native-roots"] }
+tonic = { version = "0.14", features = ["transport", "codegen", "gzip", "tls-ring", "tls-native-roots"] }
 tonic-prost = "0.14"
 
 [build-dependencies]
