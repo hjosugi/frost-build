@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-27
+
 ### Added
 
 - `frost import-dotnet <project-or-solution>` (#248): MSBuild's design-time
