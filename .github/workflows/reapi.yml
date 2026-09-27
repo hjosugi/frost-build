@@ -62,12 +62,14 @@ jobs:
 
       # The certificate client runs inside the BuildGrid image, which carries the
       # generated REAPI Python modules and grpcio, with this repository mounted.
+      # The image entrypoint is `bgd`, so `python3` must replace it rather than
+      # be passed as a `bgd` subcommand.
       - name: Run the Python certificate
         working-directory: ${{ runner.temp }}/buildgrid
         run: |
-          docker compose run --rm --no-deps \
+          docker compose run --rm --no-deps --entrypoint python3 \
             -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
-            controller python3 scripts/reapi_poc.py \
+            controller scripts/reapi_poc.py \
               --remote http://nginx:50051 \
               --input-root tests/fixtures/reapi \
               --timeout 60 \
