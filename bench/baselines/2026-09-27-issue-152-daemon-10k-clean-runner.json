@@ -1,0 +1,6772 @@
+{
+  "schema": "frost-daemon-graph-v2",
+  "frostbuild_version": "0.14.0",
+  "generated_at_unix_s": 1790480257,
+  "environment_before": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu_count": 4,
+    "rayon_num_threads_env": null,
+    "load_average": [
+      3.23,
+      0.99,
+      0.35
+    ],
+    "cpu_governor": null,
+    "turbo_disabled": null,
+    "temp_root": "/tmp"
+  },
+  "environment_after": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu_count": 4,
+    "rayon_num_threads_env": null,
+    "load_average": [
+      2.24,
+      0.99,
+      0.37
+    ],
+    "cpu_governor": null,
+    "turbo_disabled": null,
+    "temp_root": "/tmp"
+  },
+  "frost_executable": "/home/runner/work/frost-build/frost-build/target/release/frost",
+  "frost_version": "frost 0.14.0",
+  "ninja_executable": "/usr/local/bin/ninja",
+  "ninja_version": "1.13.2",
+  "targets": 10000,
+  "iterations": 31,
+  "workspace_contract": "10000-target linear genrule graph; equal commands and declared inputs",
+  "standalone_noop": {
+    "median_ms": 37.273331,
+    "min_ms": 36.311594,
+    "max_ms": 40.559155,
+    "samples_ms": [
+      37.042394,
+      40.342729,
+      37.036895,
+      36.859309,
+      36.311594,
+      38.176981,
+      40.081696,
+      36.641109,
+      36.575680999999996,
+      37.273331,
+      36.983505,
+      37.333391,
+      36.675661999999996,
+      36.999259,
+      38.467057,
+      40.559155,
+      36.504635,
+      40.217582,
+      37.019329,
+      37.540002,
+      36.660869,
+      37.355184,
+      37.375595,
+      37.487373,
+      38.730733,
+      37.069064,
+      37.300773,
+      40.034446,
+      36.559737,
+      39.128602,
+      37.099319
+    ]
+  },
+  "daemon_cli_noop": {
+    "median_ms": 2.983579,
+    "min_ms": 2.816257,
+    "max_ms": 3.029388,
+    "samples_ms": [
+      2.8978810000000004,
+      3.027996,
+      3.022578,
+      2.989658,
+      2.8720999999999997,
+      3.0037800000000003,
+      2.975317,
+      3.001928,
+      2.8226169999999997,
+      3.024761,
+      3.024671,
+      2.9291069999999997,
+      2.816257,
+      3.019082,
+      2.99072,
+      3.002347,
+      2.8696379999999997,
+      2.987405,
+      3.029388,
+      2.920454,
+      2.942067,
+      3.0044999999999997,
+      2.983579,
+      2.979312,
+      2.935456,
+      3.0145660000000003,
+      2.969878,
+      2.944231,
+      2.9052409999999997,
+      3.004941,
+      2.9186020000000004
+    ]
+  },
+  "daemon_socket_noop": {
+    "median_ms": 0.25215,
+    "min_ms": 0.215254,
+    "max_ms": 0.370998,
+    "samples_ms": [
+      0.22062199999999998,
+      0.231488,
+      0.307482,
+      0.28145299999999995,
+      0.24309599999999998,
+      0.255304,
+      0.33282100000000003,
+      0.271498,
+      0.24444700000000003,
+      0.255345,
+      0.336807,
+      0.216977,
+      0.26143299999999997,
+      0.215254,
+      0.30587000000000003,
+      0.246391,
+      0.216917,
+      0.262304,
+      0.36561,
+      0.263746,
+      0.244418,
+      0.21908,
+      0.317357,
+      0.230146,
+      0.2394,
+      0.217788,
+      0.317338,
+      0.25215,
+      0.247933,
+      0.252049,
+      0.370998
+    ]
+  },
+  "ninja_noop": {
+    "median_ms": 66.23748,
+    "min_ms": 65.148192,
+    "max_ms": 66.979787,
+    "samples_ms": [
+      66.590211,
+      66.54522300000001,
+      65.655134,
+      66.76336099999999,
+      66.739736,
+      65.28513699999999,
+      66.041656,
+      66.67253500000001,
+      66.839065,
+      65.148192,
+      65.666061,
+      66.552364,
+      66.20129600000001,
+      66.791534,
+      65.711849,
+      66.03545600000001,
+      66.383891,
+      65.542014,
+      66.27897200000001,
+      65.803438,
+      66.254966,
+      66.434207,
+      66.23748,
+      66.839255,
+      65.959543,
+      65.83171,
+      66.233325,
+      66.832526,
+      65.79835,
+      65.28006,
+      66.979787
+    ]
+  },
+  "daemon_cli_vs_ninja_noop": 22.20067911726152,
+  "daemon_socket_vs_ninja_noop": 262.69077929803694,
+  "daemon_server_sub_5ms": true,
+  "end_to_end_sub_5ms": true,
+  "greater_than_2x_ninja": true,
+  "daemon_cli_incremental_leaf": {
+    "median_ms": 105.655109,
+    "min_ms": 101.40592199999999,
+    "max_ms": 137.76570099999998,
+    "samples_ms": [
+      137.76570099999998,
+      103.954559,
+      105.140985,
+      102.837499,
+      105.521767,
+      106.449533,
+      103.15445500000001,
+      102.652979,
+      104.618329,
+      104.256866,
+      105.863523,
+      104.428103,
+      107.291431,
+      106.996568,
+      107.824303,
+      109.07292100000001,
+      106.522284,
+      101.625807,
+      106.403375,
+      106.328012,
+      103.399676,
+      106.322473,
+      105.591494,
+      105.655109,
+      103.642381,
+      106.264946,
+      106.556765,
+      106.688063,
+      101.40592199999999,
+      123.47535699999999,
+      105.39607600000001
+    ]
+  },
+  "ninja_incremental_leaf": {
+    "median_ms": 69.342281,
+    "min_ms": 68.079346,
+    "max_ms": 75.017669,
+    "samples_ms": [
+      70.090498,
+      68.379263,
+      70.335447,
+      68.20153599999999,
+      69.36753,
+      68.34789500000001,
+      69.721943,
+      69.15238599999999,
+      69.212731,
+      69.546363,
+      69.854437,
+      68.52836099999999,
+      68.85948,
+      68.658117,
+      69.20513,
+      68.20164,
+      69.822048,
+      68.079346,
+      70.599307,
+      68.74127200000001,
+      71.65119,
+      69.429187,
+      69.402116,
+      68.586269,
+      69.682097,
+      68.835745,
+      69.530149,
+      68.641953,
+      70.54977699999999,
+      75.017669,
+      69.342281
+    ]
+  },
+  "leaf_change_vs_ninja": 1.5236751297523656,
+  "leaf_change": {
+    "phase_timing_env": "FROST_PHASE_TIMINGS",
+    "phases": [
+      {
+        "name": "client.outside",
+        "median_ms": 1.5315439999999967,
+        "min_ms": 1.306125999999992,
+        "max_ms": 1.7377349999999865,
+        "share_of_median_end_to_end": 0.014495692773361265
+      },
+      {
+        "name": "client.cli.startup",
+        "median_ms": 1.291333,
+        "min_ms": 1.245013,
+        "max_ms": 1.34227,
+        "share_of_median_end_to_end": 0.012222153876155674
+      },
+      {
+        "name": "client.prepare",
+        "median_ms": 0.031377,
+        "min_ms": 0.029845,
+        "max_ms": 0.059719999999999995,
+        "share_of_median_end_to_end": 0.0002969757004367863
+      },
+      {
+        "name": "client.transport",
+        "median_ms": 0.28394699999999773,
+        "min_ms": 0.26218400000001907,
+        "max_ms": 0.31905100000000175,
+        "share_of_median_end_to_end": 0.0026874895373019563
+      },
+      {
+        "name": "daemon.fast_noop",
+        "median_ms": 0.023035,
+        "min_ms": 0.021603,
+        "max_ms": 31.196969000000003,
+        "share_of_median_end_to_end": 0.00021802069221281103
+      },
+      {
+        "name": "daemon.child_outside",
+        "median_ms": 7.729269000000002,
+        "min_ms": 7.429306999999994,
+        "max_ms": 8.459647000000004,
+        "share_of_median_end_to_end": 0.07315565781111448
+      },
+      {
+        "name": "build.cli.startup",
+        "median_ms": 1.253135,
+        "min_ms": 1.202209,
+        "max_ms": 1.2990339999999998,
+        "share_of_median_end_to_end": 0.011860619063863728
+      },
+      {
+        "name": "build.certificate_check",
+        "median_ms": 0.033,
+        "min_ms": 0.029504,
+        "max_ms": 0.03973,
+        "share_of_median_end_to_end": 0.0003123370020847738
+      },
+      {
+        "name": "build.graph_load",
+        "median_ms": 31.721618,
+        "min_ms": 31.353992,
+        "max_ms": 32.701712,
+        "share_of_median_end_to_end": 0.30023742628479994
+      },
+      {
+        "name": "build.toolchain",
+        "median_ms": 0.13657599999999998,
+        "min_ms": 0.126009,
+        "max_ms": 0.155914,
+        "share_of_median_end_to_end": 0.0012926587392948503
+      },
+      {
+        "name": "build.closure",
+        "median_ms": 0.525962,
+        "min_ms": 0.47804,
+        "max_ms": 0.5798030000000001,
+        "share_of_median_end_to_end": 0.004978102857288237
+      },
+      {
+        "name": "build.prepare",
+        "median_ms": 0.256556,
+        "min_ms": 0.238639,
+        "max_ms": 0.359862,
+        "share_of_median_end_to_end": 0.0024282403608139767
+      },
+      {
+        "name": "build.engine_load",
+        "median_ms": 22.569518,
+        "min_ms": 18.422649,
+        "max_ms": 28.851238,
+        "share_of_median_end_to_end": 0.21361501789752543
+      },
+      {
+        "name": "build.engine.preflight",
+        "median_ms": 31.320583,
+        "min_ms": 30.344736,
+        "max_ms": 41.284536,
+        "share_of_median_end_to_end": 0.2964417272050706
+      },
+      {
+        "name": "build.engine.output_dirs",
+        "median_ms": 0.031938,
+        "min_ms": 0.030156,
+        "max_ms": 0.033811,
+        "share_of_median_end_to_end": 0.00030228542947222743
+      },
+      {
+        "name": "build.engine.schedule",
+        "median_ms": 0.440703,
+        "min_ms": 0.369096,
+        "max_ms": 0.481765,
+        "share_of_median_end_to_end": 0.004171147085750487
+      },
+      {
+        "name": "build.engine.workers",
+        "median_ms": 1.332905,
+        "min_ms": 1.292165,
+        "max_ms": 1.392926,
+        "share_of_median_end_to_end": 0.012615622780721376
+      },
+      {
+        "name": "build.engine.journal_compaction",
+        "median_ms": 0.0069,
+        "min_ms": 0.004838,
+        "max_ms": 0.017466,
+        "share_of_median_end_to_end": 0.00006530682770863452
+      },
+      {
+        "name": "build.engine.cas_gc",
+        "median_ms": 0.007221,
+        "min_ms": 0.005248,
+        "max_ms": 0.022554,
+        "share_of_median_end_to_end": 0.00006834501491073187
+      },
+      {
+        "name": "build.engine.hashcache_save",
+        "median_ms": 0.051167,
+        "min_ms": 0.036816,
+        "max_ms": 0.096806,
+        "share_of_median_end_to_end": 0.0004842832541112612
+      },
+      {
+        "name": "build.engine.results",
+        "median_ms": 1.279264,
+        "min_ms": 1.211673,
+        "max_ms": 1.388158,
+        "share_of_median_end_to_end": 0.012107923716211395
+      },
+      {
+        "name": "build.render_drain",
+        "median_ms": 3.536451,
+        "min_ms": 3.365103,
+        "max_ms": 3.922511,
+        "share_of_median_end_to_end": 0.03347165161696062
+      },
+      {
+        "name": "build.summary",
+        "median_ms": 0.113841,
+        "min_ms": 0.104397,
+        "max_ms": 0.140532,
+        "share_of_median_end_to_end": 0.0010774774743737192
+      },
+      {
+        "name": "daemon.post_barrier",
+        "median_ms": 0.101733,
+        "min_ms": 0.091387,
+        "max_ms": 0.122264,
+        "share_of_median_end_to_end": 0.000962878188881524
+      },
+      {
+        "name": "client.output",
+        "median_ms": 0.01385,
+        "min_ms": 0.010125,
+        "max_ms": 0.036044,
+        "share_of_median_end_to_end": 0.00013108689329921567
+      }
+    ],
+    "details": [
+      {
+        "name": "daemon:daemon.barrier",
+        "ms": 0.102524,
+        "count": 1
+      },
+      {
+        "name": "daemon:daemon.certificate_validation",
+        "ms": 31.041705,
+        "count": 1
+      },
+      {
+        "name": "build:graph.sources_stamp",
+        "ms": 15.528934,
+        "count": 1
+      },
+      {
+        "name": "build:graph.decode",
+        "ms": 15.347751,
+        "count": 1
+      },
+      {
+        "name": "build:hashcache.load",
+        "ms": 17.171977000000002,
+        "count": 1
+      },
+      {
+        "name": "build:journal.decode",
+        "ms": 17.376373,
+        "count": 1
+      },
+      {
+        "name": "build:preflight.journal_and_expectations",
+        "ms": 4.330265,
+        "count": 1
+      },
+      {
+        "name": "build:preflight.disk_and_keys",
+        "ms": 25.878285,
+        "count": 1
+      },
+      {
+        "name": "build:preflight.verdicts",
+        "ms": 1.151132,
+        "count": 1
+      },
+      {
+        "name": "build:action.digest_inputs",
+        "ms": 0.018848,
+        "count": 1
+      },
+      {
+        "name": "build:action.key",
+        "ms": 0.008173,
+        "count": 1
+      },
+      {
+        "name": "build:action.run_commands",
+        "ms": 0.915528,
+        "count": 1
+      },
+      {
+        "name": "build:action.dependency_report",
+        "ms": 0.000581,
+        "count": 1
+      },
+      {
+        "name": "build:action.publish_outputs",
+        "ms": 0.050045,
+        "count": 1
+      },
+      {
+        "name": "build:action.key_and_remote",
+        "ms": 0.003846,
+        "count": 1
+      },
+      {
+        "name": "build:action.journal_append",
+        "ms": 0.045488999999999995,
+        "count": 1
+      },
+      {
+        "name": "build:action.process",
+        "ms": 1.150601,
+        "count": 1
+      },
+      {
+        "name": "build:hashcache.encode",
+        "ms": 0.003145,
+        "count": 1
+      },
+      {
+        "name": "build:hashcache.write",
+        "ms": 0.023486,
+        "count": 1
+      }
+    ],
+    "artifact": {
+      "frost_path": ".frost/out/node09999.out",
+      "frost_bytes": 25,
+      "frost_digest": "961ed96a96ab8c0e828eca8389298d2aeeb92d5a7420d54689e7f71700042908",
+      "ninja_path": "out/node09999.out",
+      "ninja_bytes": 18,
+      "ninja_digest": "f3ff61db86d7ba6892c5641bba17eeb7b934b0b0632ea1e12d3e42e5fbc81057",
+      "content_verified": true
+    },
+    "samples": [
+      {
+        "end_to_end_ms": 137.76570099999998,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.7377349999999865
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.301498
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030105
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.26218400000001907
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 31.196969000000003
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.176102
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.274388
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.033729999999999996
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.780527000000003
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.134132
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.520853
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.258079
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.558466
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.64317500000001
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031988
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.435646
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.367888
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.007161
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007951999999999999
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.038357
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.320587
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.428559
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.112689
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.096766
+          },
+          {
+            "name": "client.output",
+            "ms": 0.010165
+          }
+        ],
+        "details": [
+          {
+            "name": "daemon:daemon.barrier",
+            "ms": 0.102524,
+            "count": 1
+          },
+          {
+            "name": "daemon:daemon.certificate_validation",
+            "ms": 31.041705,
+            "count": 1
+          },
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.510908,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.360712,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.724276999999997,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.218161,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.487942,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 27.004151,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.145784,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019049,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.009774,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.9441,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000651,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.044757,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003756,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.036665,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.164152,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002684,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.015594,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 103.954559,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3175520000000063
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.298644
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030446
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.26634099999999705
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.025818
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.130433999999994
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.232845
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.031938
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.765573999999997
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.128443
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5038790000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.25651599999999997
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.453087999999997
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.432118000000003
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031467
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.4322
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.338244
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.0069700000000000005
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.022554
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.039039
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.257432
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.737613
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.111678
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.092379
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011347
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.528764,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.340972,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 20.845173000000003,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.01211,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.4407309999999995,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 24.859454,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.126194,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.02007,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008173,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.927405,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000761,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045188,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003555,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.044748,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.150601,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002613,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.014942,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.140985,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5670280000000076
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.289961
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.059719999999999995
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2867519999999928
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023035
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.522707999999994
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2700509999999998
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032419
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.626475000000003
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.131087
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.496878
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.256556
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.569518
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.177709
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.03321
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.434654
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.3320439999999998
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.008073
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.010586
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.054632
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.265864
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.4675779999999996
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.110616
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.103415
+          },
+          {
+            "name": "client.output",
+            "ms": 0.010416
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.373691,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.441713,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 17.171977000000002,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.596571,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.279149,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.789843,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.10326,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019119,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.007972,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.908356,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000581,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.051878,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004247,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.051447,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.163861,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003695,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.025088000000000003,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 102.837499,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.359606999999997
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.245964
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.03321
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2950139999999948
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022294
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.658001999999996
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2424389999999998
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.036745999999999994
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.835519
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.14637999999999998
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.541505
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.267943
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 19.964949
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.369718999999996
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032619
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.453042
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.316831
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00637
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007730999999999999
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.056485
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.315259
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.38936
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.104397
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.122264
+          },
+          {
+            "name": "client.output",
+            "ms": 0.01385
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.707764,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.285979,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.279128,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.610151,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.527973,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.594318,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.241889,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.020271,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008673,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.912834,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000581,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045358,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003796,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.036805,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.1281679999999998,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003445,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.028182,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.521767,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.570093
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.314928
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031137
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2818139999999971
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.021883
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.443439000000012
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.253135
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032348999999999996
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.570451
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.134752
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.502497
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.28247500000000003
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.939684
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.385543
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031938
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.400733
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.332905
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.005759
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005969
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.060260999999999995
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.2463350000000002
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.437552
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.120111
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.099019
+          },
+          {
+            "name": "client.output",
+            "ms": 0.017005
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.47936,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.307031,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 9.406783,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.451297,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.203044,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.067651,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.109559,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.0199,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.011627,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.90381,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000771,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.06367600000000001,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004637,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.041623,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.160416,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003155,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.03328,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.449533,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.322339999999997
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.253365
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031247
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2648479999999864
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022614
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.638594000000012
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.237071
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.034903
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.591091
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.127492
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.492371
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.247773
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.240447
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.104805
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032959
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.442837
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.346285
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.008994
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.009945
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.051167
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.24324
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.463962
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.125689
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.102414
+          },
+          {
+            "name": "client.output",
+            "ms": 0.01308
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.625358999999998,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.205188,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 10.716724,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.654298,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.194942,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.777499,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.126745,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018678,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008853,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.904071,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.00045,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.064217,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004126,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.041112,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.179194,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0034850000000000003,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.023895,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 103.15445500000001,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.6127260000000092
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.291453
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031598
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.28394699999999773
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.025188
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.631753000000003
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.204843
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.03319
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.863251
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.141433
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5468120000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.238639
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.040668
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.344736
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030156
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.450738
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.365124
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.009334
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.00692
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.038889
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.350822
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.365103
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.114993
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.115133
+          },
+          {
+            "name": "client.output",
+            "ms": 0.017006
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.449996,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.641113000000002,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.861383,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.430521,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.450306,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 24.679613,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.209119,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.014963,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.00716,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.924601,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000481,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.051377,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003846,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.050206,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.167176,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002874,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.017867,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 102.652979,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3181239999999974
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.257842
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031738
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2695850000000064
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.021773
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.582739000000004
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.294818
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.034522
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.721618
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.142505
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.559672
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.256456
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 20.023116
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.320583
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032549
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.45166
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.317452
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.017466
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005919000000000001
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.063125
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.323662
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.371322
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.110396
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.110035
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014302
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.570948,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.358338,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.636786,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.061406,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.143995,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.044003999999997,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.127266,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.017967,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008263,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.893625,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0006209999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045107,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003866,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.036886,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.133074,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.017266,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.022154,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 104.618329,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5612090000000052
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.298874
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031878000000000004
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.29947899999999095
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023015
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.86985
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.253727
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032609
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.456857
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.126009
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.47804
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.253161
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 20.068683
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.959368000000005
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030636000000000004
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.455315
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.3218990000000002
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00708
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.00626
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.039269
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.386556
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.426565
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.108764
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.111298
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011928
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.556155,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 14.997314,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 18.540184,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.247384,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.705489999999999,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 27.098159,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.14999,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019219,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.011727,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.910419,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0006010000000000001,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050306,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004046,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.050807000000000005,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.147897,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0026639999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.017697,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 104.256866,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3457049999999953
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.275569
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.032119
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2703869999999995
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022233
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.473224000000002
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.211202
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.033951
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.874226
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.130997
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.501134
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.260281
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.430863
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.329706
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030416
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.456887
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.30943
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.009114
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.010706
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.045037999999999995
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.388158
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.567558
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.13919900000000002
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.094892
+          },
+          {
+            "name": "client.output",
+            "ms": 0.013871
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.51335,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.415603,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 20.587924,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.137918,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.540361,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.605304,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.178623,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019008,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.010466,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.927365,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000521,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050766,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003746,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.046379,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.157101,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003385,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.014392,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.863523,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5732179999999971
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.333296
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030806000000000004
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2890950000000032
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022904
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.600454999999997
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2882779999999998
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.030667000000000003
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.353992
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.12689099999999998
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.485661
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.25931
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.620337000000003
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.016484
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031418
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.441874
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.350412
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00667
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.009725
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.04681
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.23626
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.487978
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.109034
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.096886
+          },
+          {
+            "name": "client.output",
+            "ms": 0.015062
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.389965,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.085596,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 11.825842,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.696740000000002,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.037324999999999,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.865865,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.107977,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.014452,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.007189999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.914166,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.00053,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050897,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003946,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.055143,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.157882,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003145,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.019399,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 104.428103,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.324902999999992
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.270922
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.032008
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.3014130000000108
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022704
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.04623500000001
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.247107
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032278
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.574254000000003
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.135604
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.529026
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.242004
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.039054
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.617739
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.033811
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.400943
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.35621
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.004838
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005628
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.045609
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.304512
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.636862
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.117447
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.095945
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011047
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.440069,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.173479,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 9.669678,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.199122,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.331918,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.085796,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.1946070000000002,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.020421,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.009013,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.912463,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.00054,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.06459799999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003805,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.03961,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.167136,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0028339999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.020271,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 107.291431,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5315439999999967
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.336661
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030616
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2642980000000108
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022153
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.690840999999992
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.237031
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.03326
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.547503
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.13657599999999998
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5165569999999999
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.26612
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.134176
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.498895
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031507
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.45183
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.321378
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.007081
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.0058590000000000005
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.03973
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.293856
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.663492
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.122284
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.097837
+          },
+          {
+            "name": "client.output",
+            "ms": 0.010346
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.538498,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.273038,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 12.407998,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.166631,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 3.959046,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 27.277219,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.257031,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018508,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.011697,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.927145,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000541,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.044848,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003755,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.039049,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.145413,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002624,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.018107,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.996568,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.306125999999992
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.277191
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030907
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2675830000000019
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.021863
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.821345999999991
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.283041
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.03973
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.968467
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.141483
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.563648
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.254993
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.645551
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.100775999999996
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032158
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.440703
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.330312
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.0069
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007491
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.049946
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.252274
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.922511
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.121453
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.096595
+          },
+          {
+            "name": "client.output",
+            "ms": 0.01352
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.818399,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.364156,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 11.996849,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.263078,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.2984670000000005,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.612348,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.184372,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.032978999999999994,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.007892,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.902207,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0006209999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.049765,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003716,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.049504,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.165604,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003435,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.022043,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 107.824303,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5357699999999994
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.34227
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.03315
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2747930000000025
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.02666
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.518652000000003
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2386039999999998
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032018
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.790549
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.127772
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5065230000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.24717100000000003
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 25.283900000000003
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.735052
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030596
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.426281
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.380016
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.007201
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.0063300000000000006
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.039128
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.237993
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.777433
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.115223
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.094492
+          },
+          {
+            "name": "client.output",
+            "ms": 0.016725999999999998
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.48688,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.435072,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 24.867563,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 20.044768,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.586200000000001,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.009197,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.134056,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.015704,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.00671,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.917441,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.00047,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.049795,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003766,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.048863,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.15613,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002534,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.017516,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 109.07292100000001,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.311283000000003
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.268318
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030645999999999996
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2947229999999905
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.021953
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.001548999999997
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2990339999999998
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.034332
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.569727
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.151287
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5798030000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.254933
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 26.337455
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.095544
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031708
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.431589
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.316541
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.006589
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007211
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.045419
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.291613
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.4586539999999997
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.111327
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.110396
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011287
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.430906,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.337245,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 20.813203,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 19.69389,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.109973,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.878285,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.101957,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018187,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.006690000000000001,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.907064,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000521,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.051087,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003806,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.049244,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.141176,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0026639999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.018358,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.522284,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.6118550000000056
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.291613
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031627
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2723100000000045
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023234
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.6319230000000005
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.275739
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032379000000000005
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.713713999999996
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.155914
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5568679999999999
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.266812
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.288838
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.39222
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032369
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.40869399999999995
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.3363310000000002
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.007361
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007321
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.096806
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.274888
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.578313
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.11922
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.0997
+          },
+          {
+            "name": "client.output",
+            "ms": 0.016235
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.535263,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.345147,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 13.472249,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.614808,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.170104,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.99508,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.220977,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.020321,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008052,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.933955,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000671,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.046159000000000006,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003586,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.039529,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.156069,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002434,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.043726,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 101.625807,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.330812999999992
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.290501
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.03307
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.29008699999999976
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.0265
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.536047000000011
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.258323
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.035003
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.788626
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.137567
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.566943
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.25268
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 19.778758
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.467398
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032509
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.447353
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.323712
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00667
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005667999999999999
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.051999
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.279264
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.460356
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.117057
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.093711
+          },
+          {
+            "name": "client.output",
+            "ms": 0.015192
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.545458,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.438718,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.333798,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.090103,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.402383,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 24.862606,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.196871,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019229,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008282,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.916919,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000511,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045268,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003826,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.036815,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.1286079999999998,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003315,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.024387,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.403375,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5516339999999929
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.301198
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031377
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.27330099999998936
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022534
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.429306999999994
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.202209
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.029504
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.421695
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.136375
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.483968
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.24604
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.725275
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.647634
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030636000000000004
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.369096
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.342229
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.005729
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005638
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.052569
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.330923
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.532835
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.109585
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.111959
+          },
+          {
+            "name": "client.output",
+            "ms": 0.010125
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.465108,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.159117,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 16.444301000000003,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.376373,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.330265,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.14854,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.163671,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018588,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008002,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.918802,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000481,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045398,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004046,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.045488999999999995,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.138993,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003215,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.026009,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.328012,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3267670000000038
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.272595
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031767000000000004
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2902770000000032
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.026479
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.903700999999998
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2957800000000002
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032048
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.534294
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.140321
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.542146
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.253731
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.811735
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.072319
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031557999999999996
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.409996
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.332966
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.0065
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005598
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.053511
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.211673
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.488648
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.140532
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.098829
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014241
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.488392,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.319477999999998,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 10.762422,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.632999,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.089994,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.770271,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.206545,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.01973,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008052,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.867435,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.00058,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.065629,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004257,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.036965000000000005,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.131973,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003536,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.025619,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 103.399676,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5709640000000036
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.286726
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031668
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.29772699999999475
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023916
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.482297000000003
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.298614
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.031528
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.547163000000005
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.137456
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.525962
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.276295
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.452185
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.579858
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032389
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.393472
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.346976
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.0065
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007552
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.057775999999999994
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.278494
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.510582
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.117607
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.091387
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014582
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.517776,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.236043,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 20.018288,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 18.228575,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.507852,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 24.888605,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.177732,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.014332,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.007341,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.917009,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000461,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045909,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003926,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.038818,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.143491,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0034249999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.025448,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.322473,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3367800000000045
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.25573
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030766
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.27855900000000133
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023356
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.387008000000009
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.241858
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.0332
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.721635999999997
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.13786700000000002
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.505361
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.25737699999999997
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.820464
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.185768999999997
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031517
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.481765
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.320277
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00668
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005708
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.040351
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.322389
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.654218
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.114683
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.115904
+          },
+          {
+            "name": "client.output",
+            "ms": 0.01325
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.528934,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.412458,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 10.286476,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.332237,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.193279,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.835980000000003,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.151132,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018819,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.011637,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.915938,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0006309999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.051397000000000005,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003826,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.049073000000000006,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.143671,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002533,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.017856999999999998,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.591494,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5705829999999992
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.327497
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.029845
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.28813399999999945
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.025709
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.826104999999998
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.265594
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.031988
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.964631
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.14227399999999998
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5299579999999999
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.25891899999999995
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.570904
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.727234
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032449
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.448865
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.309701
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.008983
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007501
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.036816
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.258994
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.700938
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.112018
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.101803
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014051
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.577166,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.525178,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 19.055499,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.969804999999997,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.442934,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.161811,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.117221,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018848,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.009044,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.904521,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000591,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050175,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004006,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.051077,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.145434,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002434,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.018749,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.655109,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3323939999999936
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.248819
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030876
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.27595599999999365
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023335
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.73541800000001
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.227507
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.033510000000000005
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.603026999999997
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.12942499999999998
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5309689999999999
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.253571
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.907845
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.366131
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031628
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.453171
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.31552
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.00666
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007221
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.052959
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.2933560000000002
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.556431
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.118758
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.106601
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014021
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.475754,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.347751,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 13.169974,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.780651000000002,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.269353,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.981179,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.11004,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.015162,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.00628,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.912543,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000501,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050135,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003726,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.04672,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.122649,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003014,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.02649,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 103.642381,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.644172999999995
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.314638
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031257
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2834270000000032
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.027481
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.110783000000012
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.252664
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.033
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.839193
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.1334
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.4891160000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.263537
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 20.137577
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.199188999999997
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.03307
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.401885
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.392926
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.009013
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.010616
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.05309
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.240036
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.504432
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.11311
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.110316
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014452
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.535473,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.538338,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 18.608206,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 15.968614999999998,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.451358,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.616009,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.126515,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.015063,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.0066300000000000005,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.8959579999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000521,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.044877,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.004556999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.031858,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.161287,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002845,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.026239,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.264946,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.33482699999999
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.291333
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030226000000000003
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2909870000000012
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022604
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.87657200000001
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.260025
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.036034
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.815417
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.130757
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5120600000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.258138
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 21.817034
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 32.618145
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030656
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.409466
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.344343
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.005788000000000001
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005749000000000001
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.037196
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.277382
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.61593
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.113841
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.116264
+          },
+          {
+            "name": "client.output",
+            "ms": 0.014172
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.646670000000002,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.330165,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 20.406182,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.021168,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.609705000000001,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 26.89233,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.110411,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.017636,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008393000000000001,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.925512,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000591,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050045,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003916,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.04648,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.17,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0026639999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.016375,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.556765,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.613426000000004
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.307377
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.045709
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.27509399999999573
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.021603
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.719063000000006
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.264121
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.030647
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.687594
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.134332
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.502656
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.266341
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 23.42967
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.28604
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.030867
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.454293
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.292165
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.0069
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.009534
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.052509
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.2631910000000002
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.628419
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.11298
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.110927
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011307
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.61287,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.351576,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 10.353427,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.685237,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.314111,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.766945999999997,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.199094,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.019038,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.010977,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.926383,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000651,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.044828,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003936,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.039409,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.144672,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.002984,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.025187,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 106.688063,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3314629999999994
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.245013
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.030997
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.31905100000000175
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023235
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 8.459647000000004
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.238113
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.036495
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 32.338273
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.143266
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.5370480000000001
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.250587
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.585939999999997
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.236235
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032089
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.402986
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.30256
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.008993000000000001
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.009605
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.054672
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.308008
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.542219
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.113791
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.101733
+          },
+          {
+            "name": "client.output",
+            "ms": 0.036044
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 16.007914000000003,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.560721,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 12.372354,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.517105,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.304706,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.773897,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.152635,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.020701,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.008002,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.915528,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000491,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.045398,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003966,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.044437,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.1389239999999998,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0034549999999999997,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.025969,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 101.40592199999999,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5794559999999933
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.311704
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031327
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.29544399999998916
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023105
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.729269000000002
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.264743
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.036816
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.868568
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.142404
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.541135
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.263165
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 18.422649
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 30.706269
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.03321
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.417058
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.326035
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.009404
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.007592000000000001
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.055984
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.213586
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.907148
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.112119
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.096195
+          },
+          {
+            "name": "client.output",
+            "ms": 0.011537
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.63237,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.468783,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 18.025701,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 17.066136999999998,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.547152,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.060786,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.093064,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.018328,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.00703,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.915698,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.000731,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.050416,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003805,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.051077,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.142039,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003185,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.026631,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 123.47535699999999,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.3991039999999941
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.288399
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031477
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.29863000000000284
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.022313000000000003
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.832834000000005
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.2412180000000002
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032098
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 32.701712
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.1462
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.570849
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.359862
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 28.851238
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 41.284536
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.031918
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.476527
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.372325
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.005748
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005559
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.052128
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.323862
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.918365
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.113351
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.101263
+          },
+          {
+            "name": "client.output",
+            "ms": 0.013841
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.721734,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 16.094115,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 16.527637000000002,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 22.243747000000003,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.647523,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 35.47173,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.159855,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.015833,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.009104,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.954336,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0008309999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.044968,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003946,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.060801,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.16987,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.0031750000000000003,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.023486,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      },
+      {
+        "end_to_end_ms": 105.39607600000001,
+        "phases": [
+          {
+            "name": "client.outside",
+            "ms": 1.5737880000000075
+          },
+          {
+            "name": "client.cli.startup",
+            "ms": 1.312345
+          },
+          {
+            "name": "client.prepare",
+            "ms": 0.031717
+          },
+          {
+            "name": "client.transport",
+            "ms": 0.2902160000000009
+          },
+          {
+            "name": "daemon.fast_noop",
+            "ms": 0.023285
+          },
+          {
+            "name": "daemon.child_outside",
+            "ms": 7.951112999999992
+          },
+          {
+            "name": "build.cli.startup",
+            "ms": 1.249801
+          },
+          {
+            "name": "build.certificate_check",
+            "ms": 0.032468000000000004
+          },
+          {
+            "name": "build.graph_load",
+            "ms": 31.590631
+          },
+          {
+            "name": "build.toolchain",
+            "ms": 0.15265900000000002
+          },
+          {
+            "name": "build.closure",
+            "ms": 0.529517
+          },
+          {
+            "name": "build.prepare",
+            "ms": 0.251178
+          },
+          {
+            "name": "build.engine_load",
+            "ms": 22.221614
+          },
+          {
+            "name": "build.engine.preflight",
+            "ms": 31.166412
+          },
+          {
+            "name": "build.engine.output_dirs",
+            "ms": 0.032179
+          },
+          {
+            "name": "build.engine.schedule",
+            "ms": 0.441744
+          },
+          {
+            "name": "build.engine.workers",
+            "ms": 1.359776
+          },
+          {
+            "name": "build.engine.journal_compaction",
+            "ms": 0.005158
+          },
+          {
+            "name": "build.engine.cas_gc",
+            "ms": 0.005248
+          },
+          {
+            "name": "build.engine.hashcache_save",
+            "ms": 0.050426
+          },
+          {
+            "name": "build.engine.results",
+            "ms": 1.348408
+          },
+          {
+            "name": "build.render_drain",
+            "ms": 3.536451
+          },
+          {
+            "name": "build.summary",
+            "ms": 0.12455800000000002
+          },
+          {
+            "name": "daemon.post_barrier",
+            "ms": 0.104918
+          },
+          {
+            "name": "client.output",
+            "ms": 0.010466
+          }
+        ],
+        "details": [
+          {
+            "name": "build:graph.sources_stamp",
+            "ms": 15.448633999999998,
+            "count": 1
+          },
+          {
+            "name": "build:graph.decode",
+            "ms": 15.30023,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.load",
+            "ms": 12.167317,
+            "count": 1
+          },
+          {
+            "name": "build:journal.decode",
+            "ms": 16.771985,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.journal_and_expectations",
+            "ms": 4.093429,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.disk_and_keys",
+            "ms": 25.880409,
+            "count": 1
+          },
+          {
+            "name": "build:preflight.verdicts",
+            "ms": 1.1871360000000002,
+            "count": 1
+          },
+          {
+            "name": "build:action.digest_inputs",
+            "ms": 0.02008,
+            "count": 1
+          },
+          {
+            "name": "build:action.key",
+            "ms": 0.006810999999999999,
+            "count": 1
+          },
+          {
+            "name": "build:action.run_commands",
+            "ms": 0.911441,
+            "count": 1
+          },
+          {
+            "name": "build:action.dependency_report",
+            "ms": 0.0006010000000000001,
+            "count": 1
+          },
+          {
+            "name": "build:action.publish_outputs",
+            "ms": 0.051617,
+            "count": 1
+          },
+          {
+            "name": "build:action.key_and_remote",
+            "ms": 0.003636,
+            "count": 1
+          },
+          {
+            "name": "build:action.journal_append",
+            "ms": 0.070095,
+            "count": 1
+          },
+          {
+            "name": "build:action.process",
+            "ms": 1.167647,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.encode",
+            "ms": 0.003395,
+            "count": 1
+          },
+          {
+            "name": "build:hashcache.write",
+            "ms": 0.024166,
+            "count": 1
+          }
+        ],
+        "executed_actions": 1,
+        "cached_actions": 9999,
+        "frost_outputs_rewritten": [
+          ".frost/out/node09999.out"
+        ],
+        "ninja_outputs_rewritten": [
+          "out/node09999.out"
+        ]
+      }
+    ]
+  }
+}

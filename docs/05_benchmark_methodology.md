@@ -560,7 +560,9 @@ Reports:
 (0.13.2 plus the phase instrumentation alone) and
 [`2026-09-25-issue-152-daemon-10k-after.json`](../bench/baselines/2026-09-25-issue-152-daemon-10k-after.json)
 (the same plus the changes below), Ninja 1.13.2, measured back to back on one
-8-CPU host shared with other work:
+8-CPU host shared with other work, plus
+[`2026-09-27-issue-152-daemon-10k-clean-runner.json`](../bench/baselines/2026-09-27-issue-152-daemon-10k-clean-runner.json)
+from the nightly job on a clean 4-CPU runner:
 
 | 10k linear graph, median of 31 | Before | After |
 |---|---:|---:|
@@ -607,11 +609,15 @@ and rewrote the whole cache. What changed, in order of effect:
    receives one event per certified action.
 
 The leaf change is 3.22x faster on the same host (1.98x against the 411.679 ms
-of the #25 report), and the no-op gate holds. The same-run ratio to Ninja is
-2.03x here, on a host under load from other jobs; a 9-sample run on the same
+of the #25 report), and the no-op gate holds. The same-run ratio to Ninja was
+2.03x there, on a host under load from other jobs; a 9-sample run on the same
 host while it was quiet measured 71.991 ms against Ninja's 46.961 ms (1.53x).
-The ratio is recorded, not claimed as settled: the nightly `daemon-graph` job
-measures it on a clean runner.
+The ratio is now settled on a clean runner: the 2026-09-27 nightly
+`daemon-graph` job, on a 4-CPU GitHub runner with a starting load average of
+3.23, measured a 105.655 ms Frost daemon leaf change against Ninja's
+69.342 ms — **1.52x**, median of 31 — below the ≤ 2.0x the issue asked for.
+The report is checked in as
+[`2026-09-27-issue-152-daemon-10k-clean-runner.json`](../bench/baselines/2026-09-27-issue-152-daemon-10k-clean-runner.json).
 
 None of these moves a correctness boundary: action keys, the final digest
 gate, the crash-safe journal, CAS verification and the watcher shortcut are
