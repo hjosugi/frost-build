@@ -38,7 +38,13 @@ def frost_binary() -> pathlib.Path:
         ROOT / "target/debug/frost",
     ]
     for candidate in candidates:
-        if candidate and candidate.is_file():
+        if not candidate:
+            continue
+        # CI passes `target/release/frost`; the script runs from a temp
+        # workspace, so a relative path is relative to the repository.
+        if not candidate.is_absolute():
+            candidate = ROOT / candidate
+        if candidate.is_file():
             return candidate
     raise SystemExit("build frost first, or set FROST_BIN")
 
