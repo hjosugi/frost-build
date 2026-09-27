@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-27
+
 ### Added
 
 - An external REAPI interoperability job (`.github/workflows/reapi.yml`) that
