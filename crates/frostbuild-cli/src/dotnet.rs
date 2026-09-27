@@ -642,9 +642,7 @@ fn translate_arguments(
                     sources.insert(relative.clone());
                     args.push(relative);
                 } else if path.starts_with(&root_n) {
-                    let relative = path
-                        .strip_prefix(root)
-                        .expect("checked prefix")
+                    let relative = relative_after(&path, &root_n)?
                         .to_string_lossy()
                         .replace('\\', "/");
                     sources.insert(relative.clone());
