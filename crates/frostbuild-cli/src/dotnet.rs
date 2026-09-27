@@ -557,13 +557,19 @@ fn translate_arguments(
     let mut sdk_files = BTreeSet::new();
     let mut is_executable = false;
 
-    for argument in arguments {
+    for raw in arguments {
+        // MSBuild quotes a value that contains a space, on Windows in
+        // particular (`/reference:"C:\Program Files\..."`), and a quoted
+        // source path looks the same.
+        let argument = raw.trim_matches('"');
         // An absolute source path begins with `/` on POSIX just like an option
-        // does; a path that is an existing file is a file.
-        if argument.starts_with('/') && Path::new(argument).is_file() {
-            let path = Path::new(argument)
+        // does; a path that is an existing file is a file. Windows passes
+        // `C:\...` absolute paths, quoted when they contain spaces.
+        let as_path = Path::new(argument);
+        if as_path.is_file() && (argument.starts_with('/') || as_path.is_absolute()) {
+            let path = as_path
                 .canonicalize()
-                .unwrap_or_else(|_| PathBuf::from(argument));
+                .unwrap_or_else(|_| as_path.to_path_buf());
             if path.starts_with(&obj) {
                 let relative = generated_relative(name, &path, &mut generated);
                 sources.insert(relative.clone());
@@ -582,6 +588,7 @@ fn translate_arguments(
             continue;
         }
         let (option, value) = split_option(argument);
+        let value = value.trim_matches('"');
         match option {
             "/out" | "/refout" => continue,
             "/reference" | "/analyzer" | "/analyzerconfig" => {
@@ -622,7 +629,7 @@ fn translate_arguments(
                 if argument == "/target:exe" || argument == "/target:winexe" {
                     is_executable = true;
                 }
-                args.push(argument.clone());
+                args.push(argument.to_string());
             }
             _ => {
                 // A source path relative to the project directory.
