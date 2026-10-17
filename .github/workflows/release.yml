@@ -104,7 +104,7 @@ jobs:
           test "$(find dist/release-assets/share/man/man1 -name '*.1' | wc -l)" -gt 1
           MANPATH="$PWD/dist/release-assets/share/man" man -w frost
           MANPATH="$PWD/dist/release-assets/share/man" MANPAGER=cat man frost >/dev/null
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: distribution-assets
           path: dist/release-assets
@@ -138,7 +138,7 @@ jobs:
             --triple x86_64-unknown-linux-musl \
             --binary-dir target/x86_64-unknown-linux-musl/release \
             --assets dist/release-assets --output dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux-musl
           path: dist/*.tar.gz
@@ -166,7 +166,7 @@ jobs:
           target/release/frost --version
           python3 scripts/package_release.py --tag "$RELEASE_TAG" --triple "$host" \
             --binary-dir target/release --assets dist/release-assets --output dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-macos
           path: dist/*.tar.gz
@@ -196,7 +196,7 @@ jobs:
           python scripts/package_release.py --tag "$env:RELEASE_TAG" --triple "$hostTriple" `
             --binary-dir target/release --assets dist/release-assets --output dist --format zip
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows
           path: dist/*.zip
@@ -266,7 +266,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
         run: scripts/verify_release.sh dist "$RELEASE_VERSION"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-integrity
           path: |
