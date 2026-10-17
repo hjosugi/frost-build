@@ -2662,7 +2662,10 @@ sandbox = false
 "#,
     );
 
-    let (ok, out) = ws.frost(&["test", "--all"]);
+    // Without `--keep-going` the first failure drops every action that has not
+    // started, so how many shards pass would depend on how many workers the
+    // host has. The shards are independent; this asks for all of them.
+    let (ok, out) = ws.frost(&["test", "--all", "--keep-going"]);
     assert!(!ok, "one shard fails, so the run fails: {out}");
     assert!(out.contains("2 passed, 1 failed"), "{out}");
     // Each shard is its own action, so the failure is attributable.
@@ -2670,7 +2673,7 @@ sandbox = false
 
     // Nothing changed. The two that passed are restored from cache and only
     // the failure runs again — a failed shard cannot invalidate a passing one.
-    let (ok, out) = ws.frost(&["test", "--all"]);
+    let (ok, out) = ws.frost(&["test", "--all", "--keep-going"]);
     assert!(!ok, "{out}");
     assert!(out.contains("0 passed, 1 failed, 2 cached"), "{out}");
 
