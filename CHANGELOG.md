@@ -5,6 +5,21 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Security
+
+- Update rustls 0.23.45 to 0.23.46, which clears RUSTSEC-2026-0346 (`Debug` on
+  client session values exposed TLS secrets) and RUSTSEC-2026-0347 (buffered
+  data sent to the outer server after an ECH rejection). rustls is reached only
+  through tonic in `frostbuild-reapi`, and frost's own code sets up neither a
+  custom `ClientSessionStore` nor ECH; the `deny` gate fails on both until the
+  lockfile moves.
+
+### Changed
+
+- Update dependencies: zip 9.0 (`name()` is now fallible; extraction errors
+  report the raw entry name), tokio 1.53.3, thiserror 2.0.21, libc 0.2.191,
+  protoc-bin-vendored 3.3.0.
+
 ## [0.16.0] - 2026-09-27
 
 ### Added

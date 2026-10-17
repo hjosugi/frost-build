@@ -207,7 +207,7 @@ mod tests {
         let mut archive = zip::ZipArchive::new(file).unwrap();
         assert_eq!(
             (0..archive.len())
-                .map(|index| archive.by_index(index).unwrap().name().to_string())
+                .map(|index| archive.by_index(index).unwrap().name().unwrap().to_string())
                 .collect::<Vec<_>>(),
             ["META-INF/MANIFEST.MF", "pkg/A.class", "pkg/Z.class",]
         );
