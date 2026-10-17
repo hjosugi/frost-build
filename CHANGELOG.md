@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-17
+
 ### Security
 
 - Update rustls 0.23.45 to 0.23.46, which clears RUSTSEC-2026-0346 (`Debug` on
