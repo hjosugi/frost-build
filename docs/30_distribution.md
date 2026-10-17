@@ -202,15 +202,28 @@ Windows binaries differed again even at the same path. The dry run therefore
 builds macOS and Windows twice at the release's path, on separate runners, and
 once elsewhere.
 
-The Linux result holds across checkout paths because Cargo compiles workspace
-members from workspace-relative paths with path-independent crate hashes, a
-release build carries no debug info or timestamps, and the one absolute path
-left in the binary — registry sources in panic locations,
+The Linux result held across checkout paths on that date because Cargo compiles
+workspace members from workspace-relative paths with path-independent crate
+hashes, a release build carries no debug info or timestamps, and the one
+absolute path left in the binary — registry sources in panic locations,
 `/home/runner/.cargo/registry/src/...` — is the same on every hosted runner.
-Rebuilding outside GitHub Actions therefore reproduces the checksum only with
-the same toolchain (`rust-toolchain.toml`, the Ubuntu image's `musl-tools`) and
-the same `CARGO_HOME` path; `--remap-path-prefix` would remove the last
-condition and is not applied because nothing needs it yet.
+
+It stopped holding once `frost` linked the REAPI client. Its generated protobuf
+sources are `include!`d from `OUT_DIR`, so a panic location in the binary names
+`<checkout>/target/<triple>/release/build/frostbuild-reapi-<hash>/out/*.rs`: the
+checkout path, and with it the length of every string after it, was part of the
+binary. `frost` differed between the two checkout paths and `frostd`, which does
+not link REAPI, did not; the dry run failed on `main` from at least
+27 September 2026 until this was fixed. `release.yml` and the dry run now pass
+`--remap-path-prefix` for the checkout (to `/build`) and for `CARGO_HOME` (to
+`/cargo`) when they build the Linux binaries, so the bytes no longer depend on
+where the build ran. Cargo's own `trim-paths` profile option would do this
+without a flag, but it is unstable on the pinned 1.95.0.
+Rebuilding outside GitHub Actions therefore reproduces the checksum with the
+same toolchain (`rust-toolchain.toml`, the Ubuntu image's `musl-tools`) and the
+same flags, at any checkout path and `CARGO_HOME`. The macOS and Windows builds
+are not remapped: macOS is already reproducible at the release's path and
+Windows is not reproducible for the reasons above.
 
 Before this work the packing alone made every rebuild differ, whatever the
 binaries: GNU tar and bsdtar recorded file times from the checkout and the
