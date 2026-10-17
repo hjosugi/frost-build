@@ -136,14 +136,17 @@ fn extract_zip(archive_path: &Path, destination: &Path) -> Result<()> {
         let path = entry.enclosed_name().with_context(|| {
             format!(
                 "zip entry {:?} would escape the extraction root",
-                entry.name()
+                String::from_utf8_lossy(entry.name_raw())
             )
         })?;
         validate_archive_path(&path)?;
         if let Some(mode) = entry.unix_mode() {
             let kind = mode & 0o170000;
             if kind != 0 && kind != 0o100000 && kind != 0o040000 {
-                bail!("zip entry {:?} is a link or special file", entry.name());
+                bail!(
+                    "zip entry {:?} is a link or special file",
+                    String::from_utf8_lossy(entry.name_raw())
+                );
             }
         }
         let output = destination.join(&path);

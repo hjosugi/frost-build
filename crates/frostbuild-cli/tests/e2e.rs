@@ -2434,7 +2434,7 @@ sandbox = false
             let file = std::fs::File::open(&archive).unwrap();
             let mut jar = zip::ZipArchive::new(file).unwrap();
             (0..jar.len())
-                .map(|index| jar.by_index(index).unwrap().name().to_string())
+                .map(|index| jar.by_index(index).unwrap().name().unwrap().to_string())
                 .collect::<Vec<_>>()
         };
         let entries = listing();
