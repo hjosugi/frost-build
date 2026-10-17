@@ -74,6 +74,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # Exactly as release.yml does, from the directory this build lives in:
+      # the checkout path is what differs between the two builds compared.
+      - name: Keep the build paths out of the binary
+        run: echo "RUSTFLAGS=--remap-path-prefix=$PWD=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" >> "$GITHUB_ENV"
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p frostbuild-cli -p frostbuild-daemon
       - name: Generate man pages and completions
         run: |

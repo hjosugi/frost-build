@@ -5,6 +5,16 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- The Linux release build no longer puts the checkout path in `frost`. The
+  generated REAPI sources are `include!`d from `OUT_DIR`, so a panic location
+  in the binary named `<checkout>/target/.../out/*.rs`, and two builds of one
+  commit at different paths produced different binaries (`frostd` was not
+  affected). `release.yml` and the release dry run now remap the checkout and
+  `CARGO_HOME` for that build, which the dry run's reproducibility check
+  confirms again. The check had been failing on `main` because of this.
+
 ## [0.16.1] - 2026-10-17
 
 ### Security
