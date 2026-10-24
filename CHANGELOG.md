@@ -3,7 +3,10 @@
 All notable changes follow Keep a Changelog and Semantic Versioning. Before
 1.0, minor versions may contain breaking manifest or CLI changes.
 
-## [Unreleased]
+## [0.16.2] - 2026-10-24
+
+- Update the reviewed dependencies and retain the recorded security compatibility fixes.
+
 
 ### Fixed
 
