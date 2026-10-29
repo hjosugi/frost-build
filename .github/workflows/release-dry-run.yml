@@ -70,7 +70,7 @@ jobs:
       # Only one of the two builds is cached: the comparison is then also
       # between an incremental build and a clean one.
       - if: matrix.checkout.name == 'workspace'
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -142,7 +142,7 @@ jobs:
         with:
           toolchain: 1.95.0
       - if: matrix.checkout.name == 'workspace'
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked -p frostbuild-cli -p frostbuild-daemon
