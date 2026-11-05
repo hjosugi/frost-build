@@ -3,6 +3,19 @@
 All notable changes follow Keep a Changelog and Semantic Versioning. Before
 1.0, minor versions may contain breaking manifest or CLI changes.
 
+## [Unreleased]
+
+### Security
+
+- Update zstd 0.14.0 to 0.14.3 (zstd-safe 8.2.0, zstd-sys 2.1.2), clearing the
+  zstd family advisories RUSTSEC-2026-0391 and RUSTSEC-2026-0395 through
+  RUSTSEC-2026-0406, plus the wasm allocator corruption in RUSTSEC-2026-0410.
+  zstd is used for cache entry compression.
+- Update pulldown-cmark 0.13.4 to 0.13.6, clearing RUSTSEC-2026-0414 and
+  RUSTSEC-2026-0433 (exponential event growth and quadratic parsing of nested
+  image wikilinks with `ENABLE_WIKILINKS`). pulldown-cmark is reached only as a
+  build dependency through prost-build, not by frost's runtime.
+
 ## [0.16.2] - 2026-10-24
 
 - Update the reviewed dependencies and retain the recorded security compatibility fixes.
