@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-11-05
+
 ### Security
 
 - Update zstd 0.14.0 to 0.14.3 (zstd-safe 8.2.0, zstd-sys 2.1.2), clearing the
