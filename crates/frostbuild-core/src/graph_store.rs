@@ -22,7 +22,7 @@ const MAGIC: &[u8; 8] = b"FRSTGR01";
 // otherwise decodes into a different, plausible graph that the warm path
 // trusts until a manifest changes. Version 14 stamps directories by their
 // listing alone (with symlink targets), no longer by modification time.
-const VERSION: u32 = 14;
+const VERSION: u32 = 15;
 
 /// Evidence that the definition inputs which produced a cached graph are
 /// unchanged, checkable without parsing any manifest: exact bytes of every

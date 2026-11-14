@@ -705,6 +705,8 @@ dependencies = [
  "postcard",
  "proptest",
  "rayon",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sha2",

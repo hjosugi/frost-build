@@ -182,6 +182,36 @@ impl TargetKind {
     }
 }
 
+/// How an action may carry its argv through a response file (`@file`).
+///
+/// Long link lines and generated command adapters can exceed the host's
+/// argument-length limit. Bazel and Ninja both hand the tool an `@file`
+/// instead. The mode is declared rather than inferred so a reviewed manifest
+/// says whether the tool understands it, and turning it on is a deliberate
+/// change that invalidates the action key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseFileMode {
+    /// Pass argv directly. The historical behavior.
+    #[default]
+    Off,
+    /// Use a response file only when the expanded argv exceeds
+    /// `response_file_threshold` bytes.
+    Auto,
+    /// Always pass argv through a response file.
+    Always,
+}
+
+impl ResponseFileMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResponseFileMode::Off => "off",
+            ResponseFileMode::Auto => "auto",
+            ResponseFileMode::Always => "always",
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawWorkspace {
@@ -285,6 +315,8 @@ pub const TARGET_KEYS: &[&str] = &[
     "outputs",
     "output_dirs",
     "sandbox",
+    "response_file",
+    "response_file_threshold",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -359,6 +391,10 @@ struct RawTarget {
     output_dirs: Vec<String>,
     /// Tests may opt out of sandboxing when they intentionally inspect the host.
     sandbox: Option<bool>,
+    /// Pass this action's argv through `@file` instead of the command line.
+    response_file: Option<ResponseFileMode>,
+    /// Byte threshold for `response_file = "auto"`; default 131072.
+    response_file_threshold: Option<usize>,
 }
 
 /// What one `[target.NAME.platform.PLAT]` section may say.
@@ -608,6 +644,10 @@ pub struct Target {
     /// one is recorded as an output of the action that declared it.
     pub output_dirs: Vec<String>,
     pub sandbox: bool,
+    /// How this target's argv may travel through a response file.
+    pub response_file: ResponseFileMode,
+    /// Byte threshold used when `response_file` is `Auto`.
+    pub response_file_threshold: usize,
     /// Package directory relative to the workspace root (empty for root).
     pub package: String,
 }
@@ -1517,6 +1557,24 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         }
     }
 
+    let response_file = spec.response_file.unwrap_or_default();
+    if spec.response_file_threshold.is_some() && response_file != ResponseFileMode::Auto {
+        bail!("response_file_threshold requires response_file = \"auto\"");
+    }
+    if let Some(threshold) = spec.response_file_threshold {
+        if threshold < 4096 {
+            bail!("response_file_threshold must be at least 4096 bytes");
+        }
+    }
+    if response_file != ResponseFileMode::Off {
+        if spec.kind == TargetKind::Genrule {
+            bail!("genrule cmd is a shell string and takes no response_file");
+        }
+        if spec.kind == TargetKind::Test && spec.tool.is_none() {
+            bail!("a shell test takes no response_file");
+        }
+    }
+
     Ok(Target {
         name: name.to_string(),
         kind: spec.kind,
@@ -1570,6 +1628,8 @@ fn build_target(name: &str, spec: RawTarget) -> Result<Target> {
         outputs,
         output_dirs,
         sandbox: spec.sandbox.unwrap_or(true),
+        response_file,
+        response_file_threshold: spec.response_file_threshold.unwrap_or(131_072),
         package: String::new(),
     })
 }
@@ -4213,5 +4273,54 @@ mod tests {
             .manifest_paths
             .contains(&"vendor/dep/.frost-fetch.json".to_string()));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn response_file_modes_parse_and_default_to_off() {
+        let manifest = Manifest::parse_str(
+            "[target.app]\nkind='cc_binary'\nsrcs=['a.c']\n\n\
+             [target.link]\nkind='command'\ntool='cc'\nargs=[]\n\
+             outputs=['.frost/out/${config}/x']\nresponse_file='auto'\n\
+             response_file_threshold=4096\n",
+        )
+        .unwrap();
+        assert_eq!(manifest.targets["app"].response_file, ResponseFileMode::Off);
+        assert_eq!(manifest.targets["app"].response_file_threshold, 131_072);
+        assert_eq!(
+            manifest.targets["link"].response_file,
+            ResponseFileMode::Auto
+        );
+        assert_eq!(manifest.targets["link"].response_file_threshold, 4096);
+    }
+
+    #[test]
+    fn a_response_file_on_a_shell_target_is_refused() {
+        // A genrule is one shell string; an `@file` would be an argument to
+        // the shell, not to the tool the author meant.
+        let error = Manifest::parse_str(
+            "[target.generated]\nkind='genrule'\ncmd='true'\noutputs=['a']\n\
+             response_file='always'\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("shell string"), "{error:#}");
+        let error = Manifest::parse_str(
+            "[target.shelltest]\nkind='test'\ncmd='true'\ninputs=[]\nresponse_file='auto'\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("shell test"), "{error:#}");
+    }
+
+    #[test]
+    fn a_threshold_without_auto_is_refused() {
+        let error = Manifest::parse_str(
+            "[target.link]\nkind='command'\ntool='cc'\nargs=[]\n\
+             outputs=['.frost/out/${config}/x']\nresponse_file='always'\n\
+             response_file_threshold=8192\n",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("requires response_file"),
+            "{error:#}"
+        );
     }
 }
