@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-14
+
 ### Added
 
 - `response_file = "auto" | "always"` on a target passes its expanded argv
