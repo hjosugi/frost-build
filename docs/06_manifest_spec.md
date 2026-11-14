@@ -500,6 +500,31 @@ state needed for a safe retry should itself be a declared output; a failed
 action removes the possibly mixed output set. Clean builds and `frost clean`
 continue to remove the whole configuration output state.
 
+### Response files
+
+A long command line can exceed the host's argument-length limit. Declare
+`response_file = "auto"` on any target whose tool understands `@file` syntax
+(compilers and linkers do; genrules and shell tests do not, and are refused):
+
+```toml
+[target.link_everything]
+kind = "cc_binary"
+srcs = ["main.c"]
+response_file = "auto"
+response_file_threshold = 131072 # bytes; the default
+```
+
+`auto` passes argv directly below the threshold and writes an `@file` above it;
+`always` always moves the arguments; `off` is the default and the historical
+behavior. The file lives under `.frost/rsp/` (or inside the action's hermetic
+tree), one argument per line with the shell-like quoting GCC, Clang and MSVC
+accept. `--sandbox` keeps argv inline, because bubblewrap mounts only the paths
+an action declared and the file would be invisible.
+
+The mode is action-key material: turning it on invalidates the action rather
+than silently reusing an execution whose invocation differed. `auto` uses one
+constant marker, so crossing the threshold does not change identity.
+
 ### Owned output directories
 
 Some tools name their outputs after their content, so the file list cannot be
@@ -1004,6 +1029,21 @@ A fully cached rerun takes the all-cached fast path and reports a single
 `all_cached` event rather than one per action. That is what keeps that path
 O(1), and it is why comparing a cold build's events to a warm one's compares
 two different things.
+
+### A BEP-shaped file
+
+`--build-event-protocol FILE` writes a second, opt-in NDJSON file in the shape
+Bazel's Build Event Protocol uses: a `started` event, one `actionExecuted` per
+action, a `testResult` per test action, and `finished`. It exists for tools
+that already consume that shape, not as a compatibility claim: Frost does not
+emit the protobuf schema, transitive target metadata or a module-patch
+protocol. `--build-event-json` remains the native contract.
+
+`--invocation-id ID` is echoed into both streams (`invocation_id` on every
+native line and the BEP `started.uuid`) so one build can be correlated across
+tools. The native stream omits the field when no id is given, which keeps two
+`-j1` builds byte-identical; the BEP file always needs a uuid, so a
+timestamp-and-pid identifier is generated for it when none is supplied.
 
 ### A JUnit report from the stream
 

@@ -8,7 +8,8 @@
 //!
 //! Two backends exist because they answer different deployments with the same
 //! semantics: a shared directory (NFS/SMB, or a bind-mounted CI volume) and
-//! plain HTTP. Both address blobs by the digest the local CAS already uses, so
+//! HTTP(S), with an optional `authorization` header. Both address blobs by the
+//! digest the local CAS already uses, so
 //! the layout translates to REAPI's `ContentAddressableStorage` and
 //! `ActionCache` without changing what is stored.
 //!
@@ -89,6 +90,11 @@ enum Backend {
         authority: String,
         /// Path prefix, without a trailing slash.
         prefix: String,
+        /// Whether this endpoint speaks TLS. `https://` implies it; the
+        /// feature gate decides whether the transport exists.
+        tls: bool,
+        /// Verbatim `authorization` header value from `?authorization=`.
+        auth: Option<String>,
     },
     #[cfg(feature = "reapi")]
     Reapi(ReapiBackend),
@@ -140,7 +146,15 @@ impl std::fmt::Debug for RemoteCache {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let backend = match &self.backend {
             Backend::Directory(path) => format!("directory:{}", path.display()),
-            Backend::Http { authority, prefix } => format!("http://{authority}{prefix}"),
+            Backend::Http {
+                authority,
+                prefix,
+                tls,
+                ..
+            } => {
+                let scheme = if *tls { "https" } else { "http" };
+                format!("{scheme}://{authority}{prefix}")
+            }
             #[cfg(feature = "reapi")]
             Backend::Reapi(backend) => backend.display(),
         };
@@ -154,26 +168,56 @@ impl std::fmt::Debug for RemoteCache {
 }
 
 impl RemoteCache {
-    /// Parse `--remote-cache`: `file:///path`, a bare path, `http://host/prefix`,
-    /// or, with the `reapi` feature, `grpc://host/[instance][?authorization=…]`.
+    /// Parse `--remote-cache`: `file:///path`, a bare path,
+    /// `http://host/prefix`, `https://host/prefix`, or, with the `reapi`
+    /// feature, `grpc://host/[instance][?authorization=…]`.
+    ///
+    /// `?authorization=` carries a header value verbatim; percent-encoding is
+    /// decoded so `Bearer%20…` survives a shell. The value is only sent to the
+    /// endpoint that named it.
     pub fn parse(spec: &str, timeout: Duration, upload: bool) -> Result<Self> {
-        let backend = if let Some(rest) = spec.strip_prefix("http://") {
-            let (authority, prefix) = match rest.split_once('/') {
+        let backend = if let Some(rest) = spec
+            .strip_prefix("http://")
+            .or_else(|| spec.strip_prefix("https://"))
+        {
+            let tls = spec.starts_with("https://");
+            let (base, query) = match rest.split_once('?') {
+                Some((base, query)) => (base, Some(query)),
+                None => (rest, None),
+            };
+            let (authority, prefix) = match base.split_once('/') {
                 Some((authority, prefix)) => {
                     (authority, format!("/{}", prefix.trim_end_matches('/')))
                 }
-                None => (rest, String::new()),
+                None => (base, String::new()),
             };
             if authority.is_empty() {
                 bail!("remote cache URL has no host: {spec:?}");
+            }
+            let auth = query.and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    pair.split_once('=')
+                        .filter(|(key, _)| *key == "authorization")
+                        .map(|(_, value)| percent_decode(value))
+                })
+            });
+            #[cfg(not(feature = "http-tls"))]
+            if tls {
+                bail!(
+                    "this frost was built without the http-tls feature, so {spec:?} \
+                     cannot be used; rebuild with default features, or terminate TLS \
+                     locally and use http://"
+                );
             }
             Backend::Http {
                 authority: if authority.contains(':') {
                     authority.to_string()
                 } else {
-                    format!("{authority}:80")
+                    format!("{authority}:{}", if tls { 443 } else { 80 })
                 },
                 prefix,
+                tls,
+                auth,
             }
         } else if let Some(path) = spec.strip_prefix("file://") {
             Backend::Directory(PathBuf::from(path))
@@ -189,11 +233,6 @@ impl RemoteCache {
                      cannot be used; rebuild with default features"
                 );
             }
-        } else if spec.starts_with("https://") {
-            // Silently downgrading to plaintext, or pretending to verify a
-            // certificate frost cannot check, are both worse than saying so.
-            // `grpcs://` is the TLS path for the REAPI backend.
-            bail!("remote cache does not support https yet; use grpcs:// for REAPI or terminate TLS locally and use http://");
         } else if spec.contains("://") {
             bail!("unsupported remote cache scheme: {spec:?}");
         } else {
@@ -448,9 +487,19 @@ impl RemoteCache {
                     Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
                 }
             }
-            Backend::Http { authority, prefix } => {
-                self.http(authority, "GET", &format!("{prefix}/{kind}/{name}"), None)
-            }
+            Backend::Http {
+                authority,
+                prefix,
+                tls,
+                auth,
+            } => self.http(
+                authority,
+                *tls,
+                auth.as_deref(),
+                "GET",
+                &format!("{prefix}/{kind}/{name}"),
+                None,
+            ),
             // The REAPI backend answers `action` and `stage_blob` before this
             // point; nothing else routes a REAPI address through here.
             #[cfg(feature = "reapi")]
@@ -483,9 +532,16 @@ impl RemoteCache {
                 }
                 Ok(())
             }
-            Backend::Http { authority, prefix } => self
+            Backend::Http {
+                authority,
+                prefix,
+                tls,
+                auth,
+            } => self
                 .http(
                     authority,
+                    *tls,
+                    auth.as_deref(),
                     "PUT",
                     &format!("{prefix}/{kind}/{name}"),
                     Some(bytes),
@@ -502,9 +558,12 @@ impl RemoteCache {
     /// the surface used here is a request line, `Content-Length` and a status
     /// code, and a cache client is exactly the place where a smaller
     /// dependency footprint is worth more than convenience.
+    #[allow(clippy::too_many_arguments)]
     fn http(
         &self,
         authority: &str,
+        tls: bool,
+        auth: Option<&str>,
         method: &str,
         path: &str,
         body: Option<&[u8]>,
@@ -514,16 +573,38 @@ impl RemoteCache {
             .with_context(|| format!("resolving {authority}"))?
             .next()
             .with_context(|| format!("no address for {authority}"))?;
-        let mut stream = TcpStream::connect_timeout(&address, self.timeout)
+        let socket = TcpStream::connect_timeout(&address, self.timeout)
             .with_context(|| format!("connecting to {authority}"))?;
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
+        socket.set_read_timeout(Some(self.timeout))?;
+        socket.set_write_timeout(Some(self.timeout))?;
+        let mut stream = if tls {
+            #[cfg(feature = "http-tls")]
+            {
+                connect_tls(socket, authority)?
+            }
+            #[cfg(not(feature = "http-tls"))]
+            {
+                let _ = socket;
+                bail!("https support was compiled out (the http-tls feature is off)");
+            }
+        } else {
+            Connection::Plain(socket)
+        };
         let mut request = format!(
             "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\
-             User-Agent: frost\r\nContent-Length: {}\r\n\r\n",
+             User-Agent: frost\r\nContent-Length: {}\r\n",
             body.map_or(0, <[u8]>::len)
-        )
-        .into_bytes();
+        );
+        if let Some(auth) = auth {
+            // Header values cannot contain a bare CR or LF; a credential with
+            // one is a configuration error, not something to send.
+            if auth.contains(['\r', '\n']) {
+                bail!("the remote cache authorization value contains a newline");
+            }
+            request.push_str(&format!("Authorization: {auth}\r\n"));
+        }
+        request.push_str("\r\n");
+        let mut request = request.into_bytes();
         if let Some(body) = body {
             request.extend_from_slice(body);
         }
@@ -531,8 +612,10 @@ impl RemoteCache {
         stream.flush()?;
         // Half-close after the complete request. A server that reads to end of
         // stream would otherwise wait for bytes that are never coming, and the
-        // exchange would only end when this side's read timeout fired.
-        let _ = stream.shutdown(std::net::Shutdown::Write);
+        // exchange would only end when this side's read timeout fired. TLS
+        // has no half-close, but `Connection: close` and the response length
+        // bound the exchange there.
+        stream.shutdown_write();
         let mut response = Vec::new();
         stream.read_to_end(&mut response)?;
         parse_http_response(&response)
@@ -589,7 +672,6 @@ fn reapi_backend(spec: &str, timeout: Duration) -> Result<ReapiBackend> {
 
 /// Decode the `%XX` escapes a URL uses, leaving anything else untouched. Only
 /// the auth-header value is decoded, so a malformed escape is not an error.
-#[cfg(feature = "reapi")]
 fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -610,7 +692,6 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-#[cfg(feature = "reapi")]
 fn hex_digit(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -618,6 +699,94 @@ fn hex_digit(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
+}
+
+/// One HTTP transport: plaintext TCP or TLS over the same socket.
+enum Connection {
+    Plain(TcpStream),
+    #[cfg(feature = "http-tls")]
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
+}
+
+impl Connection {
+    /// Best-effort end of the request bytes. Plain TCP half-closes; TLS sends
+    /// `close_notify` so a server reading to end of stream returns promptly.
+    fn shutdown_write(&mut self) {
+        match self {
+            Connection::Plain(socket) => {
+                let _ = socket.shutdown(std::net::Shutdown::Write);
+            }
+            #[cfg(feature = "http-tls")]
+            Connection::Tls(stream) => {
+                stream.conn.send_close_notify();
+                let _ = stream.flush();
+            }
+        }
+    }
+}
+
+impl Read for Connection {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Connection::Plain(socket) => socket.read(buffer),
+            #[cfg(feature = "http-tls")]
+            Connection::Tls(stream) => stream.read(buffer),
+        }
+    }
+}
+
+impl Write for Connection {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Connection::Plain(socket) => socket.write(buffer),
+            #[cfg(feature = "http-tls")]
+            Connection::Tls(stream) => stream.write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Connection::Plain(socket) => socket.flush(),
+            #[cfg(feature = "http-tls")]
+            Connection::Tls(stream) => stream.flush(),
+        }
+    }
+}
+
+/// Wrap a connected socket in a rustls client session, verified against the
+/// host's native trust store. A host with no trust anchors is an error rather
+/// than an unverified connection.
+#[cfg(feature = "http-tls")]
+fn connect_tls(socket: TcpStream, authority: &str) -> Result<Connection> {
+    let host = authority
+        .rsplit_once(':')
+        .filter(|(_, port)| port.chars().all(|character| character.is_ascii_digit()))
+        .map_or(authority, |(host, _)| host);
+    let loaded = rustls_native_certs::load_native_certs();
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in loaded.certs {
+        let _ = roots.add(certificate);
+    }
+    if roots.is_empty() {
+        bail!(
+            "no trusted root certificates are installed, so the HTTPS remote cache \
+             cannot be verified: {:?}",
+            loaded.errors
+        );
+    }
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .context("configuring the TLS protocol versions for the remote cache")?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let server_name = rustls::pki_types::ServerName::try_from(host.to_owned())
+        .with_context(|| format!("{host:?} is not a valid TLS server name"))?;
+    let connection = rustls::ClientConnection::new(std::sync::Arc::new(config), server_name)
+        .context("starting the TLS session for the remote cache")?;
+    Ok(Connection::Tls(Box::new(rustls::StreamOwned::new(
+        connection, socket,
+    ))))
 }
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -690,14 +859,52 @@ mod tests {
         assert!(RemoteCache::parse("file:///mnt/shared/cache", timeout, false).is_ok());
         assert!(RemoteCache::parse("http://cache.example:8080/frost", timeout, false).is_ok());
         assert!(RemoteCache::parse("http://cache.example", timeout, false).is_ok());
-        // Pretending to have TLS would be worse than not having it.
-        assert!(RemoteCache::parse("https://cache.example", timeout, false).is_err());
+        // TLS exists only with the feature; without it, refusing beats
+        // pretending to have verified a certificate.
+        let https = RemoteCache::parse("https://cache.example", timeout, false);
+        assert_eq!(https.is_ok(), cfg!(feature = "http-tls"));
         // A REAPI endpoint parses without connecting: an unreachable server is a
         // per-request fallback, not a configuration error, so parse succeeds.
         assert!(RemoteCache::parse("grpc://cache.example:50051", timeout, false).is_ok());
         assert!(RemoteCache::parse("grpcs://cache.example/inst", timeout, false).is_ok());
         assert!(RemoteCache::parse("grpc://", timeout, false).is_err());
         assert!(RemoteCache::parse("http:///frost", timeout, false).is_err());
+    }
+
+    #[test]
+    fn an_http_endpoint_carries_its_default_port_and_authorization() {
+        let timeout = Duration::from_secs(1);
+        let remote = RemoteCache::parse(
+            "http://cache.example/frost?authorization=Bearer%20abc",
+            timeout,
+            false,
+        )
+        .unwrap();
+        match remote.backend {
+            Backend::Http {
+                authority,
+                prefix,
+                tls,
+                auth,
+            } => {
+                assert_eq!(authority, "cache.example:80");
+                assert_eq!(prefix, "/frost");
+                assert!(!tls);
+                // Percent-decoding restores the space a shell would eat.
+                assert_eq!(auth.as_deref(), Some("Bearer abc"));
+            }
+            _ => panic!("expected an HTTP backend"),
+        }
+        let secure = RemoteCache::parse("https://cache.example", timeout, false);
+        if let Ok(secure) = secure {
+            match secure.backend {
+                Backend::Http { authority, tls, .. } => {
+                    assert_eq!(authority, "cache.example:443");
+                    assert!(tls);
+                }
+                _ => panic!("expected an HTTPS backend"),
+            }
+        }
     }
 
     #[test]

@@ -17,7 +17,7 @@ use toml_edit::{Array, DocumentMut, Item, Value};
 /// Grouped by what a reader is asking, not alphabetically: what kind of thing
 /// is this, what does it read, what does it produce, how does it run. A reader
 /// scanning for outputs should find them in the same place in every target.
-const TARGET_KEY_ORDER: [&str; 27] = [
+const TARGET_KEY_ORDER: [&str; 29] = [
     "kind",
     "tool",
     "cmd",
@@ -44,6 +44,8 @@ const TARGET_KEY_ORDER: [&str; 27] = [
     "timeout",
     "resources",
     "sandbox",
+    "response_file",
+    "response_file_threshold",
     "lint_allow",
 ];
 

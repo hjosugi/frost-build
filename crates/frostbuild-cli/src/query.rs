@@ -19,7 +19,8 @@ impl QueryCmd {
             | QueryCmd::Somepath { opts, .. }
             | QueryCmd::Allpaths { opts, .. }
             | QueryCmd::Targets { opts }
-            | QueryCmd::Owners { opts, .. } => opts,
+            | QueryCmd::Owners { opts, .. }
+            | QueryCmd::Actions { opts, .. } => opts,
         }
     }
 }
@@ -158,6 +159,10 @@ pub(crate) fn run_query(root: &std::path::Path, function: &QueryCmd) -> Result<i
         kind_ok && attrs.iter().all(|attr| attr.matches(&graph, name))
     };
 
+    if let QueryCmd::Actions { targets, .. } = function {
+        return run_actions(&graph, targets, format, &keep, opts);
+    }
+
     let mut paths: Option<Vec<Vec<String>>> = None;
     let mut truncated = false;
     let (query, targets) = match function {
@@ -206,6 +211,8 @@ pub(crate) fn run_query(root: &std::path::Path, function: &QueryCmd) -> Result<i
             "targets()".to_string(),
             graph.targets.keys().cloned().collect(),
         ),
+        // Answered above, before the target-level branches.
+        QueryCmd::Actions { .. } => return Ok(0),
     };
     let targets: Vec<String> = targets.into_iter().filter(keep).collect();
 
@@ -292,4 +299,111 @@ pub(crate) fn run_query(root: &std::path::Path, function: &QueryCmd) -> Result<i
         return Ok(1);
     }
     Ok(0)
+}
+
+/// The action-level counterpart to the target queries: what would run, with
+/// the argv and inputs the graph resolved.
+fn run_actions(
+    graph: &BuildGraph,
+    targets: &[String],
+    format: QueryOutput,
+    keep: &impl Fn(&String) -> bool,
+    opts: &QueryOpts,
+) -> Result<i32> {
+    let ids = if targets.is_empty() {
+        (0..graph.actions.len()).collect::<Vec<_>>()
+    } else {
+        graph.action_closure(targets)?
+    };
+    let action_kind = opts
+        .kind
+        .as_deref()
+        .filter(|kind| crate::query::action_kind_names().contains(kind));
+    let file = |id: &usize| graph.files[*id].path.clone();
+    let actions: Vec<&frostbuild_core::graph::ActionNode> = ids
+        .into_iter()
+        .map(|id| &graph.actions[id])
+        .filter(|action| keep(&action.target))
+        .filter(|action| action_kind.is_none_or(|want| action_kind_name(action.kind) == want))
+        .collect();
+    if actions.is_empty() {
+        eprintln!("frost: actions(): nothing matched");
+        return Ok(1);
+    }
+    match format {
+        QueryOutput::Json => {
+            let payload = serde_json::json!({
+                "query": if targets.is_empty() {
+                    "actions()".to_string()
+                } else {
+                    format!("actions({})", targets.join(", "))
+                },
+                "actions": actions
+                    .iter()
+                    .map(|action| serde_json::json!({
+                        "id": action.id,
+                        "target": action.target,
+                        "kind": action_kind_name(action.kind),
+                        "desc": action.desc,
+                        "argv": action.argv,
+                        "env": action.env,
+                        "passEnv": action.pass_env,
+                        "inputs": action.inputs.iter().map(file).collect::<Vec<_>>(),
+                        "orderOnlyInputs": action.order_only_inputs.iter().map(file).collect::<Vec<_>>(),
+                        "outputs": action.outputs.iter().map(file).collect::<Vec<_>>(),
+                        "outputDirs": action.output_dirs,
+                        "sandbox": action.sandbox,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+        _ => {
+            for action in actions {
+                println!("action {}", action.id);
+                println!("  target {}", action.target);
+                println!("  kind {}", action_kind_name(action.kind));
+                println!("  argv {}", action.argv.join(" "));
+                for input in &action.inputs {
+                    println!("  input {}", file(input));
+                }
+                for input in &action.order_only_inputs {
+                    println!("  order-only {}", file(input));
+                }
+                for output in &action.outputs {
+                    println!("  output {}", file(output));
+                }
+                for directory in &action.output_dirs {
+                    println!("  output-dir {directory}");
+                }
+            }
+        }
+    }
+    Ok(0)
+}
+
+fn action_kind_name(kind: frostbuild_core::graph::ActionKind) -> &'static str {
+    match kind {
+        frostbuild_core::graph::ActionKind::Compile => "compile",
+        frostbuild_core::graph::ActionKind::Archive => "archive",
+        frostbuild_core::graph::ActionKind::Link => "link",
+        frostbuild_core::graph::ActionKind::Genrule => "genrule",
+        frostbuild_core::graph::ActionKind::Test => "test",
+        frostbuild_core::graph::ActionKind::KofunCompile => "kofuncompile",
+        frostbuild_core::graph::ActionKind::Command => "command",
+        frostbuild_core::graph::ActionKind::Coverage => "coverage",
+    }
+}
+
+fn action_kind_names() -> &'static [&'static str] {
+    &[
+        "compile",
+        "archive",
+        "link",
+        "genrule",
+        "test",
+        "kofuncompile",
+        "command",
+        "coverage",
+    ]
 }

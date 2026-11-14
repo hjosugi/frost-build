@@ -10,12 +10,17 @@ description = "Core graph, manifest, hashing, journal, and CAS types for FrostBu
 path = "src/lib.rs"
 
 [features]
-default = ["reapi"]
+default = ["reapi", "http-tls"]
 # The REAPI v2 gRPC client. It carries a large protocol stack (tonic, tokio,
 # rustls), so it can be dropped entirely with `--no-default-features`; the
 # `grpc://` / `grpcs://` backends then refuse the endpoint with a message that
 # names the feature rather than failing obscurely.
 reapi = ["dep:frostbuild-reapi"]
+# TLS for the plain HTTP remote cache (`https://`). The HTTP backend is written
+# directly on TCP to keep its dependency footprint small, so TLS is its own
+# feature; without it an `https://` endpoint is refused with a message naming
+# the feature instead of silently downgrading to plaintext.
+http-tls = ["dep:rustls", "dep:rustls-native-certs"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +37,8 @@ memmap2.workspace = true
 postcard.workspace = true
 rayon.workspace = true
 ignore.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+rustls-native-certs = { version = "0.8", optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

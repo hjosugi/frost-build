@@ -5,11 +5,89 @@
 //! and a malformed response all fall through to running the action.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::sync::Arc;
 
 use frostbuild_core::journal::JournalEntry;
 
 use crate::report::Outcome;
 use crate::{journal_id, Engine};
+
+/// One action's successful result, waiting for the uploader.
+struct UploadJob {
+    trace_key: String,
+    discovered: BTreeMap<String, String>,
+    outputs: BTreeMap<String, String>,
+    duration_ms: u64,
+}
+
+/// A background publisher for the shared cache.
+///
+/// Upload work is off the critical path: hashing and reading outputs already
+/// happened locally, but sending them is pure network time. One thread is
+/// enough because a cache upload is bandwidth-bound and must not compete with
+/// the build for cores; the ordinary result is that the build ends without
+/// waiting for the connection.
+pub(crate) struct Uploader {
+    sender: Option<mpsc::Sender<UploadJob>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Uploader {
+    pub(crate) fn start(remote: Arc<frostbuild_core::remote::RemoteCache>, root: PathBuf) -> Self {
+        let (sender, receiver) = mpsc::channel::<UploadJob>();
+        let handle = std::thread::Builder::new()
+            .name("frost-remote-upload".into())
+            .spawn(move || {
+                for job in receiver {
+                    let mut remote_digests = BTreeMap::new();
+                    for (path, digest) in &job.outputs {
+                        if let Some(remote_digest) = remote.put_blob(digest, &root.join(path)) {
+                            remote_digests.insert(digest.clone(), remote_digest);
+                        }
+                    }
+                    remote.put_action(
+                        &job.trace_key,
+                        &frostbuild_core::remote::RemoteAction {
+                            discovered: job.discovered,
+                            outputs: job.outputs,
+                            remote: remote_digests,
+                            duration_ms: job.duration_ms,
+                        },
+                    );
+                }
+            })
+            .ok();
+        Self {
+            sender: Some(sender),
+            handle,
+        }
+    }
+
+    fn publish(&self, job: UploadJob) {
+        if let Some(sender) = &self.sender {
+            // A disconnected worker only costs cache population; the local
+            // result is already recorded and correct.
+            let _ = sender.send(job);
+        }
+    }
+
+    /// Drain the queue and join the worker. Called when the engine is dropped,
+    /// so counters and cache contents are complete before `run` returns.
+    pub(crate) fn finish(&mut self) {
+        self.sender.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for Uploader {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
 
 impl<'a> Engine<'a> {
     /// Every declared output was recorded, and nothing was recorded that this
@@ -157,20 +235,16 @@ impl<'a> Engine<'a> {
                 None => return,
             }
         }
-        let mut remote_digests = BTreeMap::new();
-        for (path, digest) in &entry.outputs {
-            if let Some(remote_digest) = remote.put_blob(digest, &self.root.join(path)) {
-                remote_digests.insert(digest.clone(), remote_digest);
-            }
-        }
-        remote.put_action(
-            &trace_key,
-            &frostbuild_core::remote::RemoteAction {
-                discovered,
-                outputs: entry.outputs.clone(),
-                remote: remote_digests,
-                duration_ms: entry.duration_ms,
-            },
-        );
+        let Some(uploader) = &self.uploader else {
+            // No worker means uploads are compiled out or the build is a
+            // no-cache dry run; the synchronous path would only delay it.
+            return;
+        };
+        uploader.publish(UploadJob {
+            trace_key,
+            discovered,
+            outputs: entry.outputs.clone(),
+            duration_ms: entry.duration_ms,
+        });
     }
 }

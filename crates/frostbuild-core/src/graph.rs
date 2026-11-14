@@ -192,6 +192,13 @@ pub struct TargetNode {
     /// never re-read.
     #[serde(default)]
     pub applied_platform: Option<String>,
+    /// How this target's command lines may travel through an `@file`. Copied
+    /// onto the graph node because the executor sees only the graph.
+    #[serde(default)]
+    pub response_file: crate::manifest::ResponseFileMode,
+    /// Byte threshold used when `response_file` is `Auto`.
+    #[serde(default)]
+    pub response_file_threshold: usize,
 }
 
 /// A workspace-relative path glob, with the semantics every query surface
@@ -439,6 +446,8 @@ impl BuildGraph {
                 outputs: Vec::new(),
                 timeout_secs: target.timeout_secs,
                 applied_platform,
+                response_file: target.response_file,
+                response_file_threshold: target.response_file_threshold,
             };
 
             match target.kind {

@@ -3,15 +3,41 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
+use frostbuild_core::manifest::ResponseFileMode;
 
 use crate::process::{resolve_timeout, terminate_process_tree, wait_for_child, was_cancelled};
 use crate::sandbox::sandbox_command;
 use crate::{describe_exit, resolve_action_program, CommandBatch, Engine, RUNNING_PROCESS_GROUPS};
+
+/// Quote one argument for an `@file`, in the shell-like syntax GCC, Clang and
+/// MSVC all accept: whitespace-bearing or empty arguments are double-quoted,
+/// with backslashes and quotes escaped.
+fn quote_response_argument(argument: &str) -> String {
+    let needs_quotes = argument.is_empty()
+        || argument
+            .chars()
+            .any(|character| character.is_whitespace() || character == '"' || character == '\\');
+    if !needs_quotes {
+        return argument.to_string();
+    }
+    let mut quoted = String::with_capacity(argument.len() + 2);
+    quoted.push('"');
+    for character in argument.chars() {
+        if character == '\\' || character == '"' {
+            quoted.push('\\');
+        }
+        quoted.push(character);
+    }
+    quoted.push('"');
+    quoted
+}
 
 impl<'a> Engine<'a> {
     /// The limit for one action: what the target declared, else what the
@@ -98,11 +124,14 @@ impl<'a> Engine<'a> {
             // per build. Doing it at execution rather than at graph
             // construction is what lets the graph stay a pure function of the
             // manifest, and therefore stay cacheable.
-            let argv = &self
+            let argv = self
                 .stamped_argv(action, argv)
                 .map_err(|error| format!("{error:#}"))?;
+            let (spawn_argv, response_file) = self
+                .response_file_argv(action, &argv, cwd)
+                .map_err(|error| format!("{error:#}"))?;
             let mut command = self
-                .command_for_argv(action, inputs, argv, cwd)
+                .command_for_argv(action, inputs, &spawn_argv, cwd)
                 .map_err(|error| format!("{error:#}"))?;
             #[cfg(unix)]
             {
@@ -135,6 +164,9 @@ impl<'a> Engine<'a> {
                 .lock()
                 .unwrap()
                 .remove(&pid);
+            if let Some(path) = &response_file {
+                let _ = std::fs::remove_file(path);
+            }
             let (output, timed_out) = match waited {
                 Ok(waited) => waited,
                 Err(error) => {
@@ -170,6 +202,62 @@ impl<'a> Engine<'a> {
             captured,
             failure: None,
         })
+    }
+
+    /// Apply the target's declared response-file mode to one command line.
+    ///
+    /// The transformed argv is what spawns; the returned path belongs to the
+    /// caller, which removes it after the process exits. A target that asked
+    /// for `auto` and stayed under the threshold keeps the direct argv, so the
+    /// common case allocates nothing.
+    fn response_file_argv<'argv>(
+        &self,
+        action: &frostbuild_core::graph::ActionNode,
+        argv: &'argv [String],
+        cwd: Option<&Path>,
+    ) -> Result<(Cow<'argv, [String]>, Option<PathBuf>)> {
+        let Some(target) = self.graph.targets.get(&action.target) else {
+            return Ok((Cow::Borrowed(argv), None));
+        };
+        let mode = target.response_file;
+        if mode == ResponseFileMode::Off {
+            return Ok((Cow::Borrowed(argv), None));
+        }
+        // bubblewrap mounts only the paths the action declared, so a response
+        // file written outside that set would be invisible. Inline argv is
+        // always correct; `--hermetic` gets the feature because its tree can
+        // hold the file.
+        if self.opts.sandbox && action.sandbox {
+            return Ok((Cow::Borrowed(argv), None));
+        }
+        let bytes: usize = argv.iter().map(|arg| arg.len() + 1).sum();
+        if mode == ResponseFileMode::Auto && bytes < target.response_file_threshold {
+            return Ok((Cow::Borrowed(argv), None));
+        }
+        if argv.len() < 2 {
+            // A lone `@file` would look like an argument, not a tool plus one.
+            return Ok((Cow::Borrowed(argv), None));
+        }
+        let directory = match cwd {
+            Some(tree) => tree.join(".frost-rsp"),
+            None => self.root.join(".frost/rsp"),
+        };
+        std::fs::create_dir_all(&directory)?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(action.id.as_bytes());
+        for arg in argv {
+            hasher.update(&[0]);
+            hasher.update(arg.as_bytes());
+        }
+        let path = directory.join(format!("{}.rsp", hasher.finalize().to_hex()));
+        let mut contents = String::with_capacity(bytes);
+        for arg in argv.iter().skip(1) {
+            contents.push_str(&quote_response_argument(arg));
+            contents.push('\n');
+        }
+        std::fs::write(&path, contents)?;
+        let spawned = vec![argv[0].clone(), format!("@{}", path.display())];
+        Ok((Cow::Owned(spawned), Some(path)))
     }
 
     /// Run a coverage merge in process rather than spawning it.
@@ -333,5 +421,24 @@ impl<'a> Engine<'a> {
 
     fn action_reads_a_stamp(&self, action: &frostbuild_core::graph::ActionNode) -> bool {
         !action.stable_stamps.is_empty() || !action.volatile_stamps.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_response_argument;
+
+    #[test]
+    fn plain_arguments_are_written_verbatim() {
+        assert_eq!(quote_response_argument("-O2"), "-O2");
+        assert_eq!(quote_response_argument("/tmp/a.o"), "/tmp/a.o");
+    }
+
+    #[test]
+    fn whitespace_and_quotes_survive_the_round_trip_shape() {
+        assert_eq!(quote_response_argument("a b"), "\"a b\"");
+        assert_eq!(quote_response_argument(""), "\"\"");
+        assert_eq!(quote_response_argument("a\"b"), "\"a\\\"b\"");
+        assert_eq!(quote_response_argument("a\\b"), "\"a\\\\b\"");
     }
 }

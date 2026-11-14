@@ -174,6 +174,8 @@ wherever the loader can tell.
 | `outputs` | array of paths | `[]` | `genrule`, `command` | declared output files; each output has exactly one producer |
 | `output_dirs` | array of paths | `[]` | `command` | directories Frost owns outright, for tools that name outputs by content |
 | `sandbox` | boolean | `true` | all | `false` opts this target out of `--sandbox` |
+| `response_file` | string | `off` | all but `genrule` and shell `test` | `off`, `auto` or `always`; passes argv through an `@file` the tool reads |
+| `response_file_threshold` | integer | `131072` | with `auto` | expanded-argv bytes above which an `@file` is used; at least 4096 |
 
 ### Substitutions
 

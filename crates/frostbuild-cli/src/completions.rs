@@ -377,7 +377,7 @@ mod completion_contract_tests {
     /// tool-specific expressions. Listing them here is the point of the test —
     /// a new argument has to make this choice deliberately instead of falling
     /// back to whatever the shell does by default.
-    const FREE_TEXT: [&str; 41] = [
+    const FREE_TEXT: [&str; 42] = [
         // Seconds.
         "frost build::timeout",
         "frost test::timeout",
@@ -430,6 +430,9 @@ mod completion_contract_tests {
         "frost test::test_env",
         "frost test::test_arg",
         "frost test::runs_per_test",
+        // An opaque identifier the caller chooses; there is nothing to
+        // complete against.
+        "frost::invocation_id",
     ];
 
     fn walk(command: &clap::Command, path: &str, undeclared: &mut Vec<String>) {

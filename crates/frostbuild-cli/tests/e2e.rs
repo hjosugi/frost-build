@@ -8678,3 +8678,117 @@ fn coverage_lcov_merges_gcov_data_and_repeats_byte_for_byte() {
     assert!(out.contains("no coverage data"), "{out}");
     assert!(!ws.dir.join("c.lcov").exists(), "an empty run wrote a file");
 }
+
+/// A target that declares `response_file = "always"` must hand the tool an
+/// `@file`, not the argument list. The tool here refuses anything else, so the
+/// test fails if the argv reaches it inline.
+#[cfg(unix)]
+#[test]
+fn a_declared_response_file_carries_the_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ws = Workspace::empty("response-file");
+    std::fs::create_dir_all(ws.dir.join("tools")).unwrap();
+    ws.write(
+        "frost.toml",
+        r#"
+[toolchain.tools]
+reader = "tools/reader.sh"
+
+[target.rsp]
+kind = "command"
+tool = "reader"
+args = ["${out}", "hello world", "plain"]
+outputs = [".frost/out/${config}/args.txt"]
+response_file = "always"
+sandbox = false
+"#,
+    );
+    ws.write(
+        "tools/reader.sh",
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+           @*) ;;\n\
+           *) echo \"expected an @file, got: $1\" >&2; exit 7 ;;\n\
+         esac\n\
+         file=${1#@}\n\
+         out=$(sed -n '1p' \"$file\")\n\
+         sed -n '2,$p' \"$file\" > \"$out\"\n",
+    );
+    let script = ws.dir.join("tools/reader.sh");
+    let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).unwrap();
+
+    let (ok, out) = ws.frost(&["build"]);
+    assert!(ok, "{out}");
+    let written = std::fs::read_to_string(ws.dir.join(".frost/out/debug/args.txt"))
+        .expect("the tool must have written its output");
+    assert!(written.contains("\"hello world\""), "{written}");
+    assert!(written.contains("plain"), "{written}");
+}
+
+#[test]
+fn query_actions_reports_resolved_argv_inputs_and_outputs() {
+    let ws = Workspace::new("query-actions");
+    let (ok, out) = ws.frost(&["query", "actions", "--output", "json"]);
+    assert!(ok, "{out}");
+    let payload: serde_json::Value = serde_json::from_str(&out).expect("one JSON document");
+    let actions = payload["actions"].as_array().expect("an actions array");
+    assert!(!actions.is_empty(), "{payload}");
+    let compile = actions
+        .iter()
+        .find(|action| action["kind"] == "compile")
+        .unwrap_or_else(|| panic!("no compile action in {payload}"));
+    assert!(
+        compile["argv"]
+            .as_array()
+            .is_some_and(|argv| !argv.is_empty()),
+        "{compile}"
+    );
+    assert!(
+        compile["inputs"]
+            .as_array()
+            .is_some_and(|inputs| !inputs.is_empty()),
+        "{compile}"
+    );
+    assert!(
+        compile["outputs"]
+            .as_array()
+            .is_some_and(|outputs| !outputs.is_empty()),
+        "{compile}"
+    );
+}
+
+#[test]
+fn build_event_protocol_writes_a_bep_shaped_file() {
+    let ws = Workspace::new("bep");
+    let path = ws.dir.join("bep.ndjson");
+    let (ok, out) = ws.frost(&[
+        "build",
+        "--build-event-protocol",
+        path.to_str().unwrap(),
+        "--invocation-id",
+        "fixed-invocation",
+    ]);
+    assert!(ok, "{out}");
+    let events: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .expect("the BEP file must exist")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+        .collect();
+    assert_eq!(
+        events.first().unwrap()["id"]["started"]["uuid"],
+        "fixed-invocation"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["actionExecuted"]["success"] == true),
+        "{events:?}"
+    );
+    assert_eq!(
+        events.last().unwrap()["id"]["buildFinished"]["overallSuccess"],
+        true
+    );
+}
