@@ -5,6 +5,32 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Added
+
+- `response_file = "auto" | "always"` on a target passes its expanded argv
+  through an `@file` when it crosses `response_file_threshold` (default
+  128 KiB), for tools whose command lines exceed the host argument limit. The
+  mode is action-key material; `--sandbox` keeps argv inline.
+- The HTTP remote cache accepts `https://` (verified against the host's native
+  trust store, feature `http-tls`, on by default) and an `?authorization=`
+  header shared with the REAPI spelling.
+- `frost query actions` reports a closure's resolved argv, environment, inputs,
+  outputs and owned directories as text or JSON (the `aquery` question).
+- `--build-event-protocol FILE` writes an opt-in BEP-shaped NDJSON subset
+  (`started`, `actionExecuted`, `testResult`, `finished`), and
+  `--invocation-id` correlates it with the native event stream.
+- `docs/34_output_groups_and_deferred_materialization.md` and
+  `docs/35_worker_and_dynamic_execution_plan.md` record the next storage and
+  execution designs.
+
+### Changed
+
+- Remote cache uploads run on a background publisher instead of blocking the
+  action that produced them; the engine drains the queue before `run` returns,
+  so counters and cache contents are complete.
+- `docs/14` now records test sharding, flaky retries, response files, HTTPS,
+  the BEP subset and `query actions` as shipped rather than planned.
+
 ## [0.16.3] - 2026-11-05
 
 ### Security

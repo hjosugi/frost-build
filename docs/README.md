@@ -57,6 +57,8 @@ entrance — why Frost is built the way it is.
 | [27_npm_production_adoption.md](27_npm_production_adoption.md) | real npm/Vite production adoption certificate and boundary policy |
 | [31_persistent_workers.md](31_persistent_workers.md) | measured javac/tsc persistent-worker study, worker hermeticity hazards, and the defer decision for workers and dynamic execution |
 | [32_language_expansion.md](32_language_expansion.md) | Kotlin / C# / Swift adapter comparison, the C# generated-boundary prototype, and the next-language decision |
+| [34_output_groups_and_deferred_materialization.md](34_output_groups_and_deferred_materialization.md) | output-group selection design for CI, and the v2 deferred-materialization boundary |
+| [35_worker_and_dynamic_execution_plan.md](35_worker_and_dynamic_execution_plan.md) | the ordered landing plan that turns the worker/dynamic-execution studies into code |
 
 ## Comparisons and measurement
 
