@@ -173,6 +173,8 @@ pub(crate) fn run_ide(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            build_event_protocol: None,
+            invocation_id: None,
             no_stamp: false,
             stamp_optional: false,
             daemon: false,

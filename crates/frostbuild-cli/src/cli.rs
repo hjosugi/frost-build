@@ -67,6 +67,23 @@ pub(crate) struct Cli {
     )]
     pub(crate) build_event_json: Option<PathBuf>,
 
+    /// Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`,
+    /// `testResult`, `finished`) for tools that consume Bazel's Build Event
+    /// Protocol. A deliberately small subset, not a full BEP implementation;
+    /// `--build-event-json` remains the native contract
+    #[arg(
+        long,
+        value_name = "FILE",
+        global = true,
+        value_hint = ValueHint::FilePath
+    )]
+    pub(crate) build_event_protocol: Option<PathBuf>,
+
+    /// Identifier echoed into both event streams, for correlating one build
+    /// across tools. Generated when omitted
+    #[arg(long, value_name = "ID", global = true)]
+    pub(crate) invocation_id: Option<String>,
+
     #[command(subcommand)]
     pub(crate) command: Cmd,
 }
@@ -145,8 +162,9 @@ pub(crate) enum Cmd {
         #[arg(long, conflicts_with = "no_stamp")]
         stamp_optional: bool,
         /// Shared cache consulted when the local journal misses: a directory
-        /// path, file:///path, http://host/prefix, or grpc://host/[instance]
-        /// (REAPI; grpcs:// for TLS). Never required for correctness — every
+        /// path, file:///path, http://host/prefix, https://host/prefix, or
+        /// grpc://host/[instance] (REAPI; grpcs:// for TLS). An
+        /// ?authorization= query value is sent verbatim. Never required for correctness — every
         /// response is verified and any failure falls back to building locally
         #[arg(
             long,
@@ -426,8 +444,9 @@ pub(crate) enum Cmd {
         #[arg(long, value_enum, default_value = "errors")]
         test_output: TestOutputArg,
         /// Shared cache consulted when the local journal misses: a directory
-        /// path, file:///path, http://host/prefix, or grpc://host/[instance]
-        /// (REAPI; grpcs:// for TLS). Never required for correctness — every
+        /// path, file:///path, http://host/prefix, https://host/prefix, or
+        /// grpc://host/[instance] (REAPI; grpcs:// for TLS). An
+        /// ?authorization= query value is sent verbatim. Never required for correctness — every
         /// response is verified and any failure falls back to building locally
         #[arg(
             long,
@@ -919,6 +938,18 @@ pub(crate) enum QueryCmd {
         /// Workspace-relative paths or globs
         #[arg(required = true, value_hint = ValueHint::FilePath)]
         paths: Vec<String>,
+        #[command(flatten)]
+        opts: QueryOpts,
+    },
+    /// Resolved actions without building: argv, inputs, outputs and env
+    ///
+    /// Bazel's `aquery`. The graph is configuration-free, so this reports the
+    /// action the manifest defines; use `frost build --dry-run` (`plan`) for
+    /// the actions an invocation would actually run.
+    Actions {
+        /// Targets whose action closure to report; every action when empty
+        #[arg(add = ArgValueCompleter::new(complete_target))]
+        targets: Vec<String>,
         #[command(flatten)]
         opts: QueryOpts,
     },

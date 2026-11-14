@@ -52,6 +52,7 @@ Options that change what is built (`--profile`, `--platform`, `--sandbox`,
 - [`frost pick`](#frost-pick)
 - [`frost plan`](#frost-plan)
 - [`frost query`](#frost-query)
+- [`frost query actions`](#frost-query-actions)
 - [`frost query allpaths`](#frost-query-allpaths)
 - [`frost query deps`](#frost-query-deps)
 - [`frost query owners`](#frost-query-owners)
@@ -123,6 +124,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 
@@ -170,6 +177,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -212,11 +225,17 @@ Options:
       --local-test-jobs <N>
           Maximum concurrently running test actions (default: -j)
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
   -k, --keep-going
           Keep building independent actions after a failure
 
       --explain
           After the build, print why each action ran or was cached
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -v, --verbose
           Print full command lines as they run
@@ -244,7 +263,7 @@ Options:
           A failing [stamp] command leaves the values empty instead of failing the build. Off by default: a status script that stopped working should be noticed, not silently ship a binary with no version in it
 
       --remote-cache <ENDPOINT>
-          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). Never required for correctness — every response is verified and any failure falls back to building locally
+          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, https://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). An ?authorization= query value is sent verbatim. Never required for correctness — every response is verified and any failure falls back to building locally
 
       --remote-upload
           Also publish what this build produces to --remote-cache
@@ -329,6 +348,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -357,6 +382,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -393,6 +424,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -427,6 +464,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -465,6 +508,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -508,6 +557,12 @@ Options:
 
           [default: gcov]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -540,6 +595,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -564,6 +625,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -587,6 +654,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -615,6 +688,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -638,6 +717,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -686,8 +771,14 @@ Options:
 
           [default: auto]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --print
           Print the exact debugger argv without launching it
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -734,8 +825,14 @@ Options:
       --debounce-ms <DEBOUNCE_MS>
           [default: 50]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --runner <RUNNER>
           Explicit executable prefix for cross/emulated or custom artifacts
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -771,6 +868,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -808,6 +911,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -844,6 +953,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -872,6 +987,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -907,6 +1028,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -952,8 +1079,14 @@ Options:
 
           [default: .vscode]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --dry-run
           Print the generated file map without writing it
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -991,6 +1124,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1031,6 +1170,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1063,6 +1208,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1106,8 +1257,14 @@ Options:
 
           [default: node]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --dry-run
           Print the generated root manifest without writing it
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1148,6 +1305,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1185,6 +1348,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1214,6 +1383,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1247,6 +1422,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1283,6 +1464,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1312,6 +1499,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1337,6 +1530,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1372,6 +1571,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1411,6 +1616,12 @@ Options:
       --output <OUTPUT>
           Workspace-relative output wheel (must use the standard wheel filename)
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1449,6 +1660,12 @@ Options:
       --platform <PLATFORM>
           [default: host]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1485,6 +1702,12 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1503,6 +1726,7 @@ Commands:
   allpaths  Every dependency path between two targets ("what would I have to cut?")
   targets   Every target in the workspace
   owners    Targets that declare these files among their action inputs
+  actions   Resolved actions without building: argv, inputs, outputs and env
 
 Options:
   -C, --workspace <WORKSPACE>
@@ -1519,8 +1743,66 @@ Options:
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
+```
+
+## `frost query actions`
+
+```text
+Resolved actions without building: argv, inputs, outputs and env
+
+Bazel's `aquery`. The graph is configuration-free, so this reports the action the manifest defines; use `frost build --dry-run` (`plan`) for the actions an invocation would actually run.
+
+Usage: frost query actions [OPTIONS] [TARGETS]...
+
+Arguments:
+  [TARGETS]...
+          Targets whose action closure to report; every action when empty
+
+Options:
+  -C, --workspace <WORKSPACE>
+          Workspace root (frost.toml for Frost commands; Bazel workspace for bazel-dev)
+
+          [default: .]
+
+      --kind <KIND>
+          Keep only targets of this kind (cc_binary, cc_library, cc_test, genrule, test, kofun_binary, command)
+
+      --attr <NAME=PATTERN>
+          Keep only targets whose attribute matches, as NAME=PATTERN. Repeatable; every one must match. NAME is deps, srcs, outputs, sandbox or timeout
+
+      --config <NAME>
+          Apply a named `[config.NAME]` section from `.frostrc`. Repeatable; applied in the order given
+
+      --no-frostrc
+          Ignore `.frostrc` entirely, so only the command line and built-in defaults apply
+
+      --output <OUTPUT>
+          Output format
+
+          [possible values: text, json, label-kind, dot]
+
+      --build-event-json <FILE>
+          Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --json
+          Alias for --output json, kept for compatibility
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## `frost query allpaths`
@@ -1568,8 +1850,14 @@ Options:
 
           [possible values: text, json, label-kind, dot]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --json
           Alias for --output json, kept for compatibility
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1615,6 +1903,12 @@ Options:
       --json
           Alias for --output json, kept for compatibility
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1659,6 +1953,12 @@ Options:
       --json
           Alias for --output json, kept for compatibility
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1702,6 +2002,12 @@ Options:
 
       --json
           Alias for --output json, kept for compatibility
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1750,6 +2056,12 @@ Options:
       --json
           Alias for --output json, kept for compatibility
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
+
   -h, --help
           Print help
 ```
@@ -1791,6 +2103,12 @@ Options:
 
       --json
           Alias for --output json, kept for compatibility
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1837,8 +2155,14 @@ Options:
       --runner <RUNNER>
           Explicit executable prefix for cross/emulated or custom artifacts
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --print
           Print the exact direct argv without executing it
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1868,6 +2192,12 @@ Options:
 
       --build-event-json <FILE>
           Write one JSON object per line describing the build, for CI and dashboards. Independent of the terminal output
+
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help
@@ -1911,8 +2241,14 @@ Options:
       --local-test-jobs <N>
           Maximum concurrently simulated test actions (default: point's -j)
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --profile <PROFILE>
           [default: debug]
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
       --platform <PLATFORM>
           [default: host]
@@ -1962,11 +2298,17 @@ Options:
       --local-test-jobs <N>
           Maximum concurrently running test actions (default: -j)
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
   -k, --keep-going
 
 
       --affected
 
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
       --predictive
 
@@ -2008,7 +2350,7 @@ Options:
           [default: errors]
 
       --remote-cache <ENDPOINT>
-          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). Never required for correctness — every response is verified and any failure falls back to building locally
+          Shared cache consulted when the local journal misses: a directory path, file:///path, http://host/prefix, https://host/prefix, or grpc://host/[instance] (REAPI; grpcs:// for TLS). An ?authorization= query value is sent verbatim. Never required for correctness — every response is verified and any failure falls back to building locally
 
       --remote-upload
           Also publish what this build produces to --remote-cache
@@ -2114,8 +2456,14 @@ Options:
 
           [default: 50]
 
+      --build-event-protocol <FILE>
+          Also write a BEP-shaped NDJSON file (`started`, `actionExecuted`, `testResult`, `finished`) for tools that consume Bazel's Build Event Protocol. A deliberately small subset, not a full BEP implementation; `--build-event-json` remains the native contract
+
       --run <RUN>...
           Direct argv to start after a successful build and restart on success; place this option last when its arguments begin with '-'
+
+      --invocation-id <ID>
+          Identifier echoed into both event streams, for correlating one build across tools. Generated when omitted
 
   -h, --help
           Print help

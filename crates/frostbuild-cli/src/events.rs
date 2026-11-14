@@ -28,10 +28,17 @@ pub struct EventLog {
     /// Monotonic per build, so a consumer can order events without trusting a
     /// clock — and so the determinism test has something stable to compare.
     sequence: u64,
+    /// Echoed into every line when the caller named one, so several builds in
+    /// one CI job can be told apart without relying on the file path.
+    invocation_id: Option<String>,
 }
 
 impl EventLog {
     pub fn create(path: &Path) -> Result<Self> {
+        Self::create_with_invocation(path, None)
+    }
+
+    pub fn create_with_invocation(path: &Path, invocation_id: Option<&str>) -> Result<Self> {
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -41,7 +48,11 @@ impl EventLog {
         }
         let file = std::fs::File::create(path)
             .with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(Self { file, sequence: 0 })
+        Ok(Self {
+            file,
+            sequence: 0,
+            invocation_id: invocation_id.map(str::to_owned),
+        })
     }
 
     /// Write one event. A write failure is reported once and then ignored:
@@ -53,12 +64,143 @@ impl EventLog {
         };
         payload["schema"] = serde_json::json!(SCHEMA);
         payload["seq"] = serde_json::json!(self.sequence);
+        if let Some(invocation_id) = &self.invocation_id {
+            payload["invocation_id"] = serde_json::json!(invocation_id);
+        }
         self.sequence += 1;
         let line = payload.to_string();
         if let Err(error) = writeln!(self.file, "{line}") {
             eprintln!("frost: build event log: {error}");
         }
     }
+}
+
+/// A BEP-shaped companion to [`EventLog`], written after the build.
+///
+/// Bazel's Build Event Protocol is a de facto integration point for CI
+/// dashboards. Reproducing its protobuf schema in full would be a large
+/// compatibility promise frost cannot keep, so this is an explicitly opt-in
+/// **subset**: the started/actionExecuted/testResult/finished shape, in NDJSON,
+/// with the fields a dashboard reads. The existing `--build-event-json` stream
+/// remains the native, stable contract; this file is for tools that already
+/// speak BEP's shape.
+/// A stable-looking invocation id when the caller did not name one. Not a
+/// UUID library: a timestamp and the process id are enough to distinguish two
+/// builds in one job, and the value is only an identifier.
+pub fn default_invocation_id() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    format!("{:032x}-{:08x}", millis, std::process::id())
+}
+
+pub struct BepLog {
+    file: std::fs::File,
+}
+
+impl BepLog {
+    pub fn create(path: &Path, invocation_id: &str) -> Result<Self> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        let file = std::fs::File::create(path)
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        let mut log = Self { file };
+        log.line(&serde_json::json!({
+            "id": { "started": { "uuid": invocation_id } },
+            "started": {
+                "command": "build",
+                "startTimeMillis": epoch_millis(),
+            }
+        }));
+        Ok(log)
+    }
+
+    fn line(&mut self, payload: &serde_json::Value) {
+        if let Err(error) = writeln!(self.file, "{payload}") {
+            eprintln!("frost: build event protocol log: {error}");
+        }
+    }
+
+    /// Record every action and test in a finished report.
+    pub fn write_report(
+        &mut self,
+        report: &frostbuild_exec::BuildReport,
+        elapsed_ms: u64,
+    ) -> Result<()> {
+        for result in &report.results {
+            let success = matches!(
+                result.outcome,
+                frostbuild_exec::Outcome::Executed { .. }
+                    | frostbuild_exec::Outcome::Cached
+                    | frostbuild_exec::Outcome::Flaky { .. }
+            );
+            let cached = matches!(result.outcome, frostbuild_exec::Outcome::Cached);
+            self.line(&serde_json::json!({
+                "id": { "actionExecuted": { "primaryOutput": result.id } },
+                "actionExecuted": {
+                    "success": success,
+                    "exitCode": if success { 0 } else { 1 },
+                    "cached": cached,
+                    "kind": result.kind,
+                    "target": result.target,
+                    "desc": result.desc,
+                }
+            }));
+            if result.kind == frostbuild_core::graph::ActionKind::Test {
+                let status = match &result.outcome {
+                    frostbuild_exec::Outcome::Failed { .. } => "FAILED",
+                    frostbuild_exec::Outcome::Flaky { .. } => "FLAKY",
+                    frostbuild_exec::Outcome::Skipped { .. } => "SKIPPED",
+                    _ => "PASSED",
+                };
+                self.line(&serde_json::json!({
+                    "id": {
+                        "testResult": {
+                            "label": result.target,
+                            "run": 1,
+                            "shard": 0,
+                            "attempt": 1,
+                        }
+                    },
+                    "testResult": { "status": status }
+                }));
+            }
+        }
+        self.line(&serde_json::json!({
+            "id": { "buildFinished": { "overallSuccess": report.success() } },
+            "finished": {
+                "overallSuccess": report.success(),
+                "elapsedMs": elapsed_ms,
+                "finishTimeMillis": epoch_millis(),
+            }
+        }));
+        Ok(())
+    }
+
+    /// Close a build that the whole-closure certificate answered without an
+    /// action report. A consumer still gets a well-formed start and finish.
+    pub fn write_noop(&mut self, actions: usize, elapsed_ms: u64) {
+        self.line(&serde_json::json!({
+            "id": { "buildFinished": { "overallSuccess": true } },
+            "finished": {
+                "overallSuccess": true,
+                "cachedActions": actions,
+                "elapsedMs": elapsed_ms,
+                "finishTimeMillis": epoch_millis(),
+            }
+        }));
+    }
+}
+
+fn epoch_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis())
 }
 
 /// One event as JSON, or `None` for events that carry no information a

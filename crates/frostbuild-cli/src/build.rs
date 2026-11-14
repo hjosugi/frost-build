@@ -69,6 +69,10 @@ pub(crate) struct BuildRequest {
     pub(crate) test_output: TestOutputArg,
     /// Where to write the ndjson build event stream, if anywhere.
     pub(crate) build_event_json: Option<PathBuf>,
+    /// Where to write the BEP-shaped NDJSON subset, if anywhere.
+    pub(crate) build_event_protocol: Option<PathBuf>,
+    /// Identifier echoed into both event streams; generated when absent.
+    pub(crate) invocation_id: Option<String>,
     /// Skip the workspace's `[stamp]` command; every `${stamp.KEY}` expands to
     /// nothing.
     pub(crate) no_stamp: bool,
@@ -228,6 +232,8 @@ pub(crate) fn run_pick(
             runs_per_test: 1,
             test_output: TestOutputArg::Errors,
             build_event_json: None,
+            build_event_protocol: None,
+            invocation_id: None,
             no_stamp: false,
             stamp_optional: false,
             jobs: None,
@@ -627,7 +633,9 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         //
         // A certificate answered inside frostd writes no event stream, so a
         // request for one always reaches a child build, which writes it.
-        let daemon_fast_noop = enable_fast_noop && request.build_event_json.is_none();
+        let daemon_fast_noop = enable_fast_noop
+            && request.build_event_json.is_none()
+            && request.build_event_protocol.is_none();
         if let Some(code) = run_build_via_daemon(root, &request, daemon_fast_noop)? {
             return Ok(code);
         }
@@ -655,6 +663,19 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         if let Some(hit) = hit {
             if let Some(path) = &request.build_event_json {
                 write_fast_noop_events(path, &request, hit, started)?;
+            }
+            if let Some(path) = &request.build_event_protocol {
+                let invocation_id = request
+                    .invocation_id
+                    .clone()
+                    .unwrap_or_else(events::default_invocation_id);
+                let destination = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    root.join(path)
+                };
+                let mut log = events::BepLog::create(&destination, &invocation_id)?;
+                log.write_noop(hit.closure_actions, started.elapsed().as_millis() as u64);
             }
             println!(
                 "{}",
@@ -764,7 +785,9 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
     let events = request
         .build_event_json
         .as_deref()
-        .map(events::EventLog::create)
+        .map(|path| {
+            events::EventLog::create_with_invocation(path, request.invocation_id.as_deref())
+        })
         .transpose()?;
     let stamps = build_stamps(
         root,
@@ -855,6 +878,20 @@ pub(crate) fn run_build(root: &std::path::Path, request: BuildRequest) -> Result
         Some(trace) => Some(write_trace(root, trace, &report)?),
         None => None,
     };
+
+    if let Some(path) = &request.build_event_protocol {
+        let destination = if path.is_absolute() {
+            path.clone()
+        } else {
+            root.join(path)
+        };
+        let invocation_id = request
+            .invocation_id
+            .clone()
+            .unwrap_or_else(events::default_invocation_id);
+        let mut log = events::BepLog::create(&destination, &invocation_id)?;
+        log.write_report(&report, elapsed as u64)?;
+    }
 
     if let Some(remote) = &remote {
         let summary = remote.summary();
