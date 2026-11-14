@@ -30,6 +30,7 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
   so counters and cache contents are complete.
 - `docs/14` now records test sharding, flaky retries, response files, HTTPS,
   the BEP subset and `query actions` as shipped rather than planned.
+- Bump tonic and tonic-prost to 0.14.9, tokio to 1.54.1 and notify to 8.2.2.
 
 ## [0.16.3] - 2026-11-05
 
