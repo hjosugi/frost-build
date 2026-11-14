@@ -215,6 +215,9 @@ pub struct Engine<'a> {
     shared: Mutex<Shared>,
     cv: Condvar,
     cas: LocalCas,
+    /// Background publisher for `--remote-upload`; `None` when no remote cache
+    /// accepts uploads. Dropped with the engine, which drains its queue.
+    uploader: Option<crate::remote::Uploader>,
 }
 
 impl<'a> Engine<'a> {
@@ -244,6 +247,11 @@ impl<'a> Engine<'a> {
             .chain(ENV_IN_KEY)
             .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
             .collect();
+        let uploader = opts
+            .remote
+            .as_ref()
+            .filter(|remote| remote.uploads())
+            .map(|remote| crate::remote::Uploader::start(remote.clone(), root.to_path_buf()));
         Self {
             root,
             graph,
@@ -276,6 +284,7 @@ impl<'a> Engine<'a> {
             }),
             cv: Condvar::new(),
             cas: LocalCas::new(root, cas_max_bytes),
+            uploader,
         }
     }
 
@@ -1363,6 +1372,25 @@ impl<'a> Engine<'a> {
         }
         let environment = action_environment.as_ref().unwrap_or(&self.key_env);
         let argv = action_key_argv(action, self.opts.stamps.as_ref());
+        // A response-file plan is part of how the tool is invoked, so turning
+        // it on or off is a different action rather than a free pass at the
+        // same result. The marker is constant per mode so `auto` still hits
+        // the cache on either side of its threshold; only the mode itself
+        // changes identity.
+        let argv = match self
+            .graph
+            .targets
+            .get(&action.target)
+            .map(|target| target.response_file)
+            .unwrap_or_default()
+        {
+            frostbuild_core::manifest::ResponseFileMode::Off => argv,
+            mode => {
+                let mut argv = argv.into_owned();
+                argv.push(format!("\0frost-response-file:{}", mode.as_str()));
+                std::borrow::Cow::Owned(argv)
+            }
+        };
         streamed_action_key(
             StreamedActionDescriptor {
                 builder: "frost-engine-v1",
