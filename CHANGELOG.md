@@ -5,6 +5,12 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- Update dependencies: clap_complete 4.6.12, clap_complete_nushell 4.6.3,
+  clap_mangen 0.3.4, ctrlc 3.5.3, flate2 1.1.11, ignore 0.4.34, memmap2 0.9.12,
+  prost 0.14.6, prost-types 0.14.6 and zstd 0.14.4.
+
 ## [0.17.2] - 2026-11-21
 
 ### Fixed
