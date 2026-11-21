@@ -37,8 +37,10 @@ class VersionPatternTest(unittest.TestCase):
     def test_version_matches_whole_components_only(self):
         pattern = release_changes.version_pattern("9.8.1")
         self.assertIsNotNone(pattern.search("zip 9.8.1,"))
+        self.assertIsNotNone(pattern.search("ends with zip 9.8.1."))
         self.assertIsNone(pattern.search("zip 9.8.10"))
         self.assertIsNone(pattern.search("zip 19.8.1"))
+        self.assertIsNone(pattern.search("zip 9.8.1.2"))
 
 
 if __name__ == "__main__":

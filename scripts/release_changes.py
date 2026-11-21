@@ -84,7 +84,9 @@ def unreleased(changelog: Path) -> str:
 
 
 def version_pattern(version: str) -> re.Pattern[str]:
-    return re.compile(rf"(?<![\d.]){re.escape(version)}(?![\d.])")
+    # Whole components only: 9.8.1 matches "9.8.1," and "9.8.1." but neither
+    # "9.8.10" nor the prefix of a four-component "9.8.1.2".
+    return re.compile(rf"(?<![\d.]){re.escape(version)}(?!\d)(?!\.\d)")
 
 
 def main() -> int:
