@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-21
+
 ### Fixed
 
 - `frost import-dotnet` copies the target of a symlinked SDK file into
