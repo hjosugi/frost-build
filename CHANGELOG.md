@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-21
+
 ### Changed
 
 - Update dependencies: zip 9.8.1, tonic-prost and tonic-prost-build 0.14.9,
