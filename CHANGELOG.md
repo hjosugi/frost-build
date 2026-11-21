@@ -5,6 +5,14 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Changed
+
+- Update dependencies: zip 9.8.1, tonic-prost and tonic-prost-build 0.14.9,
+  clap 4.6.9, rustls-native-certs 0.8.5 and bytes 1.12.2.
+- Update the pinned GitHub Actions: Swatinem/rust-cache,
+  taiki-e/install-action 2.90.5, EmbarkStudios/cargo-deny-action 2.1.2 and
+  softprops/action-gh-release 3.0.4.
+
 ## [0.17.0] - 2026-11-14
 
 ### Added
