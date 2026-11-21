@@ -594,7 +594,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1717,7 +1717,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1834,7 +1834,7 @@ checksum = "609c5606d9d357b26e4ee1a7a01beac396628d0fa01ebbade2a09cefb88e65af"
 dependencies = [
  "fastrand",
  "tempfile",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2031,7 +2031,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2202,9 +2202,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-build"
-version = "0.14.6"
+version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c68f61875ac5293cf72e6c8cf0158086428c82c37229e98c840878f1706b0322"
+checksum = "ac6d916d206ed7bdda1778ddff9bda43303789c258877e7bc22fb44ee5c984b4"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -2225,9 +2225,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-prost-build"
-version = "0.14.6"
+version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "654e5643eff75d7f8c99197ce1440ed19a3474eada74c12bbac488b2cafdae27"
+checksum = "2ea216ddc448e08e7839ab09e20e60b06b6a1c32745ccb212c0ebd161c199f1b"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -2411,7 +2411,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
