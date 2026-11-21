@@ -5,6 +5,8 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-11-21
+
 ### Changed
 
 - Update dependencies: clap_complete 4.6.12, clap_complete_nushell 4.6.3,
