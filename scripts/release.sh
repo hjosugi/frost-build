@@ -93,6 +93,16 @@ if [ -z "$unreleased" ]; then
   exit 1
 fi
 
+# The changelog records versions, not pull-request titles: a dependabot branch
+# can resolve to a newer patch than the one its title named. Compare the
+# lockfile with the last release so an inaccurate entry never gets stamped.
+if git describe --tags --abbrev=0 --match 'v[0-9]*' >/dev/null 2>&1; then
+  if ! python3 scripts/release_changes.py --check; then
+    echo "release.sh: record the dependency bumps above under '## [Unreleased]' first" >&2
+    exit 1
+  fi
+fi
+
 echo "Releasing ${current} -> ${version}"
 
 # The workspace version and the path-dependency pins move together; leaving one
@@ -109,7 +119,14 @@ fi
 
 # Cargo.lock records the workspace member versions too, and `--locked` builds
 # in CI fail if it is stale.
-cargo update --workspace --offline >/dev/null
+#
+# Dependabot bumps are often merged on GitHub, so the crates behind the new
+# lockfile may not be in this machine's cache; the offline refresh then cannot
+# resolve them. Fall back to the network rather than making the release depend
+# on what happened to have been fetched locally.
+if ! cargo update --workspace --offline >/dev/null 2>&1; then
+  cargo update --workspace >/dev/null
+fi
 
 # This repository builds itself through ./frostw, so the version it requires is
 # the version it is about to publish. Between this commit and the Release

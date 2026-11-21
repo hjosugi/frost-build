@@ -3,6 +3,16 @@ updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule: { interval: weekly }
+    # One lockfile, one pull request. Separate bumps merged back to back can
+    # leave Cargo.lock internally inconsistent (two versions of a crate while
+    # an entry still names the old one), which only shows up after the merge.
+    groups:
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: weekly }
+    groups:
+      github-actions:
+        patterns: ["*"]

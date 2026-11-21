@@ -794,8 +794,13 @@ fn link_or_copy(source: &Path, destination: &Path) -> Result<()> {
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    if std::fs::hard_link(source, destination).is_err() {
-        std::fs::copy(source, destination)?;
+    // A package manager may spell SDK files as symlinks into a shared location
+    // outside the SDK root. Hard-linking the link itself would reproduce its
+    // relative target at a different depth, leaving a dangling entry in the
+    // bundle; copy the bytes it names instead.
+    let source = std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+    if std::fs::hard_link(&source, destination).is_err() {
+        std::fs::copy(&source, destination)?;
     }
     Ok(())
 }
@@ -1156,4 +1161,36 @@ fn tail(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(40);
     lines[start..].join("\n")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::link_or_copy;
+
+    #[test]
+    fn link_or_copy_copies_the_target_of_a_symlink() {
+        let root = std::env::temp_dir().join(format!(
+            "frost-link-or-copy-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let sdk = root.join("sdk/1.0.0/Roslyn/bincore");
+        let shared = root.join("shared");
+        std::fs::create_dir_all(&sdk).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let target = shared.join("Microsoft.CodeAnalysis.dll");
+        std::fs::write(&target, b"compiler").unwrap();
+        let link = sdk.join("Microsoft.CodeAnalysis.dll");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let destination = root.join("bundle/sdk/1.0.0/Roslyn/bincore/Microsoft.CodeAnalysis.dll");
+        link_or_copy(&link, &destination).unwrap();
+
+        assert_eq!(std::fs::read(&destination).unwrap(), b"compiler");
+        assert!(!std::fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -45,8 +45,13 @@ Releases are cut by CI, not from a terminal. Nothing here needs push access to
 a tag.
 
 ```bash
+python3 scripts/release_changes.py  # resolved dependency bumps since the last tag
 scripts/release.sh 0.7.1        # bump the workspace version, stamp the CHANGELOG, commit
 ```
+
+Record the bumps `release_changes.py` reports under `[Unreleased]` first;
+`release.sh` reads `Cargo.lock` and refuses a release whose changelog does not
+name them, so a stale dependabot title cannot ship as the wrong version.
 
 Open a PR for that commit and merge it. Then publish, from the Actions tab or
 with:
