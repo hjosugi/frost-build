@@ -5,6 +5,12 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- `frost import-dotnet` copies the target of a symlinked SDK file into
+  `.dotnet-sdk` instead of the link itself, so a package-managed macOS SDK no
+  longer fails with `Could not load file or assembly 'Microsoft.CodeAnalysis'`.
+
 ## [0.17.1] - 2026-11-21
 
 ### Changed
