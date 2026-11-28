@@ -1,3 +1,16 @@
+## Standing approval for FrostBuild maintenance (2026-11-28 JST)
+
+When the working repository and the verified GitHub push destination are both
+`hjosugi/frost-build`, the user grants standing approval across sessions for
+requested routine issue, PR and branch maintenance. This includes local edits,
+tests and commits, ordinary pushes to the task branch, opening and updating a
+PR into `main`, rerunning CI, merging agent-authored or Dependabot PRs after
+their checks pass, closing resolved issues, and deleting their merged task
+branches. Verify the repository, refs, PR base and authorship, announce the
+batch, then carry it through without asking for confirmation again. The
+personal rules for external repositories, human-authored work, legal
+agreements and destructive administration continue to apply.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
