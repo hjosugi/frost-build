@@ -11,6 +11,13 @@ batch, then carry it through without asking for confirmation again. The
 personal rules for external repositories, human-authored work, legal
 agreements and destructive administration continue to apply.
 
+## Compact test output
+
+When RTK is installed, use `rtk cargo test` for routine local Rust checks.
+Run the same Cargo command directly when a failure needs its full diagnostic.
+Use the original command for benchmarks and the native Git and GitHub commands
+for remote writes.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
