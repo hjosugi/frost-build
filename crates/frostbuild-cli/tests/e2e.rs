@@ -5271,7 +5271,7 @@ fn assert_init_matches_snapshot(ws: &Workspace, language: &str, snapshot: &str) 
 
 #[test]
 fn init_rust_builds_directly_and_reruns_only_on_a_real_change() {
-    if cfg!(windows) || !language_tool_available("rustc") || !rust_toolchain_is_consistent() {
+    if !language_tool_available("rustc") || !rust_toolchain_is_consistent() {
         eprintln!("skipping Rust init E2E: a consistent rustc is required");
         return;
     }
@@ -5291,7 +5291,7 @@ fn init_rust_builds_directly_and_reruns_only_on_a_real_change() {
     let target = ws.dir.file_name().unwrap().to_str().unwrap().to_string();
     let (ok, out) = frost_in(&ws.dir, &["build"]);
     assert!(ok, "generated Rust manifest did not build:\n{out}");
-    let binary = ws.dir.join(".frost/out/debug").join(&target);
+    let binary = executable_path(ws.dir.join(".frost/out/debug").join(&target));
     let run = Command::new(&binary).output().expect("run rust artifact");
     assert_eq!(normalized_output(&run.stdout), "rust-init-ok 42\n");
 

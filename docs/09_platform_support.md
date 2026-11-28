@@ -153,10 +153,11 @@ Optional-tool E2E cases (Rust, Go, Java, Python, Node, `zig cc`, `fzf`, Kofun)
 skip when the tool is missing rather than failing, so a host without them still
 reports a meaningful result. The Java cases also skip when `javac` is newer than
 `java` on the host, because a class compiled there cannot be run at all — the
-macOS runner image is in that state. Rust similarly uses a compile-and-link
-probe; the Windows job omits that optional adapter because putting MinGW first
-for native-rule coverage shadows the MSVC `link.exe` required by its Rust
-toolchain.
+macOS runner image is in that state. Rust uses a compile-and-link probe.
+The Windows job keeps MinGW on PATH for native rules and exercises both a
+bare Rust scaffold and a Cargo-created Rust 2024 binary. Frost passes Visual
+Studio discovery and SDK settings to the compiler and records them in its
+action key.
 
 Windows runs the unit tests plus every host-reachable E2E, one at a time with
 unbuffered output. The current suite reaches 42 cases there; the difference from

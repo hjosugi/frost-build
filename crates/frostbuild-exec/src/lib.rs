@@ -70,15 +70,40 @@ use frostbuild_core::ENV_PASSTHROUGH;
 /// action key. `CPATH=/a` and `CPATH=/b` select different headers with an
 /// identical command line and identical declared inputs; without these in the
 /// key, frost hands back the binary built against the other one.
-const ENV_IN_KEY: &[&str] = &[
-    "SystemRoot",
-    "SDKROOT",
-    "MACOSX_DEPLOYMENT_TARGET",
-    "CPATH",
-    "C_INCLUDE_PATH",
-    "CPLUS_INCLUDE_PATH",
-    "LIBRARY_PATH",
-];
+fn key_env_names() -> impl Iterator<Item = &'static str> {
+    let common = [
+        "SystemRoot",
+        "SDKROOT",
+        "MACOSX_DEPLOYMENT_TARGET",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH",
+        "LIBRARY_PATH",
+    ];
+    // rustc discovers MSVC through Visual Studio Setup or vswhere, then
+    // launches the linker with the selected SDK and developer-prompt paths.
+    // Losing those settings can select an unrelated link.exe on PATH.
+    let msvc: &[&str] = if cfg!(windows) {
+        &[
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "VCINSTALLDIR",
+            "VSINSTALLDIR",
+            "VCToolsVersion",
+            "VSCMD_ARG_TGT_ARCH",
+            "VSCMD_ARG_VCVARS_SPECTRE",
+            "WindowsSdkDir",
+            "WindowsSDKVersion",
+            "LIB",
+            "LIBPATH",
+            "INCLUDE",
+        ]
+    } else {
+        &[]
+    };
+    common.into_iter().chain(msvc.iter().copied())
+}
 
 pub const DEFAULT_CAS_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
@@ -88,11 +113,10 @@ pub const DEFAULT_CAS_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const ACTION_KEY_SCHEMA: &str = "frost-action-key-v4";
 
 pub fn key_environment_snapshot() -> BTreeMap<String, String> {
-    ENV_IN_KEY
-        .iter()
+    key_env_names()
         .filter_map(|name| {
             std::env::var_os(name)
-                .map(|value| ((*name).to_string(), value.to_string_lossy().into_owned()))
+                .map(|value| (name.to_owned(), value.to_string_lossy().into_owned()))
         })
         .collect()
 }
@@ -244,7 +268,8 @@ impl<'a> Engine<'a> {
         let key_env = key_environment_snapshot();
         let command_env = ENV_PASSTHROUGH
             .iter()
-            .chain(ENV_IN_KEY)
+            .copied()
+            .chain(key_env_names())
             .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
             .collect();
         let uploader = opts
