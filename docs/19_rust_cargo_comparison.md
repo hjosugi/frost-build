@@ -31,7 +31,7 @@ supplies crate metadata, but their execution digest must match.
 Frontends run round-robin and reverse order on each iteration. Missing tools
 are recorded as `skipped`; compilation or validation errors are `failed`.
 
-## Checked result
+## July 2026 result
 
 The full report is
 `bench/baselines/2026-07-21-E14-rust.json`: 100 modules, 8 jobs,
@@ -63,8 +63,7 @@ binary byte digests differ, as expected and explicitly reported.
 
 ## What was won
 
-Frost wins this checked, dependency-free, single-crate binary contract in all
-three scenarios. The result shows that a direct crate boundary can preserve
+Frost won all three scenarios on the July host. The result shows that a direct crate boundary can preserve
 rustc incrementality while cutting frontend no-op and clean overhead.
 
 It is not yet a universal Rust win. The next Rust gates are a multi-crate
@@ -72,6 +71,13 @@ workspace with external dependencies, build scripts/features, test artifacts,
 diagnostic quality, IDE metadata and Windows/macOS evidence. A fair design
 should import Cargo metadata and let Cargo remain the dependency/package owner
 rather than cloning its private cache.
+
+## November 2026 repeat
+
+The Rust 1.95.0 repeat measured a faster warm no-op for Frost and a faster
+one-module edit for Cargo. Both produced the expected stdout after every
+sample. The host, compiler and scenario measurements appear in the
+[November comparison](05_benchmark_methodology.md#november-2026-maintenance-comparison).
 
 ## Reproduce
 

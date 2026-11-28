@@ -162,7 +162,13 @@ args = ["-m", "unittest", "discover", "-s", "tests"]
 # editing a script a change frost could not see, so the stage reported a cached
 # verdict for code it had never run. An undeclared input is the one bug an
 # incremental build tool cannot afford, and it was in its own manifest.
-inputs = ["frost.py", "tests/**/*.py", "scripts/**/*.py"]
+inputs = [
+  "frost.py",
+  "frost_bench.py",
+  "frost_bench_csharp.py",
+  "tests/**/*.py",
+  "scripts/**/*.py",
+]
 pass_env = ["HOME", "PATH"]
 sandbox = false
 lint_allow = ["volatile-pass-env"]
