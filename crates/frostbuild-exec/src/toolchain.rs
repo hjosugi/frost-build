@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use frostbuild_core::hashcache::FileIdentity;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -28,9 +29,11 @@ pub fn toolchain_fingerprint(cc: &str) -> Result<String> {
 /// Stat identity of the toolchain binaries that produced a fingerprint.
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ToolchainStamp {
-    pub(crate) tools: Vec<(String, i128, u64, u64)>,
+    pub(crate) tools: Vec<(String, FileIdentity)>,
     pub(crate) fingerprint: String,
 }
+
+pub(crate) const STAMP_MAGIC: &[u8; 8] = b"FRSTTC01";
 
 pub(crate) const TOOLCHAIN_STAMP_PATH: &str = ".frost/toolchain.bin";
 
@@ -100,14 +103,11 @@ pub fn toolchain_closure_fingerprint_cached_instrumented(
         } else {
             root.join(resolved)
         };
-        let stat = std::fs::metadata(&resolved)
-            .map(|m| stat_identity(&m))
-            .unwrap_or((0, 0, 0));
+        let metadata = std::fs::metadata(&resolved)
+            .with_context(|| format!("compiler {} not accessible", resolved.display()))?;
         tools.push((
             resolved.to_string_lossy().into_owned(),
-            stat.0,
-            stat.1,
-            stat.2,
+            FileIdentity::from(&metadata),
         ));
         resolved_paths.push((tool.clone(), resolved));
     }
@@ -115,7 +115,7 @@ pub fn toolchain_closure_fingerprint_cached_instrumented(
     let stamp_path = root.join(TOOLCHAIN_STAMP_PATH);
     if let Some(stamp) = std::fs::read(&stamp_path)
         .ok()
-        .and_then(|b| postcard::from_bytes::<ToolchainStamp>(&b).ok())
+        .and_then(|b| postcard::from_bytes::<ToolchainStamp>(b.strip_prefix(STAMP_MAGIC)?).ok())
     {
         if stamp.tools == tools {
             return Ok(stamp.fingerprint);
@@ -142,24 +142,11 @@ pub fn toolchain_closure_fingerprint_cached_instrumented(
         fingerprint: fingerprint.clone(),
     };
     let tmp = stamp_path.with_extension("bin.tmp");
-    std::fs::write(&tmp, postcard::to_allocvec(&stamp)?)?;
+    let mut bytes = STAMP_MAGIC.to_vec();
+    bytes.extend(postcard::to_allocvec(&stamp)?);
+    std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, &stamp_path)?;
     Ok(fingerprint)
-}
-
-#[cfg(unix)]
-fn stat_identity(meta: &std::fs::Metadata) -> (i128, u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (
-        i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()),
-        meta.size(),
-        meta.ino(),
-    )
-}
-
-#[cfg(not(unix))]
-fn stat_identity(meta: &std::fs::Metadata) -> (i128, u64, u64) {
-    (0, meta.len(), 0)
 }
 
 fn resolve_executable(tool: &str, declared_at: &str) -> Result<PathBuf> {

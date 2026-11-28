@@ -1783,6 +1783,8 @@ def clean_outputs(root: pathlib.Path) -> None:
 
 def clean_tool_outputs(root: pathlib.Path, spec: ToolSpec, *, cache: bool = False) -> None:
     if spec.name in ("frost", "frost-daemon"):
+        # The wide and packages graphs use out/. The linear fixture uses .frost/out/.
+        clean_outputs(root)
         frost_dir = root / ".frost"
         if cache and frost_dir.exists():
             shutil.rmtree(frost_dir)
@@ -1812,7 +1814,7 @@ def clean_tool_outputs(root: pathlib.Path, spec: ToolSpec, *, cache: bool = Fals
 
 def append_marker(path: pathlib.Path, marker: str) -> None:
     with path.open("a", encoding="utf-8") as file:
-        file.write(f"# {marker} {time.time_ns()}\n")
+        file.write(f"# {marker}\n")
 
 
 def tool_specs(names: list[str]) -> list[ToolSpec]:
@@ -3008,9 +3010,18 @@ def measure_tool(
         if spec.name in ("frost", "frost-daemon"):
             cache_hit_samples = []
             run_tool(root, spec, jobs)
+            output_dir = root / (".frost/out" if shape == "linear" else "out")
+            expected = {p.name: p.read_bytes() for p in output_dir.glob("*.out")}
+            expected_count = size if shape == "linear" else len(bench_graph_nodes(shape, size))
+            if len(expected) != expected_count:
+                raise RuntimeError(f"expected {expected_count} outputs before restore, found {len(expected)}")
             for _ in range(iterations):
                 clean_tool_outputs(root, spec, cache=False)
+                if any(output_dir.glob("*.out")):
+                    raise RuntimeError("benchmark cleanup left outputs in place")
                 cache_hit_samples.append(run_tool(root, spec, jobs))
+                if any((output_dir / name).read_bytes() != data for name, data in expected.items()):
+                    raise RuntimeError("restored output differs from the warm build")
             scenarios["cache_hit_rebuild"] = summarize(cache_hit_samples)
         elif spec.name == "bazel":
             # `--disk_cache` gives Bazel a content-addressed action cache to
@@ -3030,7 +3041,7 @@ def measure_tool(
             )
             scenarios["cache_hit_rebuild"] = scenario_not_applicable(reason)
 
-    return {
+    result = {
         "tool": spec.name,
         "version": tool_version(spec),
         "size": size,
@@ -3041,6 +3052,10 @@ def measure_tool(
         "graph": graph_contract(size) if shape == "linear" else bench_graph_contract(shape, size),
         "scenarios": scenarios,
     }
+    if shape != "linear" and any("samples_ms" in row for row in scenarios.values()):
+        artifact_root = root / "bazel-bin" if spec.name == "bazel" else root
+        result["output_sha256"] = hashlib.sha256((artifact_root / "out/all.out").read_bytes()).hexdigest()
+    return result
 
 
 BENCH_SHAPES = ("linear", "wide", "packages")
@@ -3135,6 +3150,7 @@ def bench_graph_contract(shape: str, size: int) -> dict[str, Any]:
     payload = json.dumps(edges, separators=(",", ":")).encode()
     return {
         "shape": shape,
+        "workload": "POSIX cksum of the concatenated prerequisite contents",
         "action_count": len(nodes),
         "dependency_edge_count": len(edges),
         "edge_digest_sha256": hashlib.sha256(payload).hexdigest(),
@@ -3156,6 +3172,7 @@ def generate_shape_workspace(root: pathlib.Path, shape: str, size: int) -> None:
     by_name = {node["name"]: node for node in nodes}
     root.mkdir(parents=True)
     (root / "include").mkdir()
+    (root / "out").mkdir()
     (root / "include/hot.h").write_text("HOT=1\n", encoding="utf-8")
     for node in nodes:
         if node["src"] is None:
@@ -3179,7 +3196,7 @@ def _bench_inputs(node: dict[str, Any], by_name: dict[str, dict[str, Any]]) -> l
 
 
 def bench_write_ninja(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: dict[str, Any]) -> None:
-    lines = ["rule stamp", "  command = printf '%s\\n' $out > $out", "  description = STAMP $out", ""]
+    lines = ["rule stamp", "  command = cat $in | cksum > $out", "  description = STAMP $out", ""]
     for node in nodes:
         lines.append(f"build {node['output']}: stamp {' '.join(_bench_inputs(node, by_name))}")
     lines.extend(["", f"build all: phony {by_name['all']['output']}", "default all", ""])
@@ -3190,7 +3207,7 @@ def bench_write_makefile(root: pathlib.Path, nodes: list[dict[str, Any]], by_nam
     lines = [".PHONY: all", f"all: {by_name['all']['output']}", ""]
     for node in nodes:
         lines.append(f"{node['output']}: {' '.join(_bench_inputs(node, by_name))}")
-        lines.append("\tprintf '%s\\n' $@ > $@")
+        lines.append("\tcat $^ | cksum > $@")
         lines.append("")
     (root / "Makefile").write_text("\n".join(lines), encoding="utf-8")
 
@@ -3200,11 +3217,9 @@ def bench_write_frost(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: 
     for node in nodes:
         lines.append(f"[target.{node['name']}]")
         lines.append('kind = "genrule"')
-        reads = []
         if node["src"] is not None:
             lines.append(f"inputs = {json.dumps([node['src'], 'include/hot.h'])}")
-            reads.append("${in}")
-        reads.extend("${dep:" + dep + "}" for dep in node["deps"])
+        reads = _bench_inputs(node, by_name)
         lines.append(f"cmd = \"cat {' '.join(reads)} | cksum > ${{out}}\"")
         lines.append(f"deps = {json.dumps(node['deps'])}")
         lines.append(f"outputs = {json.dumps([node['output']])}")
@@ -3226,7 +3241,7 @@ def bench_write_bazel(root: pathlib.Path, nodes: list[dict[str, Any]], by_name: 
                 f'    name = "{node["name"]}",',
                 "    srcs = [" + ", ".join(srcs) + "],",
                 f'    outs = ["{node["output"]}"],',
-                '    cmd = "cat $(SRCS) > $@",',
+                '    cmd = "cat $(SRCS) | cksum > $@",',
                 ")",
                 "",
             ]
@@ -3310,6 +3325,11 @@ def run_standard(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         if temp_context is not None and not args.keep_workdir:
             temp_context.cleanup()
+
+    for size in sizes:
+        digests = {row["output_sha256"] for row in results if row["size"] == size and "output_sha256" in row}
+        if len(digests) > 1:
+            raise RuntimeError(f"{shape} graph outputs differ between tools at size {size}")
 
     report = {
         "schema": SCHEMA,

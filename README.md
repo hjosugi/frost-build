@@ -353,16 +353,16 @@ partitions their project/task graph and keys declared boundary artifacts. See
 
 `frost init` writes that manifest for a directory that has none. It detects
 C/C++, Java, Rust, Go, TypeScript and Python, and it stops where another tool
-already owns the build: Cargo dependencies and build scripts, Go module
-requirements, npm dependencies/scripts, Python runtime dependencies, and
-Gradle/Maven project markers each produce a refusal that names the responsible
-file and a deliberate `--language` override. Native projects with Bazel or
-Ninja markers are directed to the corresponding importer instead of silently
-bypassing the existing graph.
+already owns the build. A standard, dependency-free Cargo binary inherits its
+declared Rust edition. Cargo workspaces, features, dependencies and build
+scripts get a `cargo build` diagnostic in both init modes. For Go module
+requirements, npm scripts, Python dependencies and Gradle/Maven markers, the
+diagnostic names the owning file and the explicit language override. Native
+Bazel and Ninja projects get a link to the corresponding import command.
 
 ```bash
 frost init                      # auto-detect, or refuse and say why
-frost init --language rust      # deliberate direct-tool override
+frost init --language rust      # select a standalone Rust binary in a mixed tree
 frost init --dry-run            # review the manifest without writing it
 ```
 
@@ -519,14 +519,11 @@ before timing. On the recorded E14 run, Frost was 3.17x faster for no-op and
 not a universal speed claim; the report also records a high starting load
 average and that Bazel had no external CAS configured.
 
-The current comparison (`bench/baselines/2026-09-27-issue-159-frost-bazel-*`)
-re-ran Frost against Bazel across `linear`, `wide` and `packages` shapes at
-1,000 and 2,000 targets, with Bazel's `--disk_cache` and `frost-daemon` both
-measured, recorded by the nightly `graph-shapes` job. Typical recorded shapes:
-Frost's no-op and one-leaf rebuilds stay in single-digit and tens of
-milliseconds while Bazel's are hundreds; a cold Bazel build is the slowest row,
-dominated by Bazelisk and server startup on the runner, which the report records
-rather than hides.
+The [November comparison](docs/05_benchmark_methodology.md#november-2026-maintenance-comparison)
+measures Frost, Cargo, Ninja and GNU Make and records the raw samples.
+It also corrects the September wide and multi-package fixtures, which ran
+different commands across tools and left Frost outputs in place during the
+restore measurement.
 
 The checked one-target warm no-op report rotates all paths over 31 samples:
 standalone CLI measured 2.043 ms, end-to-end daemon CLI 1.711 ms and the daemon

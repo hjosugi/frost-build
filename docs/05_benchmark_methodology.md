@@ -1,5 +1,86 @@
 # Benchmark methodology
 
+## November 2026 maintenance comparison
+
+Measurements used release builds on one Linux x86-64 Xeon E-2244G host with
+ext4. The Rust comparison pinned both frontends to rustc 1.95.0. Times below
+are wall-clock medians in milliseconds. The report includes the raw samples,
+output hashes, host configuration and cache-upgrade checks.
+[Measurement data](../bench/baselines/2026-11-28-incremental-and-init.json)
+
+| Workload | Frost | Cargo | Ninja 1.13.2 | GNU Make 4.4.1 |
+|---|---:|---:|---:|---:|
+| This repository, unchanged formatting check | 4.63 | 573.61 | — | — |
+| 100 Rust modules, clean | 177.75 | 207.89 | — | — |
+| Same crate, no change | 3.19 | 20.24 | — | — |
+| Same crate, one module edited | 193.36 | 129.85 | — | — |
+| 34 checksum actions, clean | 54.43 | — | 63.79 | 64.30 |
+| Same graph, no change | 3.09 | — | 1.60 | 4.34 |
+| Same graph, one leaf edited | 15.35 | — | 16.00 | 19.09 |
+| Same graph, shared header edited | 51.51 | — | 62.83 | 65.75 |
+| Same graph, restore all 34 removed outputs | 5.91 | — | — | — |
+
+For the real repository, `frost test fmt` caches a passing
+`cargo fmt --all -- --check` verdict. Seven paired runs alternated invocation
+order. After the measurements both commands rejected a deliberately unformatted
+source file and passed again after its original bytes were restored. This
+measures the time a developer saves on a repeated check. Cargo ran rustfmt each
+time. The separate build comparison used nine interleaved iterations, one
+dependency-free crate, the same compilation flags and exact executable stdout.
+
+The wide graph used four jobs, seven samples in each tool order and the median
+of all 14 samples per tool. Every action concatenated its prerequisites in the
+same order and computed a POSIX checksum. All three final output digests
+matched. The restoration timing includes rebuilding the output tree from an
+existing Frost cache. The harness checked all 34 files against the warm build.
+A separate three-leaf smoke run produced equal root artifacts with Bazel 7.6.0.
+
+These results support using Frost to reuse expensive check verdicts and restore
+known artifacts. A developer who recompiles this Rust crate on each edit gets a
+shorter wait with Cargo. Ninja had the lowest no-op latency on the checksum graph.
+
+### Initialization and old-cache verification
+
+For `frost init --dry-run`, v0.17.3 and the fixed CLI used the same release
+profile and lockfile. The source trees were warm and binary order alternated
+over 16 pairs. Output was byte-identical in every pair.
+
+| Sources | Mode | v0.17.3 | Fixed |
+|---|---|---:|---:|
+| 1 | automatic | 2.15 | 1.80 |
+| 1 | explicit native | 1.91 | 1.79 |
+| 10,000 | automatic | 46.10 | 11.58 |
+| 10,000 | explicit native | 11.76 | 11.40 |
+
+Linux inotify recorded 909 directory opens before and 101 after on the large
+fixture. Across 22 other auto and explicit invocations, stdout, stderr and exit
+status matched for the six source families, mixed languages, generated trees
+and build-tool markers. For the Cargo onboarding change, both init modes now
+build the Rust 2024 example from issue #308. In all three issue #307 upgrade
+cases the first fixed build read edited bytes with the old cache in place.
+
+### Python cache-restore budget
+
+Performance CI uses Linux tmpfs at `/dev/shm`, a warmed local CAS and two linked
+actions from the sample project. Each of 21 repetitions removes the output
+directory. The per-action timer begins before key calculation and stops after
+materialization. The gate requires the median of the 21 larger per-pair
+times to stay below 1 ms. CI uploads both action times for every repetition,
+including failed budget runs. The functional test checks the number of hits,
+the number of executions and the restored bytes.
+
+Three standalone batches measured 0.625, 0.570 and 0.565 ms. A batch run while
+compiling the Rust CLI reached 1.242 ms on the same tmpfs. Adding a 5 ms sleep
+to each `restore_from_cache` call raised the median to 6.015 ms and failed
+the gate. Run the performance job separately from CPU-intensive builds.
+
+```bash
+python3 scripts/bench_init.py --before /path/to/v0.17.3/frost --after target/release/frost --out init.json
+FROST_BIN=target/release/frost ./frost-bench rust --tools frost,cargo --size 100 --iterations 9 --jobs 4 --out rust.json
+FROST_BIN=target/release/frost ./frost-bench run --shape wide --tools frost,ninja,make --sizes 32 --iterations 7 --jobs 4 --out wide.json
+python3 scripts/bench_cache_restore.py --workdir /dev/shm --budget-ms 1 --out cache-restore.json
+```
+
 ## What to benchmark
 
 Do not only benchmark clean builds.
@@ -235,6 +316,11 @@ BAZEL_BIN=/path/to/bazel scripts/compare_bazel.sh
   --sizes 1000,2000 --iterations 3 --jobs 4 \
   --out bench/baselines/<date>-issue-159-frost-bazel-wide.json
 ```
+
+The September wide and packages fixtures used different action bodies across
+tools. Their Frost cache-restore samples left generated files in `out/` and
+timed an already-built tree. Use the [November measurements](#november-2026-maintenance-comparison)
+for comparisons of those operations.
 
 The reports are checked in as
 [`2026-09-27-issue-159-frost-bazel-{linear,wide,packages}.json`](../bench/baselines/)

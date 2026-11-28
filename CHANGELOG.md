@@ -5,6 +5,15 @@ All notable changes follow Keep a Changelog and Semantic Versioning. Before
 
 ## [Unreleased]
 
+### Fixed
+
+- Detect same-size Unix source and tool rewrites with preserved modification
+  times, including the first build with an older cache.
+- Scan each directory once during `frost init`. Carry the Cargo edition into
+  simple binary manifests and direct Cargo-owned builds to `cargo build`.
+- Suggest `frost query targets` when an unknown target has too many alternatives
+  to list in the diagnostic.
+
 ## [0.17.3] - 2026-11-21
 
 ### Changed

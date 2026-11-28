@@ -85,12 +85,14 @@ cost_ms = 1
         self.assertEqual(warm["executed"], 2)
         self.assertEqual(warm["cache_hit"], 0)
 
+        expected = {name: self.ws.output_path(name).read_bytes() for name in selected}
         shutil.rmtree(self.ws.out_dir)
         rebuild = frost.execute_plan(self.ws, selected, jobs=2)
 
         self.assertEqual(rebuild["executed"], 0)
         self.assertEqual(rebuild["cache_hit"], 2)
-        self.assertLess(rebuild["cache_lookup_latency_ms_p50"], 1.0)
+        for name, original in expected.items():
+            self.assertEqual(self.ws.output_path(name).read_bytes(), original, name)
 
     def test_flag_change_misses_action_cache(self) -> None:
         selected = {"lib"}

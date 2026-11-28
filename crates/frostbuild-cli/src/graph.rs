@@ -109,7 +109,7 @@ pub(crate) fn resolve_targets(graph: &BuildGraph, requested: Vec<String>) -> Res
             if known.len() > 12 {
                 bail!(
                     "unknown target {name:?}, and nothing similar. \
-                     {} targets are defined; run `frost query deps //...` to list them",
+                     {} targets are defined; run `frost query targets` to list them",
                     known.len()
                 );
             }

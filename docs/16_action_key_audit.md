@@ -23,6 +23,7 @@ a stated argument; rows marked **gap** are known holes with no defence.
 | Command-target `pass_env` | yes | The value or absence of every opted-in name joins both the action key and whole-build no-op certificate. Other host variables remain cleared. |
 | Command follow-up steps, reset directories and output-preservation mode | yes | Ordered direct argv, configuration-isolated `clean_dirs`, and `preserve_outputs` are tagged into the canonical action payload; every step's named tool is part of the toolchain fingerprint. |
 | `CPATH`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `SDKROOT`, `MACOSX_DEPLOYMENT_TARGET`, `SystemRoot` | yes | These choose which headers and libraries a compiler finds with an identical command line. |
+| Windows Visual Studio installation roots, toolset and SDK selectors, `LIB`, `LIBPATH`, `INCLUDE` | yes, on Windows | Rust uses these host settings to find the installed MSVC linker and its libraries. Changing their values invalidates a cached build. |
 | Working directory | yes | Recorded relative to the workspace root. |
 | Locale | n/a | Forced to `LC_ALL=C` and `LANG=C` for every action, so it cannot vary. |
 | Declared output paths | yes | Ordered paths are part of the v3 canonical payload. A changed output set cannot reuse an action result produced for the old set. |

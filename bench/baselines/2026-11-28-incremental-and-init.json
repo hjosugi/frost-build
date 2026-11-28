@@ -1,0 +1,1718 @@
+{
+  "date": "2026-11-28",
+  "cpu": "Intel Xeon E-2244G",
+  "workspace_filesystem": "ext4",
+  "base": "a593104c2d59c6b8967c2571168b8072e2be70a3",
+  "integrated_base": "8811026a2d6e167ccd2ed5a55e0ef8619a547424",
+  "integrated_binary_sha256": "d9d42d42718f4b548ee428fb413b23d39b269f67ab58e83771f4d97e76740800",
+  "init_same_lockfile": {
+    "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+    "binary_sha256": {
+      "before": "63db32d7ea94d812ca892fcd4feeed1bed585e37b6beb2cdc747df54c9ac076e",
+      "after": "e3209591f850533af23d4c70d71fe2ab94feab25d58a646016d93957bb028ada"
+    },
+    "cases": {
+      "1_auto": {
+        "samples_ms": {
+          "before": [
+            1.896857,
+            1.990247,
+            2.045528,
+            2.35439,
+            2.160088,
+            2.317964,
+            1.9886,
+            2.776097,
+            2.627995,
+            2.638581,
+            2.484029,
+            2.851016,
+            1.96508,
+            1.916259,
+            1.993531,
+            2.141663
+          ],
+          "after": [
+            1.807178,
+            1.70626,
+            1.796812,
+            1.697498,
+            1.748599,
+            1.892931,
+            1.838519,
+            2.275774,
+            2.298686,
+            2.267495,
+            2.240701,
+            2.530089,
+            1.766691,
+            1.731093,
+            1.771825,
+            1.682998
+          ]
+        },
+        "manifest_sha256": {
+          "after": "fdfbb74b62f71678003c30840bcb6373d884317f1172968e470fb7a8a65c118f",
+          "before": "fdfbb74b62f71678003c30840bcb6373d884317f1172968e470fb7a8a65c118f"
+        },
+        "median_ms": {
+          "before": 2.1508754999999997,
+          "after": 1.801995
+        }
+      },
+      "1_native": {
+        "samples_ms": {
+          "before": [
+            2.107461,
+            1.844738,
+            1.769355,
+            1.906714,
+            1.962249,
+            1.814513,
+            1.830058,
+            1.898289,
+            2.033764,
+            1.911914,
+            1.77692,
+            1.973245,
+            1.855599,
+            2.148527,
+            2.158139,
+            1.910166
+          ],
+          "after": [
+            1.8961,
+            1.827295,
+            1.762107,
+            1.78286,
+            1.85949,
+            1.67196,
+            1.736781,
+            1.639598,
+            2.040716,
+            1.927662,
+            1.843765,
+            1.886086,
+            1.718384,
+            1.802312,
+            1.714333,
+            1.751113
+          ]
+        },
+        "manifest_sha256": {
+          "after": "fdfbb74b62f71678003c30840bcb6373d884317f1172968e470fb7a8a65c118f",
+          "before": "fdfbb74b62f71678003c30840bcb6373d884317f1172968e470fb7a8a65c118f"
+        },
+        "median_ms": {
+          "before": 1.9084400000000001,
+          "after": 1.792586
+        }
+      },
+      "10000_auto": {
+        "samples_ms": {
+          "before": [
+            46.267266,
+            46.982026,
+            46.045464,
+            46.514698,
+            45.560779,
+            45.927274,
+            45.629124,
+            46.769531,
+            45.990448,
+            47.229963,
+            46.574569,
+            46.154561,
+            45.601489,
+            46.528056,
+            45.026281,
+            45.1093
+          ],
+          "after": [
+            11.447426,
+            11.400035,
+            11.952226,
+            12.049039,
+            11.926967,
+            11.711721,
+            11.412068,
+            12.23892,
+            11.469545,
+            12.129915,
+            11.687793,
+            12.230696,
+            11.257412,
+            11.252333,
+            11.199496,
+            11.279748
+          ]
+        },
+        "manifest_sha256": {
+          "after": "14193b290b44c6e50fb1bf93d84a61039e01d86100342d8251ffef6002756993",
+          "before": "14193b290b44c6e50fb1bf93d84a61039e01d86100342d8251ffef6002756993"
+        },
+        "median_ms": {
+          "before": 46.100012500000005,
+          "after": 11.578669
+        }
+      },
+      "10000_native": {
+        "samples_ms": {
+          "before": [
+            12.161508,
+            11.826731,
+            12.019403,
+            12.082951,
+            11.75158,
+            11.546055,
+            11.398881,
+            11.774214,
+            11.910492,
+            11.672884,
+            11.627907,
+            11.572895,
+            18.058824,
+            11.641414,
+            11.568639,
+            12.007749
+          ],
+          "after": [
+            11.254871,
+            12.06795,
+            11.603553,
+            11.217485,
+            11.117454,
+            11.884362,
+            12.293389,
+            11.482773,
+            11.555289,
+            11.483991,
+            11.241073,
+            11.170117,
+            11.253765,
+            11.33202,
+            11.4724,
+            11.239816
+          ]
+        },
+        "manifest_sha256": {
+          "after": "14193b290b44c6e50fb1bf93d84a61039e01d86100342d8251ffef6002756993",
+          "before": "14193b290b44c6e50fb1bf93d84a61039e01d86100342d8251ffef6002756993"
+        },
+        "median_ms": {
+          "before": 11.762897,
+          "after": 11.40221
+        }
+      }
+    }
+  },
+  "correctness": {
+    "init_fixtures": {
+      "native_auto": {
+        "code": 0,
+        "stdout_sha256": "62de2d27aecda814b6b2960cde87cafab8d65f845bf160e48fd312ce02b49c65",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "native_explicit": {
+        "code": 0,
+        "stdout_sha256": "62de2d27aecda814b6b2960cde87cafab8d65f845bf160e48fd312ce02b49c65",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "java_auto": {
+        "code": 0,
+        "stdout_sha256": "ef0a9284b0b70a877c70aa666fb3ecb8ee5a0461beb13bde62b807c8482bf2c4",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "java_explicit": {
+        "code": 0,
+        "stdout_sha256": "ef0a9284b0b70a877c70aa666fb3ecb8ee5a0461beb13bde62b807c8482bf2c4",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "rust_auto": {
+        "code": 0,
+        "stdout_sha256": "79bb2c2f6f081defab78a9e3b52cfc9a6a4103c57dca7a8e67a905f754349344",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "rust_explicit": {
+        "code": 0,
+        "stdout_sha256": "79bb2c2f6f081defab78a9e3b52cfc9a6a4103c57dca7a8e67a905f754349344",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "go_auto": {
+        "code": 0,
+        "stdout_sha256": "9447efb353fa187684dac32927d016cf7f8a12093e789fb2a545d25f82b30822",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "go_explicit": {
+        "code": 0,
+        "stdout_sha256": "9447efb353fa187684dac32927d016cf7f8a12093e789fb2a545d25f82b30822",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ts_auto": {
+        "code": 0,
+        "stdout_sha256": "54f2481150a935a8a101c3d53113b90f1284cedf6e9b2abe7db2c4b9073f3593",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ts_explicit": {
+        "code": 0,
+        "stdout_sha256": "54f2481150a935a8a101c3d53113b90f1284cedf6e9b2abe7db2c4b9073f3593",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "py_auto": {
+        "code": 0,
+        "stdout_sha256": "9c8fb7c20c31372a01a04ce6976c95c5afd2ee7167e5d4aa062339f2d57313a0",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "py_explicit": {
+        "code": 0,
+        "stdout_sha256": "9c8fb7c20c31372a01a04ce6976c95c5afd2ee7167e5d4aa062339f2d57313a0",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "mixed_auto": {
+        "code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "5a7f572ee3cd2c559f1455779f71deaa6cc45380f27685fa4b9f428184e3c59d"
+      },
+      "mixed_explicit": {
+        "code": 0,
+        "stdout_sha256": "63d231a5fc29759c180444bdf7892e404c465916725fecf20db75dee726536a1",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "gradle_auto": {
+        "code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "3d72206579a4a9f8ec532a05745fdc7ce77a3b00cd36db61966034a6b45b4df8"
+      },
+      "gradle_explicit": {
+        "code": 0,
+        "stdout_sha256": "7b4d28f18e5c2ea566e22d2551b91737f2026ec647791f233a330494cf88b6b0",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "bazel_auto": {
+        "code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "afb8dcced5f808f264e3b22018f68ffc0b1dc171e5bd6816870d3b10f16b668f"
+      },
+      "bazel_explicit": {
+        "code": 0,
+        "stdout_sha256": "35226d9edf6b8cb13f645a2bd6189191265af632f74c2e506d621bef3b92bc3e",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "ninja_auto": {
+        "code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "17d9099ec0dca67c21303d20715c2dfe4544040a9e0265f0958d1cebd6d73a64"
+      },
+      "ninja_explicit": {
+        "code": 0,
+        "stdout_sha256": "a7ae13c28d1da52d1eb2edfb89ee44a61fbac4484f1fc0a1d0534b48d5e9cb41",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "generated_auto": {
+        "code": 0,
+        "stdout_sha256": "ee5ed3e62c855f92d4af13a9d673f15cc2b5839dde66679640d13554954bcf84",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "generated_explicit": {
+        "code": 0,
+        "stdout_sha256": "ee5ed3e62c855f92d4af13a9d673f15cc2b5839dde66679640d13554954bcf84",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "upgrade": {
+      "default": {
+        "old_after_edit": "A",
+        "first_upgraded_build": "B",
+        "next_noop": true
+      },
+      "explicit": {
+        "old_after_edit": "A",
+        "first_upgraded_build": "B",
+        "next_noop": true
+      },
+      "tool": {
+        "old_after_edit": "A",
+        "first_upgraded_build": "B",
+        "next_noop": true
+      }
+    },
+    "directory_opens": {
+      "before": 909,
+      "after": 101
+    }
+  },
+  "self_fmt": {
+    "root_manifest": "frost.toml target.fmt",
+    "source_rust_files": 96,
+    "first_run_ms": {
+      "frost": 620.637237,
+      "cargo": 596.216757
+    },
+    "samples_ms": {
+      "frost": [
+        4.371097,
+        4.685115,
+        4.693897,
+        4.755455,
+        4.631995,
+        4.507652,
+        4.430193
+      ],
+      "cargo": [
+        558.901335,
+        550.482305,
+        566.182471,
+        573.605073,
+        642.89368,
+        649.951679,
+        628.95515
+      ]
+    },
+    "median_ms": {
+      "frost": 4.631995,
+      "cargo": 573.605073
+    },
+    "cached_summary": "frost: up to date \u00b7 1 of 6 actions \u00b7 0 ms\ntests: 0 passed, 0 failed, 1 cached",
+    "rejected_unformatted_edit": [
+      "frost",
+      "cargo"
+    ],
+    "accepted_restored_source": [
+      "frost",
+      "cargo"
+    ]
+  },
+  "rust": {
+    "config": {
+      "clean_policy": "delete the frontend output tree and its rustc incremental state; retain the Rust toolchain and Cargo registry",
+      "compiler": {
+        "path": "/home/hiro/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "version": "rustc 1.95.0 (59807616e 2026-04-14)"
+      },
+      "execution_order": "round-robin; reverse frontend order on every measured iteration",
+      "iterations": 9,
+      "jobs": 4,
+      "profile": {
+        "codegen_units": 256,
+        "debug_assertions": true,
+        "debuginfo": 0,
+        "edition": "2021",
+        "embed_bitcode": false,
+        "incremental": true,
+        "lto": false,
+        "opt_level": 0,
+        "overflow_checks": true,
+        "panic": "unwind",
+        "strip": "none"
+      },
+      "scenarios": [
+        "clean",
+        "noop",
+        "incremental_leaf"
+      ],
+      "size": 100,
+      "tools": [
+        "frost",
+        "cargo"
+      ],
+      "warm_policy": "retain each frontend's normal rustc incremental state for no-op and one-module-change samples"
+    },
+    "digest": "80af619e51ebcd5d3006b55b93374a347e5465175fa801a470995493a674c373",
+    "environment": {
+      "captured_at": "2026-11-28T12:28:15Z",
+      "cpu_count": 8,
+      "cpu_governor": "powersave",
+      "hostname": "nixos",
+      "load_avg": [
+        2.86962890625,
+        6.60400390625,
+        6.55078125
+      ],
+      "machine": "x86_64",
+      "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+      "processor": "",
+      "python": "3.13.18",
+      "turbo": "enabled"
+    },
+    "generated_at": "2026-11-28T12:28:22Z",
+    "graph": {
+      "compilation_boundary": "one rustc crate",
+      "contract_sha256": "047d751f1801750ebc7abcded54b34564b37bc6419007380373e5dd4705155af",
+      "initial_expected_stdout": "4950",
+      "language": "Rust",
+      "module_count": 100,
+      "same_source_graph": true,
+      "shape": "single-crate-module-set",
+      "source_count": 101
+    },
+    "output_equivalence": {
+      "artifact_digests": {
+        "cargo": "be93ad110e4ac9ec4e21bc699a9d0e07c61c76f73e3d0b1568e253a10edfa23e",
+        "frost": "d8910b50a6596dd811664a5dc8a0d4d57cdd9d39e0ef829841a36f1555915e69"
+      },
+      "byte_identical": false,
+      "comparison_unit": "successful execution, exit code 0, and exact stdout after every timed build; frontend-specific binary bytes may differ",
+      "semantic_digests": {
+        "cargo": "ab28bbaedd26bc73d9b81585939a018d6f99ad862b8d5d2abe06c5956c54f4ad",
+        "frost": "ab28bbaedd26bc73d9b81585939a018d6f99ad862b8d5d2abe06c5956c54f4ad"
+      },
+      "semantic_equal": true,
+      "validated_after_every_timed_build": true
+    },
+    "results": [
+      {
+        "artifact": {
+          "artifact_bytes": 4364808,
+          "artifact_sha256": "d8910b50a6596dd811664a5dc8a0d4d57cdd9d39e0ef829841a36f1555915e69",
+          "semantic_sha256": "ab28bbaedd26bc73d9b81585939a018d6f99ad862b8d5d2abe06c5956c54f4ad",
+          "stdout": "4959"
+        },
+        "compiler_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+        "configuration": {
+          "configuration_bytes": 646,
+          "configuration_lines": 13,
+          "declared_compilation_partitions": 1,
+          "files": [
+            "frost.toml"
+          ],
+          "one_source_change_compiler_scope": "rustc incremental query graph for one crate"
+        },
+        "iterations": 9,
+        "jobs": 4,
+        "module_count": 100,
+        "observed_summaries": [
+          "frost: 1 built \u00b7 1 actions \u00b7 188 ms",
+          "frost: 1 built \u00b7 1 actions \u00b7 187 ms",
+          "frost: 1 built \u00b7 1 actions \u00b7 188 ms"
+        ],
+        "scenarios": {
+          "clean": {
+            "max_ms": 185.237,
+            "median_ms": 177.751,
+            "min_ms": 171.92,
+            "samples_ms": [
+              173.001,
+              178.377,
+              173.353,
+              174.193,
+              181.259,
+              171.92,
+              177.751,
+              178.367,
+              185.237
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 195.289,
+            "median_ms": 193.364,
+            "min_ms": 179.717,
+            "samples_ms": [
+              179.717,
+              194.147,
+              195.289,
+              187.595,
+              188.544,
+              195.259,
+              193.465,
+              191.517,
+              193.364
+            ]
+          },
+          "noop": {
+            "max_ms": 3.334,
+            "median_ms": 3.186,
+            "min_ms": 3.052,
+            "samples_ms": [
+              3.249,
+              3.18,
+              3.186,
+              3.262,
+              3.143,
+              3.334,
+              3.052,
+              3.226,
+              3.135
+            ]
+          }
+        },
+        "size": 100,
+        "source_count": 101,
+        "status": "ok",
+        "tool": "frost",
+        "version": "frost 0.17.3"
+      },
+      {
+        "artifact": {
+          "artifact_bytes": 4364808,
+          "artifact_sha256": "be93ad110e4ac9ec4e21bc699a9d0e07c61c76f73e3d0b1568e253a10edfa23e",
+          "semantic_sha256": "ab28bbaedd26bc73d9b81585939a018d6f99ad862b8d5d2abe06c5956c54f4ad",
+          "stdout": "4959"
+        },
+        "compiler_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+        "configuration": {
+          "configuration_bytes": 240,
+          "configuration_lines": 15,
+          "declared_compilation_partitions": 1,
+          "files": [
+            "Cargo.toml"
+          ],
+          "generated_files_excluded_from_configuration_size": [
+            "Cargo.lock"
+          ],
+          "one_source_change_compiler_scope": "rustc incremental query graph for one crate"
+        },
+        "iterations": 9,
+        "jobs": 4,
+        "module_count": 100,
+        "observed_summaries": [],
+        "scenarios": {
+          "clean": {
+            "max_ms": 223.462,
+            "median_ms": 207.89,
+            "min_ms": 196.924,
+            "samples_ms": [
+              207.89,
+              203.765,
+              204.269,
+              208.805,
+              196.924,
+              199.501,
+              223.462,
+              210.426,
+              214.523
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 135.378,
+            "median_ms": 129.854,
+            "min_ms": 127.54,
+            "samples_ms": [
+              135.378,
+              127.642,
+              128.519,
+              127.54,
+              129.331,
+              129.854,
+              133.921,
+              131.584,
+              133.815
+            ]
+          },
+          "noop": {
+            "max_ms": 23.492,
+            "median_ms": 20.237,
+            "min_ms": 19.972,
+            "samples_ms": [
+              23.492,
+              21.196,
+              20.143,
+              21.172,
+              20.237,
+              20.204,
+              20.522,
+              19.972,
+              20.157
+            ]
+          }
+        },
+        "size": 100,
+        "source_count": 101,
+        "status": "ok",
+        "tool": "cargo",
+        "version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+      }
+    ],
+    "schema": "frost-bench-rust-v1",
+    "suite": "rust"
+  },
+  "wide_forward": {
+    "config": {
+      "iterations": 7,
+      "jobs": 4,
+      "scenarios": [
+        "clean",
+        "noop",
+        "incremental_leaf",
+        "hot_header",
+        "cache_hit_rebuild"
+      ],
+      "shape": "wide",
+      "sizes": [
+        32
+      ],
+      "tools": [
+        "frost",
+        "ninja",
+        "make"
+      ]
+    },
+    "digest": "906ea0d817ac94667a71a3bd1108bb42b9267d7f1fc68be578571b4744e4d265",
+    "environment": {
+      "captured_at": "2026-11-28T12:28:08Z",
+      "cpu_count": 8,
+      "cpu_governor": "powersave",
+      "hostname": "nixos",
+      "load_avg": [
+        2.77099609375,
+        6.6484375,
+        6.56494140625
+      ],
+      "machine": "x86_64",
+      "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+      "processor": "",
+      "python": "3.13.18",
+      "turbo": "enabled"
+    },
+    "generated_at": "2026-11-28T12:28:11Z",
+    "results": [
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "max_ms": 7.718,
+            "median_ms": 6.029,
+            "min_ms": 5.375,
+            "samples_ms": [
+              6.616,
+              6.029,
+              5.471,
+              7.718,
+              5.375,
+              6.47,
+              5.686
+            ]
+          },
+          "clean": {
+            "max_ms": 61.675,
+            "median_ms": 55.082,
+            "min_ms": 52.464,
+            "samples_ms": [
+              54.623,
+              57.179,
+              54.049,
+              55.082,
+              61.675,
+              52.464,
+              55.253
+            ]
+          },
+          "hot_header": {
+            "max_ms": 57.649,
+            "median_ms": 53.753,
+            "min_ms": 50.257,
+            "samples_ms": [
+              53.753,
+              56.626,
+              50.863,
+              57.649,
+              55.194,
+              50.257,
+              51.68
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 16.627,
+            "median_ms": 15.295,
+            "min_ms": 14.68,
+            "samples_ms": [
+              15.847,
+              14.68,
+              14.986,
+              15.295,
+              15.401,
+              15.253,
+              16.627
+            ]
+          },
+          "noop": {
+            "max_ms": 4.845,
+            "median_ms": 3.06,
+            "min_ms": 2.816,
+            "samples_ms": [
+              3.38,
+              4.845,
+              3.696,
+              2.855,
+              2.816,
+              2.895,
+              3.06
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "frost",
+        "version": "frost 0.17.3"
+      },
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "applicable": false,
+            "reason": "ninja has no content-addressed action cache in this harness"
+          },
+          "clean": {
+            "max_ms": 65.811,
+            "median_ms": 63.788,
+            "min_ms": 61.573,
+            "samples_ms": [
+              62.213,
+              61.733,
+              61.573,
+              63.788,
+              63.793,
+              63.904,
+              65.811
+            ]
+          },
+          "hot_header": {
+            "max_ms": 67.957,
+            "median_ms": 63.581,
+            "min_ms": 60.839,
+            "samples_ms": [
+              61.872,
+              67.957,
+              66.531,
+              63.581,
+              60.839,
+              60.874,
+              67.129
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 16.55,
+            "median_ms": 15.864,
+            "min_ms": 15.016,
+            "samples_ms": [
+              16.486,
+              15.31,
+              15.864,
+              15.016,
+              16.133,
+              16.55,
+              15.622
+            ]
+          },
+          "noop": {
+            "max_ms": 2.041,
+            "median_ms": 1.628,
+            "min_ms": 1.435,
+            "samples_ms": [
+              1.705,
+              1.75,
+              1.56,
+              1.435,
+              1.566,
+              1.628,
+              2.041
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "ninja",
+        "version": "1.13.2"
+      },
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "applicable": false,
+            "reason": "make has no content-addressed action cache in this harness"
+          },
+          "clean": {
+            "max_ms": 70.804,
+            "median_ms": 65.038,
+            "min_ms": 61.855,
+            "samples_ms": [
+              70.804,
+              64.096,
+              62.462,
+              68.741,
+              61.855,
+              65.038,
+              66.337
+            ]
+          },
+          "hot_header": {
+            "max_ms": 68.53,
+            "median_ms": 65.271,
+            "min_ms": 61.649,
+            "samples_ms": [
+              66.105,
+              63.728,
+              61.649,
+              66.14,
+              63.771,
+              65.271,
+              68.53
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 21.219,
+            "median_ms": 19.146,
+            "min_ms": 16.627,
+            "samples_ms": [
+              21.219,
+              20.362,
+              19.616,
+              17.67,
+              16.627,
+              17.517,
+              19.146
+            ]
+          },
+          "noop": {
+            "max_ms": 5.27,
+            "median_ms": 4.327,
+            "min_ms": 4.131,
+            "samples_ms": [
+              4.131,
+              5.27,
+              4.179,
+              4.327,
+              4.328,
+              4.186,
+              4.97
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "make",
+        "version": "GNU Make 4.4.1"
+      }
+    ],
+    "schema": "frost-bench-standard-v2",
+    "suite": "standard"
+  },
+  "wide_reverse": {
+    "config": {
+      "iterations": 7,
+      "jobs": 4,
+      "scenarios": [
+        "clean",
+        "noop",
+        "incremental_leaf",
+        "hot_header",
+        "cache_hit_rebuild"
+      ],
+      "shape": "wide",
+      "sizes": [
+        32
+      ],
+      "tools": [
+        "make",
+        "ninja",
+        "frost"
+      ]
+    },
+    "digest": "7b6c58c7893c8000e95be7f77ab32641876b1c0bbcddfe1b7a8b52915bb13a63",
+    "environment": {
+      "captured_at": "2026-11-28T12:28:11Z",
+      "cpu_count": 8,
+      "cpu_governor": "powersave",
+      "hostname": "nixos",
+      "load_avg": [
+        2.86962890625,
+        6.60400390625,
+        6.55078125
+      ],
+      "machine": "x86_64",
+      "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+      "processor": "",
+      "python": "3.13.18",
+      "turbo": "enabled"
+    },
+    "generated_at": "2026-11-28T12:28:15Z",
+    "results": [
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "applicable": false,
+            "reason": "make has no content-addressed action cache in this harness"
+          },
+          "clean": {
+            "max_ms": 69.406,
+            "median_ms": 63.281,
+            "min_ms": 60.055,
+            "samples_ms": [
+              64.511,
+              60.696,
+              63.281,
+              69.406,
+              69.12,
+              60.967,
+              60.055
+            ]
+          },
+          "hot_header": {
+            "max_ms": 84.46,
+            "median_ms": 73.452,
+            "min_ms": 62.926,
+            "samples_ms": [
+              65.396,
+              64.8,
+              62.926,
+              84.46,
+              82.376,
+              80.096,
+              73.452
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 20.683,
+            "median_ms": 19.028,
+            "min_ms": 18.342,
+            "samples_ms": [
+              18.355,
+              19.498,
+              20.683,
+              20.173,
+              18.876,
+              18.342,
+              19.028
+            ]
+          },
+          "noop": {
+            "max_ms": 5.082,
+            "median_ms": 4.44,
+            "min_ms": 4.167,
+            "samples_ms": [
+              5.082,
+              4.44,
+              4.804,
+              4.327,
+              4.341,
+              4.82,
+              4.167
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "make",
+        "version": "GNU Make 4.4.1"
+      },
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "applicable": false,
+            "reason": "ninja has no content-addressed action cache in this harness"
+          },
+          "clean": {
+            "max_ms": 65.642,
+            "median_ms": 63.999,
+            "min_ms": 61.729,
+            "samples_ms": [
+              61.729,
+              62.34,
+              63.044,
+              64.297,
+              63.999,
+              65.642,
+              64.44
+            ]
+          },
+          "hot_header": {
+            "max_ms": 74.864,
+            "median_ms": 62.798,
+            "min_ms": 58.884,
+            "samples_ms": [
+              61.565,
+              62.869,
+              74.864,
+              62.798,
+              58.884,
+              61.046,
+              63.962
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 18.894,
+            "median_ms": 16.333,
+            "min_ms": 15.306,
+            "samples_ms": [
+              18.894,
+              16.333,
+              15.558,
+              15.306,
+              17.038,
+              17.114,
+              15.715
+            ]
+          },
+          "noop": {
+            "max_ms": 2.572,
+            "median_ms": 1.561,
+            "min_ms": 1.46,
+            "samples_ms": [
+              2.572,
+              1.829,
+              1.647,
+              1.538,
+              1.561,
+              1.558,
+              1.46
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "ninja",
+        "version": "1.13.2"
+      },
+      {
+        "graph": {
+          "action_count": 34,
+          "dependency_edge_count": 33,
+          "edge_digest_sha256": "4f5f80429d6b0f1f556fb99121b48587dac69ea9dab6bd21b747d9ba21c0f7f2",
+          "manifests_verified_equivalent": true,
+          "per_action_source_inputs": [
+            "<package>/src/nodeNNNNN.txt",
+            "include/hot.h"
+          ],
+          "shape": "wide",
+          "workload": "POSIX cksum of the concatenated prerequisite contents"
+        },
+        "iterations": 7,
+        "jobs": 4,
+        "output_sha256": "2a6ef9ccb53e83c309fb40c2434c439b2a800ffa97d1cb216d5eb43aad4285bb",
+        "scenarios": {
+          "cache_hit_rebuild": {
+            "max_ms": 6.974,
+            "median_ms": 5.836,
+            "min_ms": 5.438,
+            "samples_ms": [
+              6.287,
+              5.438,
+              5.988,
+              5.836,
+              5.699,
+              5.603,
+              6.974
+            ]
+          },
+          "clean": {
+            "max_ms": 57.273,
+            "median_ms": 53.353,
+            "min_ms": 50.154,
+            "samples_ms": [
+              52.945,
+              50.62,
+              55.781,
+              57.273,
+              54.237,
+              50.154,
+              53.353
+            ]
+          },
+          "hot_header": {
+            "max_ms": 51.899,
+            "median_ms": 51.326,
+            "min_ms": 50.001,
+            "samples_ms": [
+              50.368,
+              50.001,
+              50.701,
+              51.566,
+              51.899,
+              51.326,
+              51.456
+            ]
+          },
+          "incremental_leaf": {
+            "max_ms": 16.305,
+            "median_ms": 15.449,
+            "min_ms": 13.952,
+            "samples_ms": [
+              15.283,
+              15.9,
+              13.952,
+              16.305,
+              14.78,
+              16.238,
+              15.449
+            ]
+          },
+          "noop": {
+            "max_ms": 3.567,
+            "median_ms": 3.123,
+            "min_ms": 2.817,
+            "samples_ms": [
+              3.134,
+              3.123,
+              2.973,
+              2.975,
+              3.567,
+              3.461,
+              2.817
+            ]
+          }
+        },
+        "size": 32,
+        "status": "ok",
+        "target_count": 32,
+        "tool": "frost",
+        "version": "frost 0.17.3"
+      }
+    ],
+    "schema": "frost-bench-standard-v2",
+    "suite": "standard"
+  },
+  "bazel_artifact_check": {
+    "frost": "82df843c2a0a779609fc6833fd7fdd677f8ffad8a324f298014cae7d646f9e61",
+    "bazel": "82df843c2a0a779609fc6833fd7fdd677f8ffad8a324f298014cae7d646f9e61"
+  },
+  "python_restore": {
+    "during_release_build": {
+      "filesystem": "tmpfs",
+      "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+      "python": "3.13.18",
+      "jobs": 2,
+      "samples_ms": [
+        {
+          "pkg00_mod06": 1.7348869587294757,
+          "pkg00_mod07": 0.8329030242748559
+        },
+        {
+          "pkg00_mod06": 1.1004969710484147,
+          "pkg00_mod07": 0.8063319837674499
+        },
+        {
+          "pkg00_mod06": 3.0411049956455827,
+          "pkg00_mod07": 0.8440699893981218
+        },
+        {
+          "pkg00_mod06": 1.1126339668408036,
+          "pkg00_mod07": 2.760116010904312
+        },
+        {
+          "pkg00_mod06": 1.1122810537926853,
+          "pkg00_mod07": 1.3519360218197107
+        },
+        {
+          "pkg00_mod06": 4.056406032759696,
+          "pkg00_mod07": 0.7537769852206111
+        },
+        {
+          "pkg00_mod06": 2.679429017007351,
+          "pkg00_mod07": 0.7743180030956864
+        },
+        {
+          "pkg00_mod06": 1.0219569667242467,
+          "pkg00_mod07": 0.8389640133827925
+        },
+        {
+          "pkg00_mod06": 1.1776280007325113,
+          "pkg00_mod07": 2.0043060067109764
+        },
+        {
+          "pkg00_mod06": 1.6475619631819427,
+          "pkg00_mod07": 0.8090960327535868
+        },
+        {
+          "pkg00_mod06": 1.1606059852056205,
+          "pkg00_mod07": 0.7614960195496678
+        },
+        {
+          "pkg00_mod06": 1.0768870124593377,
+          "pkg00_mod07": 0.8509180042892694
+        },
+        {
+          "pkg00_mod06": 1.0148650035262108,
+          "pkg00_mod07": 0.9205289534293115
+        },
+        {
+          "pkg00_mod06": 1.2072910321876407,
+          "pkg00_mod07": 0.8533739601261914
+        },
+        {
+          "pkg00_mod06": 5.105310003273189,
+          "pkg00_mod07": 0.7334940019063652
+        },
+        {
+          "pkg00_mod06": 1.0509829735383391,
+          "pkg00_mod07": 0.9073659894056618
+        },
+        {
+          "pkg00_mod06": 1.2415879755280912,
+          "pkg00_mod07": 0.9181140339933336
+        },
+        {
+          "pkg00_mod06": 1.0140799568034708,
+          "pkg00_mod07": 3.9620940224267542
+        },
+        {
+          "pkg00_mod06": 1.024323981255293,
+          "pkg00_mod07": 0.849578995257616
+        },
+        {
+          "pkg00_mod06": 0.9332529734820127,
+          "pkg00_mod07": 0.990631990134716
+        },
+        {
+          "pkg00_mod06": 0.9896910050883889,
+          "pkg00_mod07": 0.7642790442332625
+        }
+      ],
+      "median_pair_max_ms": 1.2415879755280912,
+      "budget_ms": 1.0
+    },
+    "standalone": [
+      {
+        "filesystem": "tmpfs",
+        "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+        "python": "3.13.18",
+        "jobs": 2,
+        "samples_ms": [
+          {
+            "pkg00_mod06": 0.48689701361581683,
+            "pkg00_mod07": 0.5200880113989115
+          },
+          {
+            "pkg00_mod06": 0.665482017211616,
+            "pkg00_mod07": 0.4810910322703421
+          },
+          {
+            "pkg00_mod06": 0.4632730269804597,
+            "pkg00_mod07": 0.46407501213252544
+          },
+          {
+            "pkg00_mod06": 0.6247630226425827,
+            "pkg00_mod07": 0.5139309796504676
+          },
+          {
+            "pkg00_mod06": 0.5673129926435649,
+            "pkg00_mod07": 0.4795709974132478
+          },
+          {
+            "pkg00_mod06": 0.538697000592947,
+            "pkg00_mod07": 0.522330985404551
+          },
+          {
+            "pkg00_mod06": 0.5087860045023263,
+            "pkg00_mod07": 0.6998340249992907
+          },
+          {
+            "pkg00_mod06": 0.4601370310410857,
+            "pkg00_mod07": 0.46982994535937905
+          },
+          {
+            "pkg00_mod06": 0.5948070320300758,
+            "pkg00_mod07": 0.4959660000167787
+          },
+          {
+            "pkg00_mod06": 0.44853397412225604,
+            "pkg00_mod07": 0.5155560211278498
+          },
+          {
+            "pkg00_mod06": 0.7009720429778099,
+            "pkg00_mod07": 0.5151759833097458
+          },
+          {
+            "pkg00_mod06": 0.8689219830557704,
+            "pkg00_mod07": 0.7670070044696331
+          },
+          {
+            "pkg00_mod06": 0.7641730480827391,
+            "pkg00_mod07": 0.9570450056344271
+          },
+          {
+            "pkg00_mod06": 0.7974049658514559,
+            "pkg00_mod07": 0.6399870035238564
+          },
+          {
+            "pkg00_mod06": 0.6756120128557086,
+            "pkg00_mod07": 0.4466840182431042
+          },
+          {
+            "pkg00_mod06": 0.43975398875772953,
+            "pkg00_mod07": 0.4547710414044559
+          },
+          {
+            "pkg00_mod06": 0.8050759788602591,
+            "pkg00_mod07": 0.7460439810529351
+          },
+          {
+            "pkg00_mod06": 0.6649849819950759,
+            "pkg00_mod07": 0.8217820432037115
+          },
+          {
+            "pkg00_mod06": 0.43761200504377484,
+            "pkg00_mod07": 0.4949999856762588
+          },
+          {
+            "pkg00_mod06": 0.4766880301758647,
+            "pkg00_mod07": 0.47223601723089814
+          },
+          {
+            "pkg00_mod06": 0.6839779671281576,
+            "pkg00_mod07": 0.6098679732531309
+          }
+        ],
+        "median_pair_max_ms": 0.6247630226425827,
+        "budget_ms": 1.0
+      },
+      {
+        "filesystem": "tmpfs",
+        "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+        "python": "3.13.18",
+        "jobs": 2,
+        "samples_ms": [
+          {
+            "pkg00_mod06": 0.45237602898851037,
+            "pkg00_mod07": 0.45751797733828425
+          },
+          {
+            "pkg00_mod06": 0.9476980194449425,
+            "pkg00_mod07": 0.886377994902432
+          },
+          {
+            "pkg00_mod06": 0.46345998998731375,
+            "pkg00_mod07": 0.5703010247088969
+          },
+          {
+            "pkg00_mod06": 0.852193043101579,
+            "pkg00_mod07": 0.9217269835062325
+          },
+          {
+            "pkg00_mod06": 0.76998898293823,
+            "pkg00_mod07": 0.9748280281201005
+          },
+          {
+            "pkg00_mod06": 0.8035050122998655,
+            "pkg00_mod07": 0.5570579669438303
+          },
+          {
+            "pkg00_mod06": 0.4577009822241962,
+            "pkg00_mod07": 0.42837602086365223
+          },
+          {
+            "pkg00_mod06": 0.4423760110512376,
+            "pkg00_mod07": 0.4790829843841493
+          },
+          {
+            "pkg00_mod06": 1.0267929756082594,
+            "pkg00_mod07": 0.7388109806925058
+          },
+          {
+            "pkg00_mod06": 0.6780980038456619,
+            "pkg00_mod07": 0.4822100163437426
+          },
+          {
+            "pkg00_mod06": 0.450588995590806,
+            "pkg00_mod07": 0.6841870490461588
+          },
+          {
+            "pkg00_mod06": 0.4695569514296949,
+            "pkg00_mod07": 0.5312560242600739
+          },
+          {
+            "pkg00_mod06": 0.4505530232563615,
+            "pkg00_mod07": 0.42917695827782154
+          },
+          {
+            "pkg00_mod06": 0.7592650363221765,
+            "pkg00_mod07": 0.6549429963342845
+          },
+          {
+            "pkg00_mod06": 0.5278859753161669,
+            "pkg00_mod07": 0.5608399515040219
+          },
+          {
+            "pkg00_mod06": 0.8632630342617631,
+            "pkg00_mod07": 0.8294560248032212
+          },
+          {
+            "pkg00_mod06": 0.5570609937421978,
+            "pkg00_mod07": 0.526734977029264
+          },
+          {
+            "pkg00_mod06": 0.4575100028887391,
+            "pkg00_mod07": 0.5885610007680953
+          },
+          {
+            "pkg00_mod06": 0.48765999963507056,
+            "pkg00_mod07": 0.48544100718572736
+          },
+          {
+            "pkg00_mod06": 0.48614596016705036,
+            "pkg00_mod07": 0.4668500041589141
+          },
+          {
+            "pkg00_mod06": 0.4382769693620503,
+            "pkg00_mod07": 0.4780470044352114
+          }
+        ],
+        "median_pair_max_ms": 0.5703010247088969,
+        "budget_ms": 1.0
+      },
+      {
+        "filesystem": "tmpfs",
+        "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+        "python": "3.13.18",
+        "jobs": 2,
+        "samples_ms": [
+          {
+            "pkg00_mod06": 0.7551049930043519,
+            "pkg00_mod07": 0.8103050058707595
+          },
+          {
+            "pkg00_mod06": 0.45522500295192003,
+            "pkg00_mod07": 0.48310798592865467
+          },
+          {
+            "pkg00_mod06": 0.45041495468467474,
+            "pkg00_mod07": 0.4779790178872645
+          },
+          {
+            "pkg00_mod06": 0.5167769850231707,
+            "pkg00_mod07": 0.5652320105582476
+          },
+          {
+            "pkg00_mod06": 0.4634290235117078,
+            "pkg00_mod07": 0.5141100264154375
+          },
+          {
+            "pkg00_mod06": 0.9953100234270096,
+            "pkg00_mod07": 0.6889950018376112
+          },
+          {
+            "pkg00_mod06": 0.4413509741425514,
+            "pkg00_mod07": 0.4553829785436392
+          },
+          {
+            "pkg00_mod06": 0.6226930418051779,
+            "pkg00_mod07": 0.7042569923214614
+          },
+          {
+            "pkg00_mod06": 0.549193995539099,
+            "pkg00_mod07": 0.7320769946090877
+          },
+          {
+            "pkg00_mod06": 0.5523209692910314,
+            "pkg00_mod07": 0.49715995555743575
+          },
+          {
+            "pkg00_mod06": 0.4317639977671206,
+            "pkg00_mod07": 0.45965402387082577
+          },
+          {
+            "pkg00_mod06": 0.46630401629954576,
+            "pkg00_mod07": 0.45974203385412693
+          },
+          {
+            "pkg00_mod06": 0.892698997631669,
+            "pkg00_mod07": 0.8315070299431682
+          },
+          {
+            "pkg00_mod06": 0.4439459880813956,
+            "pkg00_mod07": 0.5129520432092249
+          },
+          {
+            "pkg00_mod06": 0.44990197056904435,
+            "pkg00_mod07": 0.5342249642126262
+          },
+          {
+            "pkg00_mod06": 0.8319140179082751,
+            "pkg00_mod07": 1.1033450136892498
+          },
+          {
+            "pkg00_mod06": 0.46244304394349456,
+            "pkg00_mod07": 0.4617369850166142
+          },
+          {
+            "pkg00_mod06": 0.48357201740145683,
+            "pkg00_mod07": 0.6893769605085254
+          },
+          {
+            "pkg00_mod06": 0.5556410178542137,
+            "pkg00_mod07": 0.5895579815842211
+          },
+          {
+            "pkg00_mod06": 0.8327799732796848,
+            "pkg00_mod07": 0.42522704461589456
+          },
+          {
+            "pkg00_mod06": 0.5337189650163054,
+            "pkg00_mod07": 0.6530479877255857
+          }
+        ],
+        "median_pair_max_ms": 0.5652320105582476,
+        "budget_ms": 1.0
+      }
+    ],
+    "injected_5ms": {
+      "filesystem": "tmpfs",
+      "platform": "Linux-6.18.63-x86_64-with-glibc2.42",
+      "python": "3.13.18",
+      "jobs": 2,
+      "samples_ms": [
+        {
+          "pkg00_mod06": 5.894696980249137,
+          "pkg00_mod07": 5.621010030154139
+        },
+        {
+          "pkg00_mod06": 5.969259014818817,
+          "pkg00_mod07": 5.653472966514528
+        },
+        {
+          "pkg00_mod06": 6.094546988606453,
+          "pkg00_mod07": 5.633317981846631
+        },
+        {
+          "pkg00_mod06": 5.687060998752713,
+          "pkg00_mod07": 5.5938970181159675
+        },
+        {
+          "pkg00_mod06": 5.955010012257844,
+          "pkg00_mod07": 5.677083972841501
+        },
+        {
+          "pkg00_mod06": 5.760009051300585,
+          "pkg00_mod07": 5.662860989104956
+        },
+        {
+          "pkg00_mod06": 6.020318018272519,
+          "pkg00_mod07": 5.667074001394212
+        },
+        {
+          "pkg00_mod06": 5.7162000448442996,
+          "pkg00_mod07": 6.070400006137788
+        },
+        {
+          "pkg00_mod06": 6.014521990437061,
+          "pkg00_mod07": 5.788667011074722
+        },
+        {
+          "pkg00_mod06": 5.6769169750623405,
+          "pkg00_mod07": 5.930002953391522
+        },
+        {
+          "pkg00_mod06": 5.744325986597687,
+          "pkg00_mod07": 5.8654649765230715
+        },
+        {
+          "pkg00_mod06": 5.86331298109144,
+          "pkg00_mod07": 6.0355940368026495
+        },
+        {
+          "pkg00_mod06": 6.17845100350678,
+          "pkg00_mod07": 5.999827000778168
+        },
+        {
+          "pkg00_mod06": 5.749238014686853,
+          "pkg00_mod07": 5.853452021256089
+        },
+        {
+          "pkg00_mod06": 6.168139982037246,
+          "pkg00_mod07": 6.147639011032879
+        },
+        {
+          "pkg00_mod06": 6.100695987697691,
+          "pkg00_mod07": 5.962205003015697
+        },
+        {
+          "pkg00_mod06": 6.142725003883243,
+          "pkg00_mod07": 5.777192011009902
+        },
+        {
+          "pkg00_mod06": 5.860820005182177,
+          "pkg00_mod07": 6.073397991713136
+        },
+        {
+          "pkg00_mod06": 5.788908980321139,
+          "pkg00_mod07": 5.769085953943431
+        },
+        {
+          "pkg00_mod06": 5.912195018026978,
+          "pkg00_mod07": 5.8078880538232625
+        },
+        {
+          "pkg00_mod06": 6.067356967832893,
+          "pkg00_mod07": 5.725750990677625
+        }
+      ],
+      "median_pair_max_ms": 6.014521990437061,
+      "budget_ms": 1.0
+    }
+  }
+}

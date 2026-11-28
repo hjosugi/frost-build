@@ -59,7 +59,7 @@ A `2` is frost declining to act, so it owes the reader the way forward. Each of
 these is enforced by a test rather than by intent:
 
 - an unknown target lists up to three targets it might have been, spelled as
-  labels, and points at `frost query deps //...` when the workspace is too
+  labels, and points at `frost query targets` when the workspace is too
   large to enumerate;
 - a manifest error is `path:line:column: problem`, workspace-relative, with the
   offending line, a caret over the span the parser recorded, and — when a valid
@@ -118,9 +118,16 @@ not always detectable later.
 |---|---|---|
 | `.frost/graph-<config>.bin` | `FRSTGR01` + `VERSION`, and a BLAKE3 digest of the payload | recompile the graph from the manifest |
 | `.frost/journal.bin` | `FRSTJR02`, and a checksum per record | decode the validated prefix; a foreign magic yields an empty journal |
-| `.frost/hashcache.bin` | `FRSTHC03` | start from an empty cache and re-hash; a torn or corrupt appended frame keeps the prefix before it, and the next save rewrites the file whole |
+| `.frost/hashcache.bin` | `FRSTHC04` | start from an empty cache and re-hash; a torn or corrupt appended frame keeps the prefix before it, and the next save rewrites the file whole |
 | `.frost/cas/manifests/*` | chunk-manifest version | ignore the manifest; restore from the whole blob or rebuild |
-| no-op certificate | `FRSTNO03` | miss, and take the full check path |
+| `.frost/toolchain.bin` | `FRSTTC01` | fingerprint the configured tools again |
+| no-op certificate | `FRSTNO04` | miss, and take the full check path |
+
+On Unix, input hashes, no-op certificates and compiler fingerprints check both
+mtime and ctime. This detects an in-place edit whose size and mtime are
+preserved when the filesystem exposes a distinct ctime. Filesystems with
+coarse timestamps can miss changes within one tick. Other hosts currently
+use file size and modification time.
 
 The consequence is uniform: a `.frost/` written by another version costs time,
 never correctness. `stale_on_disk_state_is_rebuilt_rather_than_misread`
