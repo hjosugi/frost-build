@@ -2121,7 +2121,7 @@ fn validate_paths(raw: &[String]) -> Result<Vec<String>> {
 
 /// Language families whose build artifact can be scaffolded without guessing
 /// package-manager or dynamic-output semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScaffoldLanguage {
     Native,
     Java,
@@ -2160,12 +2160,13 @@ pub struct Scaffold {
     pub summary: Vec<String>,
 }
 
-const SOURCE_EXTENSIONS: [&str; 6] = ["c", "cc", "cpp", "cxx", "C", "c++"];
-const JAVA_EXTENSIONS: [&str; 1] = ["java"];
-const RUST_EXTENSIONS: [&str; 1] = ["rs"];
-const GO_EXTENSIONS: [&str; 1] = ["go"];
-const TYPESCRIPT_EXTENSIONS: [&str; 2] = ["ts", "tsx"];
-const PYTHON_EXTENSIONS: [&str; 1] = ["py"];
+const BAZEL_MARKERS: &[&str] = &[
+    "MODULE.bazel",
+    "WORKSPACE",
+    "WORKSPACE.bazel",
+    "BUILD",
+    "BUILD.bazel",
+];
 const JAVA_PROJECT_MARKERS: [&str; 7] = [
     "pom.xml",
     "build.gradle",
@@ -2176,30 +2177,65 @@ const JAVA_PROJECT_MARKERS: [&str; 7] = [
     "mvnw",
 ];
 
-const FAMILIES: [(ScaffoldLanguage, &[&str]); 6] = [
-    (ScaffoldLanguage::Native, &SOURCE_EXTENSIONS),
-    (ScaffoldLanguage::Java, &JAVA_EXTENSIONS),
-    (ScaffoldLanguage::Rust, &RUST_EXTENSIONS),
-    (ScaffoldLanguage::Go, &GO_EXTENSIONS),
-    (ScaffoldLanguage::TypeScript, &TYPESCRIPT_EXTENSIONS),
-    (ScaffoldLanguage::Python, &PYTHON_EXTENSIONS),
-];
+#[derive(Default)]
+struct ScaffoldFiles {
+    sources: BTreeMap<ScaffoldLanguage, Vec<String>>,
+    markers: Vec<String>,
+}
 
-pub fn scaffold(root: &Path) -> Result<Scaffold> {
-    let mut found = Vec::new();
-    for (language, extensions) in FAMILIES {
-        let mut sources = Vec::new();
-        collect_sources(root, root, &mut sources, 0, extensions)?;
-        if !sources.is_empty() {
-            found.push((language, sources.len()));
+impl ScaffoldFiles {
+    fn scan(root: &Path, only: Option<ScaffoldLanguage>) -> Result<Self> {
+        let mut files = Self::default();
+        files.walk(root, root, 0, only)?;
+        for sources in files.sources.values_mut() {
+            sources.sort_unstable();
+        }
+        files.markers.sort_unstable();
+        Ok(files)
+    }
+
+    fn named(&self, names: &[&str]) -> Vec<&str> {
+        self.markers
+            .iter()
+            .map(String::as_str)
+            .filter(|path| names.contains(&path.rsplit('/').next().unwrap()))
+            .collect()
+    }
+
+    fn generate(&self, root: &Path, language: ScaffoldLanguage) -> Result<Scaffold> {
+        let Some(sources) = self.sources.get(&language) else {
+            let label = match language {
+                ScaffoldLanguage::Native => "C or C++",
+                ScaffoldLanguage::Java => "Java",
+                ScaffoldLanguage::Rust => "Rust",
+                ScaffoldLanguage::Go => "Go",
+                ScaffoldLanguage::TypeScript => "TypeScript",
+                ScaffoldLanguage::Python => "Python",
+            };
+            bail!("no {label} sources under {}; choose another --language or add a direct command target", root.display());
+        };
+        match language {
+            ScaffoldLanguage::Native => scaffold_native(root, sources),
+            ScaffoldLanguage::Java => scaffold_java(root, sources),
+            ScaffoldLanguage::Rust => scaffold_rust(root, sources, self),
+            ScaffoldLanguage::Go => scaffold_go(root, sources),
+            ScaffoldLanguage::TypeScript => scaffold_typescript(root, sources),
+            ScaffoldLanguage::Python => scaffold_python(root, sources),
         }
     }
+}
+
+pub fn scaffold(root: &Path) -> Result<Scaffold> {
+    let files = ScaffoldFiles::scan(root, None)?;
+    let found: Vec<_> = files
+        .sources
+        .iter()
+        .map(|(&language, sources)| (language, sources.len()))
+        .collect();
     match found.as_slice() {
         [(language, _)] => {
-            // Auto-detection refuses what a package manager already owns.
-            // `--language` stays the deliberate override.
-            reject_owned_by_package_manager(root, *language)?;
-            scaffold_for(root, *language)
+            reject_owned_by_package_manager(root, *language, &files)?;
+            files.generate(root, *language)
         }
         [] => bail!(
             "no safely scaffoldable C/C++, Java, Rust, Go, TypeScript or Python sources \
@@ -2224,32 +2260,20 @@ pub fn scaffold(root: &Path) -> Result<Scaffold> {
 }
 
 pub fn scaffold_for(root: &Path, language: ScaffoldLanguage) -> Result<Scaffold> {
-    match language {
-        ScaffoldLanguage::Native => scaffold_native(root),
-        ScaffoldLanguage::Java => scaffold_java(root),
-        ScaffoldLanguage::Rust => scaffold_rust(root),
-        ScaffoldLanguage::Go => scaffold_go(root),
-        ScaffoldLanguage::TypeScript => scaffold_typescript(root),
-        ScaffoldLanguage::Python => scaffold_python(root),
-    }
+    ScaffoldFiles::scan(root, Some(language))?.generate(root, language)
 }
 
 /// Auto-detection stops where another tool owns dependency resolution, plugin
 /// or task semantics. Guessing there produces a manifest that looks right and
 /// builds something else, which is worse than refusing.
-fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> Result<()> {
+fn reject_owned_by_package_manager(
+    root: &Path,
+    language: ScaffoldLanguage,
+    files: &ScaffoldFiles,
+) -> Result<()> {
     match language {
         ScaffoldLanguage::Native => {
-            let bazel = sorted_named_files(
-                root,
-                &[
-                    "MODULE.bazel",
-                    "WORKSPACE",
-                    "WORKSPACE.bazel",
-                    "BUILD",
-                    "BUILD.bazel",
-                ],
-            )?;
+            let bazel = files.named(BAZEL_MARKERS);
             if !bazel.is_empty() {
                 bail!(
                     "native sources and an existing Bazel project marker ({}) were found. \
@@ -2259,7 +2283,7 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
                     bazel.join(", ")
                 );
             }
-            let ninja = sorted_named_files(root, &["build.ninja"])?;
+            let ninja = files.named(&["build.ninja"]);
             if !ninja.is_empty() {
                 bail!(
                     "native sources and an existing Ninja graph ({}) were found. init will not \
@@ -2272,7 +2296,7 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
             Ok(())
         }
         ScaffoldLanguage::Java => {
-            let markers = sorted_named_files(root, &JAVA_PROJECT_MARKERS)?;
+            let markers = files.named(&JAVA_PROJECT_MARKERS);
             if markers.is_empty() {
                 return Ok(());
             }
@@ -2284,29 +2308,12 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
                 markers.join(", ")
             )
         }
-        ScaffoldLanguage::Rust => {
-            let owning: Vec<String> = sorted_named_files(root, &["Cargo.toml"])?
-                .into_iter()
-                .filter(|manifest| cargo_manifest_owns_the_build(&root.join(manifest)))
-                .collect();
-            let build_scripts = sorted_named_files(root, &["build.rs"])?;
-            if owning.is_empty() && build_scripts.is_empty() {
-                return Ok(());
-            }
-            bail!(
-                "Cargo already owns this build ({}). init will not clone Cargo's dependency, \
-                 feature or build-script semantics: keep `cargo` behind a kind = \"command\" \
-                 target, or use `frost init --language rust` only if a direct rustc build of \
-                 this crate is intentional (docs/19_rust_cargo_comparison.md)",
-                owning
-                    .into_iter()
-                    .chain(build_scripts)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
+        // Both automatic and explicit Rust scaffolds must honor Cargo's edition
+        // and reject package semantics a single rustc call cannot reproduce.
+        ScaffoldLanguage::Rust => Ok(()),
         ScaffoldLanguage::Go => {
-            let owning: Vec<String> = sorted_named_files(root, &["go.mod"])?
+            let owning: Vec<&str> = files
+                .named(&["go.mod"])
                 .into_iter()
                 .filter(|module| go_module_requires_dependencies(&root.join(module)))
                 .collect();
@@ -2321,7 +2328,8 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
             )
         }
         ScaffoldLanguage::TypeScript => {
-            let owning: Vec<String> = sorted_named_files(root, &["package.json"])?
+            let owning: Vec<&str> = files
+                .named(&["package.json"])
                 .into_iter()
                 .filter(|package| package_json_declares_dependencies(&root.join(package)))
                 .collect();
@@ -2337,7 +2345,8 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
             )
         }
         ScaffoldLanguage::Python => {
-            let owning: Vec<String> = sorted_named_files(root, &["pyproject.toml"])?
+            let owning: Vec<&str> = files
+                .named(&["pyproject.toml"])
                 .into_iter()
                 .filter(|project| pyproject_declares_dependencies(&root.join(project)))
                 .collect();
@@ -2355,28 +2364,68 @@ fn reject_owned_by_package_manager(root: &Path, language: ScaffoldLanguage) -> R
     }
 }
 
-fn sorted_named_files(root: &Path, names: &[&str]) -> Result<Vec<String>> {
-    let mut found = Vec::new();
-    collect_named_files(root, root, &mut found, 0, names)?;
-    found.sort();
-    Ok(found)
-}
-
-/// Textual, like [`defines_main`]: a scaffold may be wrong here because the
-/// author reads what it wrote, and the failure mode is a refusal, not a
-/// silently different build.
-fn cargo_manifest_owns_the_build(path: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
+/// A root Cargo package can supply the edition for one standard binary. Keep
+/// dependency resolution, inherited settings and target selection with Cargo.
+fn cargo_binary_edition(root: &Path, files: &ScaffoldFiles) -> Result<Option<String>> {
+    let manifests = files.named(&["Cargo.toml"]);
+    let scripts = files.named(&["build.rs"]);
+    if manifests.is_empty() && scripts.is_empty() {
+        return Ok(None);
+    }
+    let cargo = "Cargo already owns this build. Run `cargo build` or keep cargo behind a kind = \"command\" target";
+    if manifests != ["Cargo.toml"] || !scripts.is_empty() {
+        bail!(
+            "{cargo} for {}",
+            manifests
+                .into_iter()
+                .chain(scripts)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let manifest: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
+        .context("reading Cargo.toml")?
+        .parse()
+        .with_context(|| format!("invalid Cargo.toml. {cargo}"))?;
+    let package = manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .with_context(|| format!("Cargo.toml requires a standard [package]. {cargo}"))?;
+    let simple = manifest.iter().all(|(key, value)| match key.as_str() {
+        "package" => true,
+        "dependencies" | "dev-dependencies" | "build-dependencies" | "features" => {
+            value.as_table().is_some_and(|table| table.is_empty())
+        }
+        _ => false,
+    });
+    let inherited = package
+        .values()
+        .any(|value| value.get("workspace").and_then(toml::Value::as_bool) == Some(true));
+    if !simple
+        || inherited
+        || package.contains_key("workspace")
+        || package.contains_key("links")
+        || package
+            .get("build")
+            .is_some_and(|v| v.as_bool() != Some(false))
+        || package
+            .get("autobins")
+            .is_some_and(|v| v.as_bool() != Some(true))
+        || !root.join("src/main.rs").is_file()
+        || files.sources[&ScaffoldLanguage::Rust]
+            .iter()
+            .any(|p| p == "src/lib.rs" || p.starts_with("src/bin/"))
+    {
+        bail!("{cargo} for Cargo.toml");
+    }
+    let edition = match package.get("edition") {
+        None => "2015", // Cargo's default when a package omits the edition.
+        Some(value) => value
+            .as_str()
+            .filter(|e| matches!(*e, "2015" | "2018" | "2021" | "2024"))
+            .with_context(|| format!("unsupported edition in Cargo.toml. {cargo}"))?,
     };
-    text.lines().map(str::trim).any(|line| {
-        matches!(
-            line,
-            "[dependencies]" | "[build-dependencies]" | "[workspace]" | "[patch.crates-io]"
-        ) || line.starts_with("[dependencies.")
-            || line.starts_with("[target.")
-            || line.starts_with("[workspace.")
-    })
+    Ok(Some(edition.to_owned()))
 }
 
 fn go_module_requires_dependencies(path: &Path) -> bool {
@@ -2412,18 +2461,7 @@ fn pyproject_declares_dependencies(path: &Path) -> bool {
     })
 }
 
-fn scaffold_native(root: &Path) -> Result<Scaffold> {
-    let mut sources: Vec<String> = Vec::new();
-    collect_sources(root, root, &mut sources, 0, &SOURCE_EXTENSIONS)?;
-    sources.sort();
-    if sources.is_empty() {
-        bail!(
-            "no C or C++ sources under {}; choose another --language or add a \
-             direct command target",
-            root.display()
-        );
-    }
-
+fn scaffold_native(root: &Path, sources: &[String]) -> Result<Scaffold> {
     let has_include = root.join("include").is_dir();
     // A file defining main is the binary; everything else is library code.
     let entry = sources
@@ -2444,7 +2482,7 @@ fn scaffold_native(root: &Path) -> Result<Scaffold> {
         }
         None => {
             summary.push("no main() found, so everything becomes a library".into());
-            (Vec::new(), sources.clone())
+            (Vec::new(), sources.to_vec())
         }
     };
     if has_include {
@@ -2504,17 +2542,7 @@ fn scaffold_native(root: &Path) -> Result<Scaffold> {
     Ok(Scaffold { manifest, summary })
 }
 
-fn scaffold_java(root: &Path) -> Result<Scaffold> {
-    let mut sources = Vec::new();
-    collect_sources(root, root, &mut sources, 0, &JAVA_EXTENSIONS)?;
-    sources.sort();
-    if sources.is_empty() {
-        bail!(
-            "no Java sources under {}; choose another --language or add a \
-             direct command target",
-            root.display()
-        );
-    }
+fn scaffold_java(root: &Path, sources: &[String]) -> Result<Scaffold> {
     let name = root
         .file_name()
         .and_then(|value| value.to_str())
@@ -2563,28 +2591,29 @@ fn scaffold_java(root: &Path) -> Result<Scaffold> {
          # JDK than the one the developer runs. Its value is action-key\n\
          # material, so switching JDKs invalidates rather than mixes.\n\
          pass_env = [\"JAVA_HOME\"]\nsandbox = false\n",
-        toml_array(&sources),
+        toml_array(sources),
         toml_array(&pack_args),
     );
     Ok(Scaffold { manifest, summary })
 }
 
-fn scaffold_rust(root: &Path) -> Result<Scaffold> {
-    let sources = sorted_sources(root, &RUST_EXTENSIONS, "Rust")?;
-    let Some(entry) = sources
-        .iter()
-        .find(|path| contains_declaration(&root.join(path), "fn main("))
-        .cloned()
-    else {
-        bail!(
-            "no `fn main` under {}: a library-only crate has no single artifact init can \
-             name. keep cargo as the packaging owner behind a kind = \"command\" target",
-            root.display()
-        )
+fn scaffold_rust(root: &Path, sources: &[String], files: &ScaffoldFiles) -> Result<Scaffold> {
+    let cargo_edition = cargo_binary_edition(root, files)?;
+    let entry = if cargo_edition.is_some() {
+        "src/main.rs"
+    } else {
+        sources.iter().find(|path| contains_declaration(&root.join(path), "fn main("))
+            .map(String::as_str).with_context(|| format!(
+                "no `fn main` under {}: a library-only crate has no single artifact init can name. keep cargo as the packaging owner behind a kind = \"command\" target",
+                root.display()
+            ))?
     };
-
+    let edition = cargo_edition.as_deref().unwrap_or("2021");
     let name = workspace_name(root);
-    let output = format!(".frost/out/${{config}}/{name}");
+    let output = format!(
+        ".frost/out/${{config}}/{name}{}",
+        std::env::consts::EXE_SUFFIX
+    );
     let summary = vec![
         format!("{} Rust source file(s)", sources.len()),
         format!("entry point: {entry}"),
@@ -2600,18 +2629,19 @@ fn scaffold_rust(root: &Path) -> Result<Scaffold> {
          # as an input so editing any module invalidates this action; rustc still\n\
          # decides which of them it actually reads.\n\
          [target.{name}]\nkind = \"command\"\ntool = \"rustc\"\n\
-         args = [\"--edition\", \"2021\", {entry:?}, \"-o\", \"${{out}}\"]\n\
+         args = [\"--edition\", \"{edition}\", {entry:?}, \"-o\", \"${{out}}\"]\n\
          inputs = {}\noutputs = {}\nsandbox = false\n",
-        toml_array(&sources),
+        toml_array(sources),
         toml_array(std::slice::from_ref(&output)),
     );
     Ok(Scaffold { manifest, summary })
 }
 
-fn scaffold_go(root: &Path) -> Result<Scaffold> {
-    let sources: Vec<String> = sorted_sources(root, &GO_EXTENSIONS, "Go")?
-        .into_iter()
+fn scaffold_go(root: &Path, sources: &[String]) -> Result<Scaffold> {
+    let sources: Vec<String> = sources
+        .iter()
         .filter(|path| !path.ends_with("_test.go"))
+        .cloned()
         .collect();
     let Some(entry) = sources
         .iter()
@@ -2678,8 +2708,7 @@ fn scaffold_go(root: &Path) -> Result<Scaffold> {
     Ok(Scaffold { manifest, summary })
 }
 
-fn scaffold_typescript(root: &Path) -> Result<Scaffold> {
-    let sources = sorted_sources(root, &TYPESCRIPT_EXTENSIONS, "TypeScript")?;
+fn scaffold_typescript(root: &Path, sources: &[String]) -> Result<Scaffold> {
     let name = workspace_name(root);
     let output_dir = "dist/${config}".to_string();
     let mut summary = vec![format!("{} TypeScript source file(s)", sources.len())];
@@ -2711,7 +2740,7 @@ fn scaffold_typescript(root: &Path) -> Result<Scaffold> {
     }
     summary.push("`tsc` must be on PATH; check with `frost doctor`".into());
 
-    let mut inputs = sources.clone();
+    let mut inputs = sources.to_vec();
     if root.join("tsconfig.json").is_file() {
         inputs.push("tsconfig.json".to_string());
         inputs.sort();
@@ -2730,8 +2759,7 @@ fn scaffold_typescript(root: &Path) -> Result<Scaffold> {
     Ok(Scaffold { manifest, summary })
 }
 
-fn scaffold_python(root: &Path) -> Result<Scaffold> {
-    let sources = sorted_sources(root, &PYTHON_EXTENSIONS, "Python")?;
+fn scaffold_python(root: &Path, sources: &[String]) -> Result<Scaffold> {
     let pyproject = std::fs::read_to_string(root.join("pyproject.toml")).unwrap_or_default();
     let distribution = pyproject_field(&pyproject, "name").unwrap_or_else(|| workspace_name(root));
     let version = pyproject_field(&pyproject, "version").unwrap_or_else(|| "0.1.0".to_string());
@@ -2802,20 +2830,6 @@ fn scaffold_python(root: &Path) -> Result<Scaffold> {
     Ok(Scaffold { manifest, summary })
 }
 
-fn sorted_sources(root: &Path, extensions: &[&str], label: &str) -> Result<Vec<String>> {
-    let mut sources = Vec::new();
-    collect_sources(root, root, &mut sources, 0, extensions)?;
-    sources.sort();
-    if sources.is_empty() {
-        bail!(
-            "no {label} sources under {}; choose another --language or add a direct \
-             command target",
-            root.display()
-        );
-    }
-    Ok(sources)
-}
-
 fn workspace_name(root: &Path) -> String {
     root.file_name()
         .and_then(|name| name.to_str())
@@ -2860,93 +2874,81 @@ fn pyproject_field(text: &str, key: &str) -> Option<String> {
     None
 }
 
-fn collect_sources(
-    root: &Path,
-    dir: &Path,
-    out: &mut Vec<String>,
-    depth: usize,
-    extensions: &[&str],
-) -> Result<()> {
-    if depth > 8 {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.')
-            || matches!(
-                name.as_ref(),
-                "target"
-                    | "build"
-                    | "node_modules"
-                    | "dist"
-                    | "vendor"
-                    | "venv"
-                    | "__pycache__"
-                    | "site-packages"
-            )
-        {
-            continue;
+impl ScaffoldFiles {
+    fn walk(
+        &mut self,
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        only: Option<ScaffoldLanguage>,
+    ) -> Result<()> {
+        if depth > 8 {
+            return Ok(());
         }
-        let ty = entry.file_type()?;
-        let path = entry.path();
-        if ty.is_dir() && !ty.is_symlink() {
-            collect_sources(root, &path, out, depth + 1, extensions)?;
-        } else if ty.is_file()
-            && path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|extension| extensions.contains(&extension))
-        {
-            if let Ok(relative) = path.strip_prefix(root) {
-                out.push(relative.to_string_lossy().replace('\\', "/"));
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.')
+                || matches!(
+                    name.as_ref(),
+                    "target"
+                        | "build"
+                        | "node_modules"
+                        | "dist"
+                        | "vendor"
+                        | "venv"
+                        | "__pycache__"
+                        | "site-packages"
+                )
+            {
+                continue;
+            }
+            let ty = entry.file_type()?;
+            let path = entry.path();
+            if ty.is_dir() {
+                self.walk(root, &path, depth + 1, only)?;
+            } else if ty.is_file() {
+                let language = match path.extension().and_then(|e| e.to_str()) {
+                    Some("c" | "cc" | "cpp" | "cxx" | "C" | "c++") => {
+                        Some(ScaffoldLanguage::Native)
+                    }
+                    Some("java") => Some(ScaffoldLanguage::Java),
+                    Some("rs") => Some(ScaffoldLanguage::Rust),
+                    Some("go") => Some(ScaffoldLanguage::Go),
+                    Some("ts" | "tsx") => Some(ScaffoldLanguage::TypeScript),
+                    Some("py") => Some(ScaffoldLanguage::Python),
+                    _ => None,
+                };
+                let relative = || {
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                };
+                if let Some(language) =
+                    language.filter(|lang| only.is_none_or(|selected| selected == *lang))
+                {
+                    self.sources.entry(language).or_default().push(relative());
+                }
+                if BAZEL_MARKERS.contains(&name.as_ref())
+                    || JAVA_PROJECT_MARKERS.contains(&name.as_ref())
+                    || matches!(
+                        name.as_ref(),
+                        "build.ninja"
+                            | "Cargo.toml"
+                            | "build.rs"
+                            | "go.mod"
+                            | "package.json"
+                            | "pyproject.toml"
+                    )
+                {
+                    self.markers.push(relative());
+                }
             }
         }
+        Ok(())
     }
-    Ok(())
-}
-
-fn collect_named_files(
-    root: &Path,
-    dir: &Path,
-    out: &mut Vec<String>,
-    depth: usize,
-    names: &[&str],
-) -> Result<()> {
-    if depth > 8 {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.')
-            || matches!(
-                name.as_ref(),
-                "target"
-                    | "build"
-                    | "node_modules"
-                    | "dist"
-                    | "vendor"
-                    | "venv"
-                    | "__pycache__"
-                    | "site-packages"
-            )
-        {
-            continue;
-        }
-        let ty = entry.file_type()?;
-        let path = entry.path();
-        if ty.is_dir() && !ty.is_symlink() {
-            collect_named_files(root, &path, out, depth + 1, names)?;
-        } else if ty.is_file() && names.contains(&name.as_ref()) {
-            if let Ok(relative) = path.strip_prefix(root) {
-                out.push(relative.to_string_lossy().replace('\\', "/"));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn java_main_class(path: &Path) -> Option<String> {
@@ -3682,9 +3684,41 @@ mod tests {
         // A module the crate root pulls in must invalidate the action even
         // though rustc, not Frost, decides that it is read.
         assert_eq!(target.inputs, ["src/helper.rs", "src/main.rs"]);
-        assert_eq!(target.outputs, [format!(".frost/out/${{config}}/{name}")]);
+        assert_eq!(
+            target.outputs,
+            [format!(
+                ".frost/out/${{config}}/{name}{}",
+                std::env::consts::EXE_SUFFIX
+            )]
+        );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cargo_only_settings_point_both_init_modes_to_cargo() {
+        let root = scaffold_fixture("cargo-owned-settings");
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        for settings in [
+            "edition.workspace = true",
+            "build = \"generate.rs\"",
+            "[workspace]",
+            "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"",
+            "[features]\ndefault = [\"extra\"]\nextra = []",
+        ] {
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!("[package]\nname = \"hello\"\nversion = \"0.1.0\"\n{settings}\n"),
+            )
+            .unwrap();
+            for result in [scaffold(&root), scaffold_for(&root, ScaffoldLanguage::Rust)] {
+                assert!(
+                    format!("{:#}", result.unwrap_err()).contains("cargo build"),
+                    "{settings}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3902,6 +3936,12 @@ mod tests {
             let error = scaffold(&root).unwrap_err().to_string();
             assert!(error.contains(expected), "{label}: {error}");
             assert!(error.contains(marker), "{label}: {error}");
+            if language == ScaffoldLanguage::Rust {
+                let explicit = scaffold_for(&root, language).unwrap_err().to_string();
+                assert!(explicit.contains("cargo build"), "{explicit}");
+                std::fs::remove_dir_all(&root).unwrap();
+                continue;
+            }
             assert!(
                 error.contains(&format!("--language {}", language.as_str())),
                 "{label}: {error}"

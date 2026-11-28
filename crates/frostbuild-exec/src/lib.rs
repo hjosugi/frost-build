@@ -1808,7 +1808,9 @@ mod tests {
             "an unchanged toolchain keeps its fingerprint"
         );
         let stamp = std::fs::read(dir.join(TOOLCHAIN_STAMP_PATH)).unwrap();
-        let stamp: ToolchainStamp = postcard::from_bytes(&stamp).unwrap();
+        let stamp: ToolchainStamp =
+            postcard::from_bytes(stamp.strip_prefix(crate::toolchain::STAMP_MAGIC).unwrap())
+                .unwrap();
         assert!(
             stamp
                 .tools

@@ -13,17 +13,56 @@ use serde::{Deserialize, Serialize};
 /// re-run (which then surfaces the real error from the tool).
 pub const MISSING: &str = "MISSING";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct Entry {
+/// Filesystem evidence used to reuse a content digest across builds.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileIdentity {
     mtime_ns: i128,
     size: u64,
+    #[cfg(unix)]
+    ctime_ns: i128,
+    #[cfg(unix)]
     ino: u64,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    executable: bool,
+}
+
+impl From<&std::fs::Metadata> for FileIdentity {
+    #[cfg(unix)]
+    fn from(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            mtime_ns: i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()),
+            size: meta.len(),
+            ctime_ns: i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec()),
+            ino: meta.ino(),
+            device: meta.dev(),
+            executable: is_executable(meta),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn from(meta: &std::fs::Metadata) -> Self {
+        Self {
+            mtime_ns: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos() as i128),
+            size: meta.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct Entry {
+    identity: FileIdentity,
     hash: String,
 }
 
-/// Content-hash cache keyed by workspace-relative (or absolute, for system
-/// headers) path, validated by a (mtime, size, inode) stat triple. Avoids
-/// re-hashing unchanged files across builds.
+/// Content-hash cache keyed by workspace-relative or absolute path.
+/// A change of file identity requires hashing the bytes again.
 ///
 /// One instance covers one build, and treats that build as a single point in
 /// time: a path digested once is not stat'd again unless [`Self::invalidate`]
@@ -148,10 +187,9 @@ fn inode(_metadata: &std::fs::Metadata) -> u64 {
 pub const CACHE_REL_PATH: &str = ".frost/hashcache.bin";
 /// Pre-0.2 JSON cache location, removed opportunistically on save.
 pub const LEGACY_CACHE_REL_PATH: &str = ".frost/hashcache.json";
-/// `03` frames the entries so that a build which changed a few files appends
-/// those few instead of rewriting the whole cache. An `02` cache is a foreign
-/// version and starts empty (one re-hash).
-const CACHE_MAGIC: &[u8; 8] = b"FRSTHC03";
+/// Version 04 adds the Unix status-change time to the framed identity. Older
+/// entries cannot certify a preserved-mtime edit and must be rehashed.
+const CACHE_MAGIC: &[u8; 8] = b"FRSTHC04";
 
 impl HashCache {
     pub fn load(workspace_root: &Path) -> Self {
@@ -228,9 +266,7 @@ impl HashCache {
         self.updates.write().unwrap().insert(
             rel.to_string(),
             Entry {
-                mtime_ns: i128::MIN,
-                size: 0,
-                ino: 0,
+                identity: FileIdentity::default(),
                 hash: String::new(),
             },
         );
@@ -317,9 +353,9 @@ impl HashCache {
             }
             return Ok(MISSING.to_string());
         };
-        let stat = stat_triple(&meta);
+        let stat = FileIdentity::from(&meta);
         if let Some(entry) = self.lookup(rel) {
-            if !entry.hash.is_empty() && (entry.mtime_ns, entry.size, entry.ino) == stat {
+            if !entry.hash.is_empty() && entry.identity == stat {
                 self.settle(rel, &entry.hash);
                 return Ok(entry.hash);
             }
@@ -330,9 +366,7 @@ impl HashCache {
         self.store(
             rel,
             Entry {
-                mtime_ns: stat.0,
-                size: stat.1,
-                ino: stat.2,
+                identity: stat,
                 hash: hash.clone(),
             },
         );
@@ -360,9 +394,9 @@ impl HashCache {
                 ready.insert(rel.clone(), MISSING.to_string());
                 continue;
             };
-            let stat = stat_triple(&meta);
+            let stat = FileIdentity::from(&meta);
             if let Some(entry) = self.lookup(rel) {
-                if !entry.hash.is_empty() && (entry.mtime_ns, entry.size, entry.ino) == stat {
+                if !entry.hash.is_empty() && entry.identity == stat {
                     self.settle(rel, &entry.hash);
                     ready.insert(rel.clone(), entry.hash);
                     continue;
@@ -383,9 +417,7 @@ impl HashCache {
             self.store(
                 &rel,
                 Entry {
-                    mtime_ns: stat.0,
-                    size: stat.1,
-                    ino: stat.2,
+                    identity: stat,
                     hash: hash.clone(),
                 },
             );
@@ -420,18 +452,16 @@ impl HashCache {
                 let Ok(meta) = std::fs::metadata(&full) else {
                     return Ok((digest == MISSING, None));
                 };
-                let stat = stat_triple(&meta);
+                let stat = FileIdentity::from(&meta);
                 if let Some(entry) = self.lookup(rel) {
-                    if !entry.hash.is_empty() && (entry.mtime_ns, entry.size, entry.ino) == stat {
+                    if !entry.hash.is_empty() && entry.identity == stat {
                         return Ok((entry.hash == digest, None));
                     }
                 }
                 let hash = hash_file(&full)
                     .with_context(|| format!("failed to hash {}", full.display()))?;
                 let entry = Entry {
-                    mtime_ns: stat.0,
-                    size: stat.1,
-                    ino: stat.2,
+                    identity: stat,
                     hash: hash.clone(),
                 };
                 Ok((hash == digest, Some((rel.to_string(), entry))))
@@ -475,29 +505,6 @@ fn resolve(workspace_root: &Path, rel: &str) -> std::path::PathBuf {
     } else {
         workspace_root.join(p)
     }
-}
-
-#[cfg(unix)]
-fn stat_triple(meta: &std::fs::Metadata) -> (i128, u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (
-        i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()),
-        // chmod updates ctime, not mtime, so a mode change would otherwise
-        // reuse the cached digest and never reach the hash above.
-        meta.size() ^ ((meta.mode() as u64 & 0o111) << 40),
-        meta.ino(),
-    )
-}
-
-#[cfg(not(unix))]
-fn stat_triple(meta: &std::fs::Metadata) -> (i128, u64, u64) {
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i128)
-        .unwrap_or(0);
-    (mtime, meta.len(), 0)
 }
 
 /// Content digest of a file, including whether it is executable.

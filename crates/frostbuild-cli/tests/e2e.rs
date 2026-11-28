@@ -51,22 +51,25 @@ fn java_toolchain_is_consistent() -> bool {
 /// Windows images can expose both MSVC rustc and a GNU `link.exe`; a version
 /// probe succeeds in that state, but the linker selected by rustc cannot.
 fn rust_toolchain_is_consistent() -> bool {
-    let dir = std::env::temp_dir().join(format!("frost-rust-probe-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    if std::fs::create_dir_all(&dir).is_err() {
-        return false;
-    }
-    let source = dir.join("probe.rs");
-    let output = executable_path(dir.join("probe"));
-    let ok = std::fs::write(&source, "fn main() {}\n").is_ok()
-        && Command::new("rustc")
-            .arg(&source)
-            .arg("-o")
-            .arg(&output)
-            .output()
-            .is_ok_and(|result| result.status.success());
-    let _ = std::fs::remove_dir_all(&dir);
-    ok
+    static CONSISTENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CONSISTENT.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("frost-rust-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return false;
+        }
+        let source = dir.join("probe.rs");
+        let output = executable_path(dir.join("probe"));
+        let ok = std::fs::write(&source, "fn main() {}\n").is_ok()
+            && Command::new("rustc")
+                .arg(&source)
+                .arg("-o")
+                .arg(&output)
+                .output()
+                .is_ok_and(|result| result.status.success());
+        let _ = std::fs::remove_dir_all(&dir);
+        ok
+    })
 }
 
 fn frost_bin() -> &'static str {
@@ -2461,7 +2464,7 @@ sandbox = false
                 "debug",
                 "java",
                 "--debugger",
-                "/bin/echo",
+                "echo",
                 "--print",
                 "--",
                 "argument",
@@ -3914,7 +3917,7 @@ case "$*" in
   *--version*) printf 'bazel 9.1.0\n' ;;
   *--output=build*) printf '# expanded BUILD without configurable attributes\n' ;;
   *--output=xml*)
-    /bin/cat <<'XML'
+    cat <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>
 <query version="2">
   <rule class="cc_library rule" name="//lib:math">
@@ -5304,6 +5307,100 @@ fn init_rust_builds_directly_and_reruns_only_on_a_real_change() {
     assert_eq!(normalized_output(&run.stdout), "rust-init-ok 7\n");
 
     let _ = std::fs::remove_dir_all(&ws.dir);
+}
+
+#[test]
+fn cargo_new_binary_keeps_its_2024_edition() {
+    if !language_tool_available("cargo") || !rust_toolchain_is_consistent() {
+        return;
+    }
+    for args in [&["init"][..], &["init", "--language", "rust"]] {
+        let ws = Workspace::empty(if args.len() == 1 {
+            "cargo-edition-auto"
+        } else {
+            "cargo-edition-explicit"
+        });
+        let created = Command::new("cargo")
+            .args(["new", "--offline", "--edition", "2024", "--vcs", "none"])
+            .arg(ws.dir.join("hello"))
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            normalized_output(&created.stderr)
+        );
+        let project = ws.dir.join("hello");
+        std::fs::write(
+            project.join("src/main.rs"),
+            "fn main() { if let Some(v) = Some(7) && v == 7 { println!(\"{v}\"); } }\n",
+        )
+        .unwrap();
+        let (ok, out) = frost_in(&project, args);
+        assert!(ok, "{out}");
+        let (ok, out) = frost_in(&project, &["build"]);
+        assert!(ok, "{out}");
+        let binary = executable_path(project.join(".frost/out/debug/hello"));
+        let run = Command::new(binary).output().unwrap();
+        assert!(run.status.success());
+        assert_eq!(normalized_output(&run.stdout), "7\n");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn preserved_mtime_invalidates_sources_and_named_tools() {
+    use std::os::unix::fs::PermissionsExt;
+    let ws = Workspace::empty("preserved-mtime");
+    ws.write(
+        "frost.toml",
+        r#"[workspace]
+default_targets = ["app"]
+[toolchain.tools]
+copy = "./copy.sh"
+[target.app]
+kind = "command"
+tool = "copy"
+args = ["${in}", "${out}"]
+inputs = ["input"]
+outputs = ["${config}/out"]
+"#,
+    );
+    let script = "#!/bin/sh\ncat \"$1\" > \"$2\"; echo X >> \"$2\"\n";
+    ws.write("copy.sh", script);
+    std::fs::set_permissions(
+        ws.dir.join("copy.sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    ws.write("input", "A\n");
+    let build = |args: &[&str], expected: &str| {
+        let (ok, out) = ws.frost(args);
+        assert!(ok, "{out}");
+        assert_eq!(
+            std::fs::read_to_string(ws.dir.join("debug/out")).unwrap(),
+            expected
+        );
+        out
+    };
+    let rewrite = |path: &str, content: &str| {
+        let path = ws.dir.join(path);
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let before = file.metadata().unwrap();
+        assert_eq!(before.len(), content.len() as u64);
+        std::fs::write(path, content).unwrap();
+        file.set_modified(before.modified().unwrap()).unwrap();
+    };
+    build(&["build"], "A\nX\n");
+    build(&["build"], "A\nX\n");
+    rewrite("input", "B\n");
+    build(&["build"], "B\nX\n");
+    rewrite("input", "C\n");
+    build(&["build", "app"], "C\nX\n");
+    build(&["build"], "C\nX\n");
+    rewrite("copy.sh", &script.replace("echo X", "echo Y"));
+    build(&["build"], "C\nY\n");
+    assert!(build(&["build"], "C\nY\n").contains("up to date"));
 }
 
 #[test]
@@ -7390,6 +7487,28 @@ fn an_unknown_target_offers_the_targets_it_might_have_been() {
     assert!(!ok, "{out}");
     assert!(!out.contains("did you mean"), "{out}");
     assert!(out.contains("//core:core"), "{out}");
+}
+
+#[test]
+fn unknown_target_hint_lists_every_target_in_a_large_workspace() {
+    let ws = Workspace::empty("diagnostic-many-targets");
+    let names: Vec<_> = (0..13).map(|i| format!("item{i:02}")).collect();
+    let mut manifest = String::new();
+    for name in &names {
+        manifest.push_str(&format!(
+            "[target.{name}]\nkind = \"genrule\"\ncmd = \"echo ok > ${{out}}\"\noutputs = [\"out/{name}\"]\n"
+        ));
+    }
+    ws.write("frost.toml", &manifest);
+    let (code, error) = ws.frost_code(&["build", "zzzzzzzzzz"]);
+    assert_eq!(code, 2, "{error}");
+    let command = error
+        .split('`')
+        .find_map(|part| part.strip_prefix("frost "))
+        .expect("an executable hint");
+    let (code, output) = ws.frost_code(&command.split_whitespace().collect::<Vec<_>>());
+    assert_eq!(code, 0, "{output}");
+    assert_eq!(output.lines().collect::<Vec<_>>(), names);
 }
 
 #[test]

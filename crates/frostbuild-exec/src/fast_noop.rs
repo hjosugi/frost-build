@@ -5,13 +5,14 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result};
 use frostbuild_core::cas::LocalCas;
 use frostbuild_core::graph_store::GraphStore;
+use frostbuild_core::hashcache::FileIdentity;
 use frostbuild_core::manifest::{Toolchain, HOST_PLATFORM};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{toolchain_closure_fingerprint_cached, DEFAULT_CAS_MAX_BYTES};
 
-const MAGIC: &[u8; 8] = b"FRSTNO03";
+const MAGIC: &[u8; 8] = b"FRSTNO04";
 
 #[derive(Debug, Clone, Copy)]
 pub struct FastNoopHit {
@@ -34,13 +35,6 @@ pub struct FastNoopWatchProof {
 pub struct FastNoopDaemonHit {
     pub hit: FastNoopHit,
     pub watch_proof: Option<FastNoopWatchProof>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct FileIdentity {
-    mtime_ns: i128,
-    size_and_mode: u64,
-    ino: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -299,7 +293,7 @@ pub fn certificate_stamp(root: &Path, profile: &str, platform: &str) -> Option<C
         return None;
     }
     let mut file = std::fs::File::open(certificate_path(root, profile, platform)).ok()?;
-    let identity = metadata_identity(&file.metadata().ok()?);
+    let identity = FileIdentity::from(&file.metadata().ok()?);
     let mut header = [0u8; 40];
     file.read_exact(&mut header).ok()?;
     if &header[..8] != MAGIC {
@@ -369,33 +363,7 @@ fn resolve(root: &Path, path: &str) -> PathBuf {
 
 fn file_identity(root: &Path, path: &str) -> Option<FileIdentity> {
     let metadata = std::fs::metadata(resolve(root, path)).ok()?;
-    Some(metadata_identity(&metadata))
-}
-
-#[cfg(unix)]
-fn metadata_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    use std::os::unix::fs::MetadataExt;
-    FileIdentity {
-        mtime_ns: i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec()),
-        // Match HashCache: executable mode changes affect the content digest.
-        size_and_mode: metadata.size() ^ ((metadata.mode() as u64 & 0o111) << 40),
-        ino: metadata.ino(),
-    }
-}
-
-#[cfg(not(unix))]
-fn metadata_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    let mtime_ns = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos() as i128)
-        .unwrap_or(0);
-    FileIdentity {
-        mtime_ns,
-        size_and_mode: metadata.len(),
-        ino: 0,
-    }
+    Some(FileIdentity::from(&metadata))
 }
 
 #[cfg(test)]
